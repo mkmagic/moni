@@ -1,0 +1,37 @@
+[
+  {
+    "name": "Maybe Finance",
+    "github_url": "https://github.com/maybe-finance/maybe",
+    "description": "A modern, open-source personal finance and wealth management tool. Originally a venture-backed startup, it was open-sourced and relies on a clean, modern tech stack focused on comprehensive net-worth tracking."
+  },
+  {
+    "name": "Actual Budget",
+    "github_url": "https://github.com/actualbudget/actual",
+    "description": "A privacy-focused, local-first personal finance app that uses the envelope budgeting methodology. Features end-to-end encryption and multi-device synchronization."
+  },
+  {
+    "name": "Firefly III",
+    "github_url": "https://github.com/firefly-iii/firefly-iii",
+    "description": "A comprehensive, self-hosted personal finance manager featuring a strict double-entry bookkeeping system, expansive rule engine, and advanced reporting capabilities."
+  },
+  {
+    "name": "Ghostfolio",
+    "github_url": "https://github.com/ghostfolio/ghostfolio",
+    "description": "A lightweight, privacy-first open-source wealth management software built with a modern Angular and NestJS web stack."
+  },
+  {
+    "name": "Finlynq",
+    "github_url": "https://github.com/finlynq/finlynq",
+    "description": "An open-source personal finance app built with a first-party Model Context Protocol (MCP) server, allowing AI clients to query and manage finances."
+  },
+  {
+    "name": "Securo",
+    "github_url": "https://github.com/securo-finance/securo",
+    "description": "A self-hosted, privacy-first personal finance manager that natively integrates bank syncing and self-hosted AI agents."
+  },
+  {
+    "name": "Go Money",
+    "github_url": "https://github.com/ft-t/go-money",
+    "description": "An open-source personal finance manager written in Go, built for speed and advanced customization via Lua scripting."
+  }
+]

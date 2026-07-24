@@ -1,0 +1,28 @@
+# Third-party / reference material — not ours to format
+repos_eval/
+deps/
+
+# Pre-existing docs / skill content from the initial commit — out of scope
+# for this scaffolding task, not to be reformatted incidentally.
+docs/
+AGENTS.md
+CLAUDE.md
+vision.md
+.agents/
+scripts/scraper-test/
+
+# Build output
+.next/
+out/
+build/
+dist/
+
+# Generated SQL migrations
+drizzle/
+
+# Dependency lockfile — machine-generated, do not reformat
+package-lock.json
+
+# Standard cruft
+node_modules/
+coverage/

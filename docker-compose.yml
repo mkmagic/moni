@@ -1,0 +1,23 @@
+# Local-dev Postgres only. Role creation (moni_owner/moni_app) and RLS policy
+# SQL are bootstrapped by a later migration task, not here — this just brings
+# up a superuser-owned `moni` database for that bootstrap to run against.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: moni
+    ports:
+      - "5432:5432"
+    volumes:
+      - moni_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d moni"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  moni_postgres_data:
