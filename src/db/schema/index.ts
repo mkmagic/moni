@@ -1,4 +1,10 @@
-// Drizzle table definitions land here (T2 — Drizzle schema). Re-exporting
-// nothing yet keeps this a valid module so `src/db/client.ts` can import
-// `* as schema` from it before any tables exist.
-export {};
+// Drizzle table definitions (T2 — Drizzle schema), organized by domain area
+// per docs/design/data-model.md §5. Re-exported here so
+// `src/db/client.ts` can `import * as schema from "@/db/schema"`.
+export * from "./identity";
+export * from "./connectors";
+export * from "./accounts";
+export * from "./ledger";
+export * from "./classification";
+export * from "./dashboard";
+export * from "./reference";
