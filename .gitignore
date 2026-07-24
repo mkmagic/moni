@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.*
+
+# Next.js / build output
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+next-env.d.ts
+
+# Test / coverage
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# Environment & secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Local tooling caches
+.eslintcache
+.turbo/
+
+# OS / editor cruft
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Reference material — third-party OSS clones kept locally for agent reference,
+# not part of Moni's source (licenses + bloat). See vision.md "Sources of Inspiration".
+repos_eval/
+
+# Scraper sandbox (skill playground — israeli-scraper SKILL.md)
+deps/node_modules/
