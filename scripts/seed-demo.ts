@@ -8,14 +8,20 @@
 // DEV ONLY. Uses the dev key provider (src/lib/crypto/dev-key-provider.ts) —
 // never a production key-custody path.
 import "dotenv/config";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes } from "node:crypto";
 import { Client } from "pg";
 import { eq } from "drizzle-orm";
 import Decimal from "decimal.js";
 import { withUser } from "@/db/client";
 import * as schema from "@/db/schema";
-import { encryptField, decryptField, getDevUserDataKey, type AadContext } from "@/lib/crypto";
+import { encryptField, decryptField, getDevUserDataKey, wipe, type AadContext } from "@/lib/crypto";
 import { multiply } from "@/lib/money";
+import { wrapDataKey, DEFAULT_ARGON2_PARAMS } from "@/lib/auth/password";
+
+// Demo login password shared by both seeded users (dev only). Printed in the
+// seed summary. In production, users choose their own; here it just lets the
+// login flow unwrap the seeded data key. See src/lib/auth/password.ts.
+const DEMO_PASSWORD = "moni-demo";
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -177,12 +183,26 @@ interface SeedCounts {
 async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<void> {
   const dataKey = getDevUserDataKey(plan.id);
 
+  // Wrap the per-user data key under the demo password (envelope encryption,
+  // src/lib/auth/password.ts): only the wrapped form is stored, so login can
+  // re-derive the KEK from the password and unwrap the key into a RAM session.
+  const salt = randomBytes(16);
+  const password = Buffer.from(DEMO_PASSWORD, "utf8");
+  const wrappedDataKey = await wrapDataKey(plan.id, dataKey, password, salt);
+  wipe(password);
+
   await withUser(plan.id, async (tx) => {
     // --- users -------------------------------------------------------
     await tx.insert(schema.users).values({
       id: plan.id,
       email: plan.email,
       baseCurrency: "ILS",
+      wrappedDataKey,
+      unlockMethodRef: {
+        type: "password-argon2id",
+        saltB64: salt.toString("base64"),
+        params: DEFAULT_ARGON2_PARAMS,
+      },
     });
     counts.users++;
 
@@ -671,6 +691,7 @@ async function main() {
     for (const plan of USERS) {
       console.log(`- ${plan.displayName}: ${plan.email} (id ${plan.id})`);
     }
+    console.log(`demo login password (both users): ${DEMO_PASSWORD}`);
     console.log(`fx_rates: ${fxRateCount}`);
     console.log(`users: ${counts.users}`);
     console.log(`categories: ${counts.categories}`);

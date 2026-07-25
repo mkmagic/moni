@@ -1,2 +1,102 @@
 @import "tailwindcss";
 @config "../../tailwind.config.ts";
+
+/*
+ * Moni design tokens. Dark-only for v1.0 (see docs/design/ui-and-feel.md).
+ * Palette adapted from Finlynq's "premium fintech dark" look, with Moni's
+ * vision tweak: the page is a very dark *navy* rather than pure black.
+ * A single warm amber is the only brand accent; money uses teal (positive)
+ * and coral (negative). Borders are hairlines, not shadows.
+ *
+ * Tailwind v4 `@theme`: each `--color-*` here generates the matching
+ * utility (`bg-background`, `text-foreground`, `border-border`, ...).
+ */
+@theme {
+  /* Surfaces */
+  --color-background: oklch(0.145 0.018 265); /* ~#0c0e14 very dark navy */
+  --color-card: oklch(0.185 0.02 265); /* ~#14171f elevated surface */
+  --color-popover: oklch(0.215 0.021 265); /* ~#1a1e28 */
+  --color-muted: oklch(0.235 0.02 265); /* subtle fills */
+
+  /* Text */
+  --color-foreground: oklch(0.93 0.008 260); /* ~#e8eaef */
+  --color-muted-foreground: oklch(0.68 0.014 260); /* ~#98a0b0 labels */
+
+  /* Lines */
+  --color-border: oklch(0.28 0.016 265); /* ~#252a36 hairline */
+  --color-input: oklch(0.28 0.016 265);
+  --color-ring: oklch(0.78 0.15 75); /* amber focus ring */
+
+  /* Brand accent — used sparingly (logo, active nav, primary button) */
+  --color-primary: oklch(0.78 0.15 75); /* ~#f5a623 amber */
+  --color-primary-foreground: oklch(0.2 0.04 75); /* dark ink on amber */
+
+  /* Money signal */
+  --color-positive: oklch(0.74 0.13 172); /* teal/green — inflow, asset */
+  --color-negative: oklch(0.66 0.19 20); /* coral/rose — outflow, liability */
+
+  /* Charts */
+  --color-chart-1: oklch(0.78 0.15 75); /* amber */
+  --color-chart-2: oklch(0.74 0.12 172); /* teal */
+  --color-chart-3: oklch(0.66 0.19 20); /* coral */
+  --color-chart-4: oklch(0.68 0.12 264); /* blue */
+  --color-chart-5: oklch(0.66 0.13 305); /* violet */
+
+  --radius: 0.625rem;
+
+  /* Fonts — variables set by next/font (geist) on <html> in layout.tsx */
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* All monetary figures use tabular Geist Mono for stable alignment. */
+.tabular-nums {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * Interactive (clickable) cards — a deliberate, documented exception to the
+ * "depth is a border + surface step, never a shadow" rule (ui-and-feel.md §6).
+ * A *link* card earns a subtle violet glow and a blue->violet->pink gradient
+ * top edge on hover to signal it navigates somewhere; flat non-interactive
+ * cards keep the plain hairline look. Wrap the card in `.card-link` and give
+ * the Card `.card-glow`, with a `.card-glow-top` span pinned to its top edge.
+ */
+.card-link {
+  display: block;
+  border-radius: var(--radius);
+}
+.card-link:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+.card-glow {
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+.card-link:hover .card-glow {
+  border-color: oklch(0.5 0.12 300);
+  box-shadow: 0 0 26px -8px oklch(0.62 0.17 305 / 0.55);
+}
+.card-glow-top {
+  background: linear-gradient(
+    90deg,
+    oklch(0.68 0.12 264),
+    oklch(0.62 0.16 305),
+    oklch(0.7 0.2 350)
+  );
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.card-link:hover .card-glow-top {
+  opacity: 1;
+}

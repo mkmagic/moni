@@ -20,12 +20,16 @@
   "dependencies": {
     "@noble/ciphers": "2.2.0",
     "@noble/hashes": "2.2.0",
+    "@node-rs/argon2": "^2.0.2",
     "decimal.js": "10.6.0",
     "drizzle-orm": "0.45.2",
+    "geist": "^1.7.2",
+    "lucide-react": "^1.26.0",
     "next": "16.2.11",
     "pg": "8.22.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "recharts": "^3.10.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
