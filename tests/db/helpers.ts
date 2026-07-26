@@ -46,7 +46,7 @@ export function newAppRoleClient(): Client {
  * Every RLS-protected (owner_id-scoped) table, in child-before-parent
  * delete order so a bulk cleanup never trips a foreign-key violation. This
  * is also exactly the table set structural tests assert RLS is enabled on
- * (17 tables; `fx_rates` is the sole non-RLS exception — data-model.md §2).
+ * (18 tables; `fx_rates` is the sole non-RLS exception — data-model.md §2).
  */
 export const OWNER_SCOPED_TABLES_DELETE_ORDER = [
   "entry_field_changelog",
@@ -65,6 +65,7 @@ export const OWNER_SCOPED_TABLES_DELETE_ORDER = [
   "connections",
   "merchants",
   "categories",
+  "user_unlock_methods",
   "users",
 ] as const;
 

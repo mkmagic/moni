@@ -1,15 +1,37 @@
 import { Wallet, TrendingUp, TrendingDown } from "lucide-react";
 import { requireSession } from "@/domain/auth";
 import { getOverview } from "@/domain/dashboard";
+import { getProfile } from "@/domain/profile";
+import { requireOnboarded } from "@/domain/onboarding";
+import { SyncPrompt } from "./sync-prompt";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Money } from "@/components/money";
 import { Sparkline } from "@/components/sparkline";
 import { StatCard } from "@/components/stat-card";
 import { IncomeExpenseChart } from "@/components/income-expense-chart";
 
+/** Time-of-day greeting from the SERVER's clock. This is a self-hosted,
+ * single-household app, so the server and the household share a timezone —
+ * computing it here keeps the header a server component with no hydration
+ * flicker. Revisit if Moni ever runs somewhere its users don't live. */
+function timeOfDay(hour: number): string {
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
+
 export default async function DashboardPage() {
   const session = await requireSession();
-  const overview = await getOverview(session);
+  await requireOnboarded(session.userId);
+  const [overview, profile] = await Promise.all([getOverview(session), getProfile(session.userId)]);
+
+  const name = profile?.displayName?.trim();
+  // One template literal, not adjacent JSX text nodes — Turbopack trims the
+  // space between an expression and neighbouring text on the same line
+  // (.agents/skills/ui-developer/SKILL.md, 2026-07-26).
+  const greeting = name
+    ? `${timeOfDay(new Date().getHours())}, ${name}, here's your financial picture`
+    : `${timeOfDay(new Date().getHours())}, here's your financial picture`;
 
   const netWorthSeries = overview.months.map((m) => Number(m.net));
   const monthLabelFmt = new Intl.DateTimeFormat("en-US", { month: "short" });
@@ -20,9 +42,11 @@ export default async function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <SyncPrompt show={session.promptSyncOnLogin} />
+
       <div>
         <h1 className="text-2xl font-semibold text-foreground">Overview</h1>
-        <p className="text-sm text-muted-foreground">Here&apos;s your financial picture</p>
+        <p className="text-sm text-muted-foreground">{greeting}</p>
       </div>
 
       <Card>

@@ -22,6 +22,27 @@
       "when": 1784914117729,
       "tag": "0002_auth_lookup",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785005325377,
+      "tag": "0003_polite_thunderball",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785005333548,
+      "tag": "0004_user_unlock_methods_rls_and_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785077758483,
+      "tag": "0005_open_vargas",
+      "breakpoints": true
     }
   ]
 }

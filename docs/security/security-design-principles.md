@@ -1,5 +1,5 @@
 # Moni — Security Design Principles
-Bottom-line guidance for building Moni securely. This is the "what to do" distilled from @thread-model.md — read that for the reasoning. If a decision here seems wrong for a new situation, go back to the threat model before deviating.
+Bottom-line guidance for building Moni securely. This is the "what to do" distilled from `threat-model.md` — read that for the reasoning. If a decision here seems wrong for a new situation, go back to the threat model before deviating.
 
 ## Overview
 Moni is **self-hosted by one technical owner** and **multi-user** (family). Security is tiered — the bar is deliberately high in a few places and deliberately relaxed elsewhere. Do not spread effort uniformly; spend it on the crown jewels.

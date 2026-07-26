@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
-import { LayoutDashboard, ArrowLeftRight, Landmark, Wallet, LogOut } from "lucide-react";
+import { LayoutDashboard, ArrowLeftRight, Landmark, Settings, Wallet, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
@@ -11,8 +11,43 @@ const NAV_ITEMS = [
   { href: "/accounts", label: "Accounts", icon: Landmark },
 ] as const;
 
+// Sits at the bottom of the rail, above the account block — Connections now
+// lives inside it rather than as a top-level destination.
+const SETTINGS_ITEM = { href: "/settings", label: "Settings", icon: Settings } as const;
+
 interface SidebarProps {
   baseCurrency: string;
+}
+
+function NavLink({
+  href,
+  label,
+  icon: Icon,
+  pathname,
+}: {
+  href: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  pathname: string;
+}) {
+  const active = pathname === href || pathname.startsWith(`${href}/`);
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "relative flex items-center gap-3 rounded-[var(--radius)] px-3 py-2 text-sm transition",
+        active
+          ? "bg-muted text-primary"
+          : "text-muted-foreground hover:bg-muted hover:text-foreground",
+      )}
+    >
+      {active && (
+        <span className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-primary" />
+      )}
+      <Icon className="h-4 w-4" />
+      {label}
+    </Link>
+  );
 }
 
 export function Sidebar({ baseCurrency }: SidebarProps) {
@@ -38,28 +73,14 @@ export function Sidebar({ baseCurrency }: SidebarProps) {
       </div>
 
       <nav className="flex flex-1 flex-col gap-1 px-3">
-        {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href || pathname.startsWith(`${href}/`);
-          return (
-            <Link
-              key={href}
-              href={href}
-              className={cn(
-                "relative flex items-center gap-3 rounded-[var(--radius)] px-3 py-2 text-sm transition",
-                active
-                  ? "bg-muted text-primary"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
-              )}
-            >
-              {active && (
-                <span className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-primary" />
-              )}
-              <Icon className="h-4 w-4" />
-              {label}
-            </Link>
-          );
-        })}
+        {NAV_ITEMS.map((item) => (
+          <NavLink key={item.href} {...item} pathname={pathname} />
+        ))}
       </nav>
+
+      <div className="px-3 pb-2">
+        <NavLink {...SETTINGS_ITEM} pathname={pathname} />
+      </div>
 
       <div className="flex flex-col gap-3 border-t border-border px-4 py-4">
         <div className="flex items-center gap-2 rounded-[var(--radius)] border border-border px-3 py-2">

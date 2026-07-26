@@ -12,4 +12,4 @@
 - Tool schemas built from the user's own data (enums per-request); deliberately small page sizes.
 - The built-in read-only chat assistant and how it uses these tools.
 
-**Related:** @../security/threat-model.md · @../security/security-design-principles.md · @domain-layer.md
+**Related:** `../security/threat-model.md` · `../security/security-design-principles.md` · `domain-layer.md`

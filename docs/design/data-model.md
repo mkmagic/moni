@@ -2,7 +2,7 @@
 
 **Purpose:** The core schema — the unified ledger that puts expenses (and, later, investments) on one timeline — and how everything else hangs off it. This is the design the first Moni migrations and the domain layer are built from. It is a *design* document: it specifies tables, columns, and the rules that govern them, not migration SQL.
 
-**Testing & seeding.** See @../../.agents/skills/db-schema/SKILL.md for the table map, invariant checklist, and the migrate/seed/test workflow.
+**Testing & seeding.** See `../../.agents/skills/db-schema/SKILL.md` for the table map, invariant checklist, and the migrate/seed/test workflow.
 
 **Reference lineage.** The shape is adapted from three of the `repos_eval/` projects:
 - **Maybe** — the unified ledger idea (one `entries` table with a typed subtype delegate), account subtyping + asset/liability classification, attribute-locking with a source-logged change history, and a one-level-nested rules engine. *Primary architectural model.*

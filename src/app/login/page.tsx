@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { Wallet } from "lucide-react";
 import { getCurrentSession } from "@/domain/auth";
 import { Card } from "@/components/ui/card";
@@ -28,6 +29,12 @@ export default async function LoginPage() {
             <LoginForm />
           </div>
         </Card>
+        <p className="mt-4 text-center text-sm text-muted-foreground">
+          Don&apos;t have an account?{" "}
+          <Link href="/signup" className="text-primary hover:underline">
+            Sign up
+          </Link>
+        </p>
       </div>
     </main>
   );

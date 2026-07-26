@@ -1,60 +1,80 @@
-// Unit tests for the password-envelope key wrapping (src/lib/auth/password.ts).
-// No DB — pure crypto. This is the security-critical login primitive: the
-// per-user data key is wrapped under an Argon2id(password) KEK, and a wrong
-// password must fail the AEAD unwrap (that failure *is* the password check).
+// Unit tests for password-derived KEK wrapping (src/lib/auth/password.ts).
+// No DB — pure crypto. This is the security-critical login primitive: a KEK
+// derived from Argon2id(password) wraps a Tier-0 key (the data key or the
+// credential key), bound to the *storing row's* AAD — and a wrong password
+// must fail the AEAD unwrap (that failure *is* the password check).
 import { describe, expect, it } from "vitest";
-import { randomBytes } from "node:crypto";
-import { wrapDataKey, unwrapDataKey } from "@/lib/auth/password";
+import { randomBytes, randomUUID } from "node:crypto";
+import { deriveKekFromPassword, wrapWithKek, unwrapWithKek } from "@/lib/auth/password";
+import type { AadContext } from "@/lib/crypto";
 
-const userId = "11111111-1111-1111-1111-111111111111";
+function aad(methodId: string): AadContext {
+  return { rowId: methodId, column: "wrapped_data_key", version: 1 };
+}
 
-describe("password envelope (wrap/unwrap of the per-user data key)", () => {
-  it("round-trips: the correct password recovers the exact data key", async () => {
-    const dataKey = randomBytes(32);
+describe("password-derived KEK: wrap/unwrap of a Tier-0 key", () => {
+  it("round-trips: the correct password recovers the exact key", async () => {
+    const methodId = randomUUID();
+    const key = randomBytes(32);
     const salt = randomBytes(16);
     const password = Buffer.from("correct horse battery staple", "utf8");
 
-    const wrapped = await wrapDataKey(userId, dataKey, password, salt);
-    const recovered = await unwrapDataKey(userId, wrapped, password, salt);
+    const kek = await deriveKekFromPassword(password, salt);
+    const wrapped = wrapWithKek(kek, aad(methodId), key);
+    const recovered = unwrapWithKek(kek, aad(methodId), wrapped);
 
-    expect(Buffer.from(recovered).equals(dataKey)).toBe(true);
+    expect(Buffer.from(recovered).equals(key)).toBe(true);
   });
 
   it("rejects a wrong password (AEAD authentication failure)", async () => {
-    const dataKey = randomBytes(32);
+    const methodId = randomUUID();
+    const key = randomBytes(32);
     const salt = randomBytes(16);
-    const wrapped = await wrapDataKey(userId, dataKey, Buffer.from("right-pass"), salt);
 
-    await expect(unwrapDataKey(userId, wrapped, Buffer.from("wrong-pass"), salt)).rejects.toThrow();
+    const rightKek = await deriveKekFromPassword(Buffer.from("right-pass"), salt);
+    const wrapped = wrapWithKek(rightKek, aad(methodId), key);
+
+    const wrongKek = await deriveKekFromPassword(Buffer.from("wrong-pass"), salt);
+    expect(() => unwrapWithKek(wrongKek, aad(methodId), wrapped)).toThrow();
   });
 
   it("rejects a tampered wrapped key", async () => {
-    const dataKey = randomBytes(32);
+    const methodId = randomUUID();
+    const key = randomBytes(32);
     const salt = randomBytes(16);
     const password = Buffer.from("pw", "utf8");
-    const wrapped = await wrapDataKey(userId, dataKey, password, salt);
+
+    const kek = await deriveKekFromPassword(password, salt);
+    const wrapped = wrapWithKek(kek, aad(methodId), key);
 
     const tampered = Buffer.from(wrapped);
     tampered[tampered.length - 1] ^= 0xff; // flip a ciphertext/tag byte
 
-    await expect(unwrapDataKey(userId, tampered, password, salt)).rejects.toThrow();
+    expect(() => unwrapWithKek(kek, aad(methodId), tampered)).toThrow();
   });
 
-  it("is bound to the user id: unwrapping under a different user id fails", async () => {
-    const dataKey = randomBytes(32);
+  it("is bound to the storing row id: unwrapping under a different row id fails", async () => {
+    const methodId = randomUUID();
+    const key = randomBytes(32);
     const salt = randomBytes(16);
     const password = Buffer.from("pw", "utf8");
-    const wrapped = await wrapDataKey(userId, dataKey, password, salt);
 
-    const otherUserId = "22222222-2222-2222-2222-222222222222";
-    await expect(unwrapDataKey(otherUserId, wrapped, password, salt)).rejects.toThrow();
+    const kek = await deriveKekFromPassword(password, salt);
+    const wrapped = wrapWithKek(kek, aad(methodId), key);
+
+    const otherMethodId = randomUUID();
+    expect(() => unwrapWithKek(kek, aad(otherMethodId), wrapped)).toThrow();
   });
 
   it("a different salt (same password) does not recover the key", async () => {
-    const dataKey = randomBytes(32);
+    const methodId = randomUUID();
+    const key = randomBytes(32);
     const password = Buffer.from("pw", "utf8");
-    const wrapped = await wrapDataKey(userId, dataKey, password, randomBytes(16));
 
-    await expect(unwrapDataKey(userId, wrapped, password, randomBytes(16))).rejects.toThrow();
+    const kek1 = await deriveKekFromPassword(password, randomBytes(16));
+    const wrapped = wrapWithKek(kek1, aad(methodId), key);
+
+    const kek2 = await deriveKekFromPassword(password, randomBytes(16));
+    expect(() => unwrapWithKek(kek2, aad(methodId), wrapped)).toThrow();
   });
 });

@@ -12,4 +12,4 @@
 - The rules engine shape (conditions/actions, capped nesting — from Maybe).
 - The user-configurable model backend (hosted API key vs. local model) and how the untrusted-string boundary is enforced.
 
-**Related:** @../../vision.md · @conventions.md · @data-model.md
+**Related:** `../../vision.md` · `conventions.md` · `data-model.md`

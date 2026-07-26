@@ -79,6 +79,7 @@ function sessionFor(f: Fixture, key: Uint8Array = f.dataKey): Session {
     userId: f.userId,
     dataKey: Buffer.from(key),
     baseCurrency: "ILS",
+    promptSyncOnLogin: false,
     expiresAt: Date.now() + 3_600_000,
   };
 }

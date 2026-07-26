@@ -1,0 +1,33 @@
+diff --git a/node_modules/israeli-bank-scrapers/lib/scrapers/leumi.js b/node_modules/israeli-bank-scrapers/lib/scrapers/leumi.js
+index 4ef1310..79aa12b 100644
+--- a/node_modules/israeli-bank-scrapers/lib/scrapers/leumi.js
++++ b/node_modules/israeli-bank-scrapers/lib/scrapers/leumi.js
+@@ -22,7 +22,13 @@ const FILTERED_TRANSACTIONS_URL = `${BASE_URL}/ChannelWCF/Broker.svc/ProcessRequ
+ const SAVINGS_URL = `${BASE_URL}/uiapiproxy/v1/digital-retails/mobile/accounts/1/Deposits?operationList=true`;
+ const DATE_FORMAT = 'DD.MM.YY';
+ const ACCOUNT_BLOCKED_MSG = 'המנוי חסום';
+-const INVALID_PASSWORD_MSG = 'אחד או יותר מפרטי ההזדהות שמסרת שגויים. ניתן לנסות שוב';
++// PATCH (moni, 2026-07-26): Leumi reworded this — "שמסרת" -> "שהוקלדו", and
++// the trailing "ניתן לנסות שוב" is gone. The old exact string never matched,
++// so a wrong password waited out the full 60s and then failed on the
++// unrelated `a[title="דלג לחשבון"]` selector instead of reporting
++// INVALID_PASSWORD. Matching on the prefix both wordings share fixes that
++// and stays correct if they reword the tail again.
++const INVALID_PASSWORD_MSG = 'אחד או יותר מפרטי ההזדהות';
+ const CHANGE_PASSWORD_MODAL_SELECTOR = 'form input[name="newPwd"]';
+ function getPossibleLoginResults() {
+   const urls = {
+@@ -229,6 +235,13 @@ class LeumiScraper extends _baseScraperWithBrowser.BaseScraperWithBrowser {
+   getLoginOptions(credentials) {
+     return {
+       loginUrl: LOGIN_URL,
++      // PATCH (moni, 2026-07-26): www.leumi.co.il/he now serves hCaptcha +
++      // perfdrive assets that abort and never settle, so the page's 'load'
++      // event never fires and the default waitUntil:'load' times out before
++      // login is attempted. checkReadiness below immediately navigates away
++      // to hb2.../authenticate/logon anyway, so this page only needs to have
++      // parsed, not fully loaded.
++      waitUntil: 'domcontentloaded',
+       fields: createLoginFields(credentials),
+       submitButtonSelector: "button[type='submit']",
+       checkReadiness: async () => navigateToLogin(this.page),

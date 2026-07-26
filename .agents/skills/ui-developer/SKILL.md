@@ -1,7 +1,7 @@
 # UI Developer Skill
 
 Build and refine Moni's user interface so it stays visually consistent and matches the
-owner's taste. **Authoritative design spec:** @../../../docs/design/ui-and-feel.md (the palette,
+owner's taste. **Authoritative design spec:** `../../../docs/design/ui-and-feel.md` (the palette,
 typography, layout, and component patterns) — read it before touching any UI, and keep it truthful:
 if you add a real pattern, document it there. `src/app/globals.css` is the token source of truth.
 
@@ -27,7 +27,7 @@ new feedback lands.
   the domain layer, never render a JS float for money.
 
 ## Workflow for any UI task
-1. Read @../../../docs/design/ui-and-feel.md and the **Feedback log** below.
+1. Read `../../../docs/design/ui-and-feel.md` and the **Feedback log** below.
 2. Build with existing tokens/primitives; match the surrounding component's style.
 3. Gates must all pass: `npm run typecheck`, `npm run lint`, `npm run format`, `npm run test`.
    - `next dev` mutates `tsconfig.json` (`jsx: preserve → react-jsx`, adds `.next/dev/types`) — if
@@ -39,6 +39,72 @@ new feedback lands.
    below.
 
 ## Feedback log (newest first — append, don't overwrite)
+
+### 2026-07-26 (later) — settings, toggles, and "verify in the browser" means it
+
+**A settings screen means TABS, not one long page of sections.** The first build stacked Profile
+and Connections as `<section>`s on `/settings`; the owner meant separate tabs. Now route-based:
+`/settings/layout.tsx` holds the heading + `settings-tabs.tsx`, with `/settings/profile` and
+`/settings/connections` as siblings and `/settings` redirecting to the first. Route-based beats
+client state here — each tab stays a server component reading through the domain layer, and every
+tab is deep-linkable (the login sync offer jumps straight to `/settings/connections`).
+
+**A boolean preference is a toggle, not a checkbox.** Added `src/components/ui/switch.tsx` — a
+`role="switch"` button, not a restyled `<input type=checkbox>` (which can't become a track-and-knob
+without `appearance-none` hacks and loses announced state). Amber track when on, per the
+sole-brand-accent rule.
+
+**Put a setting where the thing it governs lives, not where its column lives.** "Automatically sync
+connections on login?" was filed under Profile because it's a `users` column. That's the schema's
+mental model, not the user's — it governs *these connections*, so it belongs on the Connections tab.
+
+**Cap paragraph measure on full-width cards.** The toggle's helper text ran ~1350px across on a wide
+viewport. Only visible in the browser; `max-w-2xl` on the text column fixes it while the toggle
+stays right-aligned.
+
+**Don't put a page-level redirect in the shared `(app)` layout.** The zero-connections →
+`/onboarding` redirect lived there, which silently locked a new user out of Settings once Profile
+moved in. A layout can't reliably know its own pathname in the App Router (`x-invoke-path` is not a
+thing to reach for). Each page that truly needs a connection now calls `requireOnboarded()`
+(`src/domain/onboarding.ts`).
+
+**Never render a date in a client component.** `new Date(iso).toLocaleString()` inside `"use client"`
+is a hydration error: SSR formats with the server's locale/timezone, the browser re-formats with its
+own, React sees two strings and throws. The owner hit this on the connections row. Fix: format on
+the **server** with an explicit locale (`Intl.DateTimeFormat("en-GB", {dateStyle:"medium"})`) and
+pass a finished string across the boundary — the client component then holds no date logic at all.
+Numbers are fine (`value.toLocaleString("en-US", …)`) *because* the locale is pinned; it's the
+implicit-locale calls that break. `new Date()` in a server component is fine too.
+
+**Test with a row present, not just the empty state.** This bug was invisible because the account
+used for verification had zero connections, so the row never rendered. When a list has an empty
+state, insert a throwaway fixture row (superuser SQL) so the populated branch actually renders —
+then delete it.
+
+**Browser-verification technique that actually works.** Coordinate-clicking into an input silently
+did nothing — the typed name went nowhere and Save wrote an empty value, which *looked* like a
+working save. Use `read_page{filter:"interactive"}` to get a ref, then `form_input` on that ref, and
+**confirm the write in Postgres** rather than trusting the UI's own "Saved". Also: after moving or
+deleting a route, `.next` type validators go stale and `npm run typecheck` reports phantom errors
+about the old path — `rm -rf .next && npm run build` before believing them.
+
+### 2026-07-26 — signup/onboarding/connections build
+
+**Turbopack silently eats a space between JSX and adjacent text on the same line.** When an element
+or an expression is immediately followed by plain JSX text on the *same source line*, the separating
+space is trimmed away at build time: `<strong>…reset.</strong> If you forget` rendered as
+`reset.If you forget`, and `{def.label} login.` rendered as `Bank Hapoalimlogin.`. It does **not**
+show up in the diff — only in the browser. Two traps make it easy to reintroduce:
+- A bare `{" "}` separator works, but **Prettier re-collapses it back into plain text** when it fits
+  on one line, silently restoring the bug on the next `npm run format`. It only survives when
+  Prettier already wanted a line break there (e.g. end-of-line, as in `signup/page.tsx`).
+- The reliable fix is to make the text **its own JS string expression** — `{"If you forget…"}` or a
+  template literal like `` {`Enter your ${def.label} login.`} `` — which no formatter can collapse.
+  See `signup-form.tsx` and `connect-form.tsx`, both commented at the site.
+
+**Every login/auth page needs its counterpart link.** `/signup` linked to `/login` but not the
+reverse, so a new user landing on `/login` had no way to reach signup. The owner caught it in the
+browser, not in review. When you add an auth page, wire the link in *both* directions.
 
 ### 2026-07-25 — dashboard & accounts cards; sparkline hover; clickable stat cards
 The owner reviewed the first dashboard/accounts build and gave four notes (all now fixed):

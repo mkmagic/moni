@@ -39,6 +39,9 @@ export const accounts = pgTable(
     nameCt: bytea("name_ct").notNull(),
     institution: text("institution"),
     accountNumberLast4Ct: bytea("account_number_last4_ct"),
+    // Encrypted provider account number/reference — used for scraper->account
+    // mapping by decrypt-and-match (docs plan: no plaintext or hashed index).
+    externalAccountRefCt: bytea("external_account_ref_ct"),
     currency: text("currency").notNull(),
     // Cached from the most recent balance snapshot for cheap reads
     // (data-model.md §5) — the snapshot table remains the source of truth.

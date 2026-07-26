@@ -26,3 +26,6 @@ package-lock.json
 # Standard cruft
 node_modules/
 coverage/
+
+# Generated knowledge-graph output
+graphify-out/

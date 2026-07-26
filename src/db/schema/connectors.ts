@@ -44,6 +44,9 @@ export const connections = pgTable(
       .notNull()
       .references(() => users.id),
     connectorId: text("connector_id").notNull(),
+    // User-chosen label (e.g. "Dana's Leumi checking") — plaintext, not
+    // sensitive; distinguishes multiple connections to the same connector.
+    displayName: text("display_name"),
     // Tier-0: wrapped by the user's unlock secret, never the data key
     // (threat-model.md §5 — a scrape must be able to decrypt this without
     // the data-key/unlock-window machinery gating ordinary Tier-1 reads).

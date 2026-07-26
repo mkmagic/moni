@@ -16,6 +16,14 @@ export interface Session {
   /** Unwrapped per-user data key — Tier-0, RAM-only, wiped on destroy/expiry. */
   dataKey: Buffer;
   baseCurrency: string;
+  /**
+   * Set at login when the user opted into `autoSyncOnLogin` AND the gap since
+   * their previous login exceeded the threshold. Purely a UI hint — it grants
+   * nothing. Acting on it still goes through the normal 423 -> arm -> sync
+   * path, so no credential key is unwrapped at login and the two RAM windows
+   * stay decoupled (docs plan §B). Cleared once the user answers.
+   */
+  promptSyncOnLogin: boolean;
   /** Epoch ms after which the session is dead and its key must be wiped. */
   expiresAt: number;
 }
@@ -29,10 +37,29 @@ const globalStore = globalThis as unknown as { __moniSessions?: Map<string, Sess
 const store: Map<string, Session> = (globalStore.__moniSessions ??= new Map());
 
 /** Creates a session holding `dataKey`; returns the opaque 128-bit session id. */
-export function createSession(userId: string, dataKey: Buffer, baseCurrency: string): string {
+export function createSession(
+  userId: string,
+  dataKey: Buffer,
+  baseCurrency: string,
+  promptSyncOnLogin = false,
+): string {
   const id = randomBytes(16).toString("hex");
-  store.set(id, { id, userId, dataKey, baseCurrency, expiresAt: Date.now() + TTL_MS });
+  store.set(id, {
+    id,
+    userId,
+    dataKey,
+    baseCurrency,
+    promptSyncOnLogin,
+    expiresAt: Date.now() + TTL_MS,
+  });
   return id;
+}
+
+/** Clears the login sync prompt once the user has accepted or dismissed it,
+ * so it doesn't reappear on every navigation for the rest of the session. */
+export function dismissSyncPrompt(id: string): void {
+  const s = store.get(id);
+  if (s) s.promptSyncOnLogin = false;
 }
 
 /** Returns the live session for `id`, or null if missing/expired (expired keys are wiped). */

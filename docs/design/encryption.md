@@ -1,8 +1,8 @@
 # Moni — Encryption Implementation Guide
 
 This document provides actionable guidelines for implementing encryption in Moni. For the reasoning and broader security context behind these rules, you **must** consult:
-- @../security/security-design-principles.md
-- @../security/threat-model.md
+- `../security/security-design-principles.md`
+- `../security/threat-model.md`
 
 ## 1. Cryptographic Primitives
 - **AEAD Algorithm:** Use **XChaCha20-Poly1305** for all authenticated encryption.
@@ -22,7 +22,7 @@ This document provides actionable guidelines for implementing encryption in Moni
 - **Ciphertext Binding (AAD):** Prevent ciphertext swapping and rollback by binding every encrypted value to its exact location using Additional Authenticated Data (AAD):
   - `AAD = row_id + column_name + row_version`
   - The `row_version` must be a monotonically increasing counter (e.g., `updated_at` or a specific version integer).
-- **Aggregate in the app tier, not over ciphertext:** SQL cannot `SUM` / `GROUP BY` encrypted amounts. In v1.0, dashboards narrow on the plaintext structural columns, decrypt the narrowed set, and aggregate in the domain layer with `decimal.js` — **no persisted rollups** (an encrypted rollup is a read-modify-write with a lost-update race under concurrent ingest; deferred to a future single-worker cache, added only if measured slow). See @data-model.md §4.3/§6.
+- **Aggregate in the app tier, not over ciphertext:** SQL cannot `SUM` / `GROUP BY` encrypted amounts. In v1.0, dashboards narrow on the plaintext structural columns, decrypt the narrowed set, and aggregate in the domain layer with `decimal.js` — **no persisted rollups** (an encrypted rollup is a read-modify-write with a lost-update race under concurrent ingest; deferred to a future single-worker cache, added only if measured slow). See `data-model.md` §4.3/§6.
 
 ## 4. Application & Agent Context
 - **AI Agents:** Agents are **read-only** in v1.0. Do not construct write paths for AI agents.

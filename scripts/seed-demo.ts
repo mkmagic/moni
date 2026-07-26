@@ -5,18 +5,22 @@
 // §5 for what each table means and docs/design/money-and-currency.md for the
 // currency-triple / locked-FX-rate rules this data must stay consistent with.
 //
-// DEV ONLY. Uses the dev key provider (src/lib/crypto/dev-key-provider.ts) —
-// never a production key-custody path.
+// DEV ONLY, but real key custody: each user's data key is minted by
+// src/domain/registration.ts's createUser() — the same function a real
+// sign-up goes through — so it is genuinely random, never the dev key
+// provider (src/lib/crypto/dev-key-provider.ts, which stays reserved for
+// pure crypto unit tests). Requires MONI_SIGNUP_TOKEN to be set, matching
+// the same gate a real sign-up faces (see .env.example).
 import "dotenv/config";
-import { randomUUID, randomBytes } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { Client } from "pg";
 import { eq } from "drizzle-orm";
 import Decimal from "decimal.js";
 import { withUser } from "@/db/client";
 import * as schema from "@/db/schema";
-import { encryptField, decryptField, getDevUserDataKey, wipe, type AadContext } from "@/lib/crypto";
+import { encryptField, decryptField, wipe, type AadContext } from "@/lib/crypto";
 import { multiply } from "@/lib/money";
-import { wrapDataKey, DEFAULT_ARGON2_PARAMS } from "@/lib/auth/password";
+import { createUser } from "@/domain/registration";
 
 // Demo login password shared by both seeded users (dev only). Printed in the
 // seed summary. In production, users choose their own; here it just lets the
@@ -107,7 +111,6 @@ async function seedFxRates(owner: Client): Promise<number> {
 //    not a bypass (security-design-principles.md §9-11).
 // ---------------------------------------------------------------------------
 interface UserPlan {
-  id: string;
   email: string;
   displayName: string;
   checkingName: string;
@@ -127,7 +130,6 @@ interface UserPlan {
 
 const USERS: UserPlan[] = [
   {
-    id: randomUUID(),
     email: "dana@moni.demo",
     displayName: "Dana",
     checkingName: "Bank Leumi Checking",
@@ -145,7 +147,6 @@ const USERS: UserPlan[] = [
     rentAmount: "4500.00",
   },
   {
-    id: randomUUID(),
     email: "yossi@moni.demo",
     displayName: "Yossi",
     checkingName: "Bank Hapoalim Checking",
@@ -180,32 +181,35 @@ interface SeedCounts {
   accountBalanceSnapshots: number;
 }
 
-async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<void> {
-  const dataKey = getDevUserDataKey(plan.id);
+/** A seeded user's identity + the real data key createUser() minted for it —
+ * needed after seedUser() returns, both to keep encrypting fixture rows for
+ * this user and for the decrypt round-trip proof at the end. */
+interface SeededUser {
+  plan: UserPlan;
+  userId: string;
+  dataKey: Buffer;
+}
 
-  // Wrap the per-user data key under the demo password (envelope encryption,
-  // src/lib/auth/password.ts): only the wrapped form is stored, so login can
-  // re-derive the KEK from the password and unwrap the key into a RAM session.
-  const salt = randomBytes(16);
+function requireSignupToken(): string {
+  const token = process.env.MONI_SIGNUP_TOKEN;
+  if (!token) {
+    throw new Error(
+      "MONI_SIGNUP_TOKEN is not set (see .env.example) — required to seed demo users " +
+        "through the real registration path (src/domain/registration.ts createUser()).",
+    );
+  }
+  return token;
+}
+
+async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser> {
+  // Mints real, random key custody through the same function a real sign-up
+  // uses (src/domain/registration.ts) — never the dev key provider.
   const password = Buffer.from(DEMO_PASSWORD, "utf8");
-  const wrappedDataKey = await wrapDataKey(plan.id, dataKey, password, salt);
+  const { userId, dataKey } = await createUser(plan.email, password, requireSignupToken());
   wipe(password);
+  counts.users++;
 
-  await withUser(plan.id, async (tx) => {
-    // --- users -------------------------------------------------------
-    await tx.insert(schema.users).values({
-      id: plan.id,
-      email: plan.email,
-      baseCurrency: "ILS",
-      wrappedDataKey,
-      unlockMethodRef: {
-        type: "password-argon2id",
-        saltB64: salt.toString("base64"),
-        params: DEFAULT_ARGON2_PARAMS,
-      },
-    });
-    counts.users++;
-
+  await withUser(userId, async (tx) => {
     // --- categories ----------------------------------------------------
     const categoryDefs = [
       { key: "salary", name: "Salary", classification: "income" as const },
@@ -220,7 +224,7 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<void> {
       categoryIds[c.key] = id;
       await tx.insert(schema.categories).values({
         id,
-        ownerId: plan.id,
+        ownerId: userId,
         name: c.name,
         classification: c.classification,
       });
@@ -233,13 +237,13 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<void> {
     await tx.insert(schema.merchants).values([
       {
         id: shufersalId,
-        ownerId: plan.id,
+        ownerId: userId,
         nameCt: enc(dataKey, shufersalId, "name_ct", "Shufersal"),
         source: "manual",
       },
       {
         id: netflixId,
-        ownerId: plan.id,
+        ownerId: userId,
         nameCt: enc(dataKey, netflixId, "name_ct", "Netflix"),
         source: "manual",
       },
@@ -257,7 +261,7 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<void> {
     await tx.insert(schema.accounts).values([
       {
         id: checkingId,
-        ownerId: plan.id,
+        ownerId: userId,
         accountType: "checking",
         classification: "asset",
         nameCt: enc(dataKey, checkingId, "name_ct", plan.checkingName),
@@ -268,7 +272,7 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<void> {
       },
       {
         id: creditCardId,
-        ownerId: plan.id,
+        ownerId: userId,
         accountType: "credit_card",
         classification: "liability",
         nameCt: enc(dataKey, creditCardId, "name_ct", plan.creditCardName),
@@ -279,7 +283,7 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<void> {
       },
       {
         id: thirdAccountId,
-        ownerId: plan.id,
+        ownerId: userId,
         accountType: plan.thirdAccount.type,
         classification: "asset",
         nameCt: enc(dataKey, thirdAccountId, "name_ct", plan.thirdAccount.name),
@@ -299,7 +303,7 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<void> {
     // --- credit_card_details ---------------------------------------------
     await tx.insert(schema.creditCardDetails).values({
       accountId: creditCardId,
-      ownerId: plan.id,
+      ownerId: userId,
       statementCloseDay: 10,
       paymentDueDay: 25,
       creditLimitCt: enc(dataKey, creditCardId, "credit_limit_ct", "20000.00"),
@@ -320,7 +324,7 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<void> {
       const id = randomUUID();
       await tx.insert(schema.accountBalanceSnapshots).values({
         id,
-        ownerId: plan.id,
+        ownerId: userId,
         accountId: s.accountId,
         date: TODAY,
         nativeBalanceCt: enc(dataKey, id, "native_balance_ct", s.amount),
@@ -335,7 +339,7 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<void> {
     const netflixAmount = "-49.90";
     await tx.insert(schema.recurringSeries).values({
       id: recurringSeriesId,
-      ownerId: plan.id,
+      ownerId: userId,
       merchantId: netflixId,
       categoryId: categoryIds.entertainment,
       cadence: "monthly",
@@ -581,7 +585,7 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<void> {
       const id = entryIds[i];
       await tx.insert(schema.entries).values({
         id,
-        ownerId: plan.id,
+        ownerId: userId,
         accountId: def.accountId,
         entryType: "transaction",
         date: def.date,
@@ -607,7 +611,7 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<void> {
 
       await tx.insert(schema.entryTransactions).values({
         entryId: id,
-        ownerId: plan.id,
+        ownerId: userId,
         kind: def.kind,
       });
       counts.entryTransactions++;
@@ -616,13 +620,15 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<void> {
     // --- transfers ---------------------------------------------------------
     await tx.insert(schema.transfers).values({
       id: randomUUID(),
-      ownerId: plan.id,
+      ownerId: userId,
       inflowEntryId: inflowId,
       outflowEntryId: outflowId,
       status: "completed",
     });
     counts.transfers++;
   });
+
+  return { plan, userId, dataKey };
 }
 
 // ---------------------------------------------------------------------------
@@ -630,21 +636,23 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<void> {
 //    normal RLS-scoped path and decrypts it with the same AAD used to
 //    encrypt, proving the ciphertext is honest, not opaque filler.
 // ---------------------------------------------------------------------------
-async function proveRoundTrip(plan: UserPlan): Promise<{ field: string; value: string }> {
-  const dataKey = getDevUserDataKey(plan.id);
-  return withUser(plan.id, async (tx) => {
+async function proveRoundTrip(seeded: SeededUser): Promise<{ field: string; value: string }> {
+  return withUser(seeded.userId, async (tx) => {
     const [account] = await tx
       .select()
       .from(schema.accounts)
-      .where(eq(schema.accounts.ownerId, plan.id))
+      .where(eq(schema.accounts.ownerId, seeded.userId))
       .limit(1);
     if (!account) throw new Error("Round-trip check: no account found");
-    const plaintext = decryptField(dataKey, account.nameCt, {
+    const plaintext = decryptField(seeded.dataKey, account.nameCt, {
       rowId: account.id,
       column: "name_ct",
       version: account.version,
     });
-    return { field: `accounts.name_ct (${plan.email})`, value: plaintext.toString("utf8") };
+    return {
+      field: `accounts.name_ct (${seeded.plan.email})`,
+      value: plaintext.toString("utf8"),
+    };
   });
 }
 
@@ -679,17 +687,18 @@ async function main() {
     console.log("Seeding fx_rates...");
     const fxRateCount = await seedFxRates(owner);
 
+    const seededUsers: SeededUser[] = [];
     for (const plan of USERS) {
       console.log(`Seeding user ${plan.displayName} (${plan.email})...`);
-      await seedUser(plan, counts);
+      seededUsers.push(await seedUser(plan, counts));
     }
 
     console.log("\nVerifying encryption round-trip...");
-    const roundTrips = await Promise.all(USERS.map(proveRoundTrip));
+    const roundTrips = await Promise.all(seededUsers.map(proveRoundTrip));
 
     console.log("\n=== Seed summary ===");
-    for (const plan of USERS) {
-      console.log(`- ${plan.displayName}: ${plan.email} (id ${plan.id})`);
+    for (const s of seededUsers) {
+      console.log(`- ${s.plan.displayName}: ${s.plan.email} (id ${s.userId})`);
     }
     console.log(`demo login password (both users): ${DEMO_PASSWORD}`);
     console.log(`fx_rates: ${fxRateCount}`);
@@ -707,6 +716,11 @@ async function main() {
     for (const rt of roundTrips) {
       console.log(`- ${rt.field} -> "${rt.value}"`);
     }
+
+    // Seeding + verification are done — wipe the data keys createUser()
+    // returned (Tier-0 hygiene; the script is about to exit anyway, but
+    // never rely on process exit to clear a secret it's still holding).
+    for (const s of seededUsers) wipe(s.dataKey);
   } finally {
     await owner.end();
   }

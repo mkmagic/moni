@@ -1,6 +1,6 @@
 // Bootstraps an ISOLATED `moni_test` database on the same local Postgres
 // instance as the shared dev `moni` database (docker-compose.yml), and
-// applies the two committed migrations to it directly via `pg`, bypassing
+// applies the committed migrations to it directly via `pg`, bypassing
 // drizzle-kit entirely.
 //
 // Why not drizzle-kit: `drizzle.config.ts` owns `DATABASE_URL_MIGRATE` for
@@ -14,7 +14,7 @@
 // The script reproduces drizzle-kit's own convention for splitting a
 // migration file into individual statements — splitting on the literal
 // `--> statement-breakpoint` marker drizzle-kit inserts between them — and
-// applies both files in one transaction, exactly as
+// applies all files in one transaction, exactly as
 // `drizzle/0001_rls_and_roles.sql`'s header comment documents drizzle-kit
 // doing for the real database (roles/grants are idempotent, so re-running
 // this against an already-migrated `moni_test` — which we avoid anyway via
@@ -40,7 +40,20 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.join(__dirname, "..", "..", "drizzle");
-const MIGRATION_FILES = ["0000_nervous_master_mold.sql", "0001_rls_and_roles.sql"];
+const MIGRATION_FILES = [
+  "0000_nervous_master_mold.sql",
+  "0001_rls_and_roles.sql",
+  "0002_auth_lookup.sql",
+  "0003_polite_thunderball.sql",
+  "0004_user_unlock_methods_rls_and_roles.sql",
+  "0005_open_vargas.sql",
+];
+
+/** Bookkeeping for which of MIGRATION_FILES this database has already seen.
+ * Deliberately not drizzle's `__drizzle_migrations` — this script owns
+ * moni_test's schema state and must not be confused with drizzle-kit's
+ * bookkeeping for the real `moni` database (see the header comment). */
+const APPLIED_TABLE = "_moni_test_migrations";
 
 export const TEST_DB_NAME = "moni_test";
 
@@ -104,11 +117,37 @@ async function createDatabaseIfMissing(): Promise<void> {
   }
 }
 
-async function migrationsAlreadyApplied(client: Client): Promise<boolean> {
-  const { rows } = await client.query(
+/**
+ * Which migration files this database has already had applied.
+ *
+ * Back-fills the bookkeeping table for a moni_test created before it existed:
+ * if `users` is present but the table isn't, every migration up to and
+ * including 0004 must already have run (that was the complete list at the
+ * time), so they are recorded as applied rather than re-run.
+ */
+async function appliedMigrations(client: Client): Promise<Set<string>> {
+  await client.query(
+    `create table if not exists ${APPLIED_TABLE} (
+       file text primary key,
+       applied_at timestamptz not null default now()
+     )`,
+  );
+
+  const { rows: existing } = await client.query<{ file: string }>(
+    `select file from ${APPLIED_TABLE}`,
+  );
+  if (existing.length > 0) return new Set(existing.map((r) => r.file));
+
+  const { rows: hasUsers } = await client.query(
     `select 1 from information_schema.tables where table_schema = 'public' and table_name = 'users'`,
   );
-  return rows.length > 0;
+  if (hasUsers.length === 0) return new Set();
+
+  const preexisting = MIGRATION_FILES.slice(0, MIGRATION_FILES.indexOf("0005_open_vargas.sql"));
+  for (const file of preexisting) {
+    await client.query(`insert into ${APPLIED_TABLE} (file) values ($1)`, [file]);
+  }
+  return new Set(preexisting);
 }
 
 function splitStatements(sql: string): string[] {
@@ -118,14 +157,16 @@ function splitStatements(sql: string): string[] {
     .filter((s) => s.length > 0);
 }
 
-async function applyMigrations(client: Client): Promise<void> {
+async function applyMigrations(client: Client, files: string[]): Promise<void> {
+  if (files.length === 0) return;
   await client.query("BEGIN");
   try {
-    for (const file of MIGRATION_FILES) {
+    for (const file of files) {
       const sql = await readFile(path.join(MIGRATIONS_DIR, file), "utf8");
       for (const statement of splitStatements(sql)) {
         await client.query(statement);
       }
+      await client.query(`insert into ${APPLIED_TABLE} (file) values ($1)`, [file]);
     }
     await client.query("COMMIT");
   } catch (err) {
@@ -136,11 +177,15 @@ async function applyMigrations(client: Client): Promise<void> {
 
 /**
  * Idempotent, concurrency-safe bootstrap: creates `moni_test` if it doesn't
- * exist and applies both committed migrations (schema + roles/RLS) if they
- * haven't run yet. Safe to call from test setup on every run — advisory
- * locks serialize it across vitest's parallel workers, and the "does
- * `users` exist" check makes re-invocation across test runs (and across
- * every subsequent test file within one run) a cheap no-op query.
+ * exist and applies whichever of MIGRATION_FILES it hasn't seen yet. Safe to
+ * call from test setup on every run — advisory locks serialize it across
+ * vitest's parallel workers, and on an up-to-date database this costs one
+ * cheap SELECT.
+ *
+ * Adding a migration means adding its filename to MIGRATION_FILES and nothing
+ * else. (This used to guard on "does `users` exist", which meant an existing
+ * moni_test silently skipped every migration after the first — the schema
+ * drifted and DB tests failed with a confusing "column does not exist".)
  */
 export async function ensureTestDatabase(): Promise<void> {
   await createDatabaseIfMissing();
@@ -150,9 +195,11 @@ export async function ensureTestDatabase(): Promise<void> {
   try {
     await client.query("select pg_advisory_lock($1)", [MIGRATE_LOCK_KEY]);
     try {
-      if (!(await migrationsAlreadyApplied(client))) {
-        await applyMigrations(client);
-      }
+      const applied = await appliedMigrations(client);
+      await applyMigrations(
+        client,
+        MIGRATION_FILES.filter((f) => !applied.has(f)),
+      );
     } finally {
       await client.query("select pg_advisory_unlock($1)", [MIGRATE_LOCK_KEY]);
     }

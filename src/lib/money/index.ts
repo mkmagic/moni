@@ -1,7 +1,10 @@
 // Exact-decimal money helpers (decimal.js-backed) land here (T4). See
 // docs/design/money-and-currency.md. Never a JS number/float for money, not
 // even transiently — every function here goes string -> Decimal -> string.
+// The one deliberate exception is from-scraper-number.ts, re-exported below
+// — see its header for why it exists at all.
 import Decimal from "decimal.js";
+export { decimalStringFromScraperNumber } from "./from-scraper-number";
 
 /**
  * Canonical decimal-string money value. `amount` is never a JS number.

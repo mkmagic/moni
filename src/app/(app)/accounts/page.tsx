@@ -1,9 +1,11 @@
 import { requireSession } from "@/domain/auth";
+import { requireOnboarded } from "@/domain/onboarding";
 import { listAccounts } from "@/domain/accounts";
 import { AccountCard } from "@/components/account-card";
 
 export default async function AccountsPage() {
   const session = await requireSession();
+  await requireOnboarded(session.userId);
   const accounts = await listAccounts(session);
   const assets = accounts.filter((a) => a.classification === "asset");
   const liabilities = accounts.filter((a) => a.classification === "liability");

@@ -64,7 +64,7 @@ Amber is a brand **accent**, not a UI color: reach for it to draw the eye to one
 
 - **Positive** (inflow, income, asset value) → `text-positive` (teal). **Negative** (outflow, expense, liability) → `text-negative` (coral). **Neutral** (no direction implied — a category label, a non-monetary count) → `text-foreground`.
 - Every rendered amount carries `.tabular-nums`, which switches the figure to Geist Mono with `font-variant-numeric: tabular-nums` (defined in `globals.css`) so columns of money align regardless of digit width.
-- **Formatting and rounding happen only at the display edge, never in the domain layer** — cross-ref @money-and-currency.md §3/§6. A component receives a value the domain layer already produced as an exact decimal string; it is not the component's job to compute, only to format and color it.
+- **Formatting and rounding happen only at the display edge, never in the domain layer** — cross-ref `money-and-currency.md` §3/§6. A component receives a value the domain layer already produced as an exact decimal string; it is not the component's job to compute, only to format and color it.
 - Money values arriving in a component are always `{ amount: string, currency }`. **Never render a JS `number`/float for money** — if a value shows up as a `number`, that's a bug upstream, not something to `.toFixed()` around in the UI.
 
 ## 4. Typography
@@ -99,7 +99,7 @@ Amber is a brand **accent**, not a UI color: reach for it to draw the eye to one
 - Color money by direction: teal for positive, coral for negative, foreground for neutral.
 
 **Don't:**
-- Format or round money in the domain layer — formatting is a display-edge concern only (@money-and-currency.md).
+- Format or round money in the domain layer — formatting is a display-edge concern only (`money-and-currency.md`).
 - Render a JS float for a monetary value, anywhere in the UI.
 - Add drop shadows for *static* elevation — depth is a border + surface-color step, not a shadow. (The one exception is the **hover glow on a clickable card**, above — a signal that it's a link, not resting elevation.)
 - Use amber as a large fill (a card background, a full-width banner) — it's an accent, not a surface color.
@@ -107,4 +107,4 @@ Amber is a brand **accent**, not a UI color: reach for it to draw the eye to one
 
 ## Related
 
-@conventions.md · @money-and-currency.md · @../../vision.md
+`conventions.md` · `money-and-currency.md` · `../../vision.md`

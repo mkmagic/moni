@@ -2,7 +2,7 @@
 Moni is a self-hosted personal finance app that covers the entire spectrum of managing your finances - from budgeting, tracking income and expenses, managing accounts, investments, and insurances. It is AI-native from the grounds up, providing MCPs that allow agents to interact with the data and to answer user’s queries. It is cross-currency, and extendible by design to support different integrations and data sources. It has built-it intelligence - suggestions on how to save money, how much can be invested, and can understand the user’s financial philosophy. 
 Moni is built first and foremost for Israeli citizens, but supports dual-citizenship users, mainly those with US bank / investment account accounts.
 
-**Deployment model**: Moni is self-hosted by a single technical owner (the person who runs the server), but is multi-user — family members get their own accounts and use the app without touching any infrastructure. "Simple setup" therefore means *simple account onboarding for a non-technical family member*, not simple ops. Cross-user data isolation is a hard requirement (see @docs/security/threat-model.md).
+**Deployment model**: Moni is self-hosted by a single technical owner (the person who runs the server), but is multi-user — family members get their own accounts and use the app without touching any infrastructure. "Simple setup" therefore means *simple account onboarding for a non-technical family member*, not simple ops. Cross-user data isolation is a hard requirement (see `docs/security/threat-model.md`).
 ## Design Principles
 - Smart DB Design and Security from day 1. 
 - AI-native, read-first. In v1.0 agents can **only read** — there is no write path exposed to AI at all. A future version may add a propose-and-confirm mechanism (agents generate previews, users confirm before anything is written). All access — human or agent — goes through a single domain/service layer that governs the DB; there is no second write path.
@@ -118,7 +118,7 @@ Moni is a large product. v1.0 deliberately ships a thin, correct spine and defer
 - **One Israeli bank-aggregation source** via `israeli-bank-scrapers`, behind the generic connector interface. Multiple providers and US brokers are deferred.
 - **Income & expense tracking** with deterministic-first, model-fallback categorization and attribute-locking. Subscription/recurring detection.
 - **The overview dashboard** and the income/expense/statistics views with month-over-month graphs.
-- **Security foundation**: per-user envelope encryption of sensitive fields, Postgres Row-Level Security for cross-user isolation, and the credential-custody model in @docs/security/threat-model.md (encrypted-at-rest bank credentials, user-triggered decryption for sync, recovery codes).
+- **Security foundation**: per-user envelope encryption of sensitive fields, Postgres Row-Level Security for cross-user isolation, and the credential-custody model in `docs/security/threat-model.md` (encrypted-at-rest bank credentials, user-triggered decryption for sync, recovery codes).
 - **The read-only domain layer, API, and MCP.** The built-in AI chat assistant, read-only.
 
 ## Explicitly NOT in v1.0
@@ -145,4 +145,4 @@ Finlynq's stack is a good starting point and we adopt most of it, with two delib
 - **Add a real background-job runner.** Finlynq's single-process ceiling comes from having no worker tier. Moni needs a queue + worker for bank scrapes and market-data fetches (and later portfolio snapshots). Prefer **`pg-boss`** (Postgres-backed — no extra infrastructure to run for a self-hoster) over BullMQ+Redis unless we later need Redis for other reasons. Rate-limit and cache state for scrapers/providers lives here, outside the request cycle.
 
 **Add (not in Finlynq):**
-- Envelope encryption for financial-credential fields and a key-custody flow that a background scrape can use — see @docs/security/threat-model.md for the design.
+- Envelope encryption for financial-credential fields and a key-custody flow that a background scrape can use — see `docs/security/threat-model.md` for the design.
