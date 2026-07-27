@@ -10,7 +10,7 @@ Moni is **TypeScript end-to-end**:
 - **Database & ORM:** PostgreSQL + Drizzle ORM
 - **UI:** Tailwind CSS + shadcn/ui + Recharts
 - **MCP:** `@modelcontextprotocol/sdk`
-- **Background Jobs:** `pg-boss` (Postgres-backed queue/worker) for long-running tasks like bank scraping.
+- **Background Jobs:** none yet. Long-running work (bank scraping) is a fire-and-forget `spawn()` of a `tsx` child process from the API route (`scripts/scrape-worker.mts`); the parent marks the `sync_runs` row `running` and the UI polls it. A Postgres-backed queue (`pg-boss`) is the intended destination but **is not installed** — don't write code that assumes a scheduler exists.
 - **Testing & Tooling:** Playwright, Zod, jose/bcryptjs/otpauth.
 ## Non-Negotiable Invariants
 These override “simplicity” — never trade them away without asking.

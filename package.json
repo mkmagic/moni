@@ -15,6 +15,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "seed:demo": "tsx scripts/seed-demo.ts",
+    "categories:sync": "tsx scripts/sync-categories.ts",
     "scrape:test": "tsx scripts/scrape-test.ts",
     "test": "vitest run",
     "test:watch": "vitest"

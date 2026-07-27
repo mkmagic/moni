@@ -10,6 +10,7 @@ import { withUser } from "@/db/client";
 import { users, userUnlockMethods } from "@/db/schema";
 import { deriveKekFromPassword, wrapWithKek, DEFAULT_ARGON2_PARAMS } from "@/lib/auth/password";
 import { wipe, type AadContext } from "@/lib/crypto";
+import { seedDefaultCategories } from "./categorization";
 
 /** Thrown when the email is already registered. Detected via the DB's
  * unique constraint, never a pre-SELECT — RLS makes "does this email exist?"
@@ -103,6 +104,9 @@ export async function createUser(
           wrappedCredentialKey,
           unlockRef: { saltB64: salt.toString("base64"), params: DEFAULT_ARGON2_PARAMS },
         });
+        // The shipped category tree. Plaintext Tier-2 labels, so this needs
+        // no data key and can land in the same transaction as the user.
+        await seedDefaultCategories(tx, userId);
       });
     } catch (err) {
       if (isEmailUniqueViolation(err)) throw new EmailAlreadyExistsError(email);

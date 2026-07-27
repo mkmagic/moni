@@ -6,6 +6,7 @@ import {
   date,
   boolean,
   integer,
+  numeric,
   foreignKey,
   unique,
 } from "drizzle-orm/pg-core";
@@ -24,6 +25,11 @@ export const entryFieldChangeSourceEnum = pgEnum("entry_field_change_source", [
   "model",
   "user",
 ]);
+export const categorySuggestionStatusEnum = pgEnum("category_suggestion_status", [
+  "pending",
+  "accepted",
+  "rejected",
+]);
 
 /** Tier-2, plaintext label — not sensitive (data-model.md §5). */
 export const categories = pgTable(
@@ -40,10 +46,15 @@ export const categories = pgTable(
     classification: categoryClassificationEnum("classification").notNull(),
     color: text("color"),
     icon: text("icon"),
+    // Stable identity for a category seeded from the shipped default set, so
+    // a built-in rule still resolves to the right row after the user renames
+    // it. Null for user-created categories.
+    builtinKey: text("builtin_key"),
     ...timestamps,
   },
   (table) => [
     unique("categories_owner_id_id_unique").on(table.ownerId, table.id),
+    unique("categories_owner_id_builtin_key_unique").on(table.ownerId, table.builtinKey),
     foreignKey({
       columns: [table.ownerId, table.parentId],
       foreignColumns: [table.ownerId, table.id],
@@ -88,6 +99,46 @@ export const entryFieldChangelog = pgTable(
       columns: [table.ownerId, table.entryId],
       foreignColumns: [entries.ownerId, entries.id],
     }).onDelete("cascade"),
+  ],
+);
+
+/**
+ * A model's proposed category for one entry, awaiting user approval. Never
+ * written to `entries.category_id` directly — v1.0 has no AI write path
+ * (AGENTS.md). One row per entry (unique on `(owner_id, entry_id)`) is what
+ * freezes the result, so the same input never re-categorizes differently
+ * (vision.md §"deterministic-first, model-as-fallback"); a row with a null
+ * `category_id` records "the model looked and had no answer", which is what
+ * stops a later pass from asking again.
+ */
+export const categorySuggestions = pgTable(
+  "category_suggestions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => users.id),
+    entryId: uuid("entry_id").notNull(),
+    categoryId: uuid("category_id"),
+    confidence: numeric("confidence"),
+    model: text("model").notNull(),
+    status: categorySuggestionStatusEnum("status").notNull().default("pending"),
+    /** The model's rationale — untrusted generated text about a Tier-1 description. */
+    reasonCt: bytea("reason_ct"),
+    version: integer("version").notNull().default(1),
+    ...timestamps,
+  },
+  (table) => [
+    unique("category_suggestions_owner_id_id_unique").on(table.ownerId, table.id),
+    unique("category_suggestions_owner_id_entry_id_unique").on(table.ownerId, table.entryId),
+    foreignKey({
+      columns: [table.ownerId, table.entryId],
+      foreignColumns: [entries.ownerId, entries.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.ownerId, table.categoryId],
+      foreignColumns: [categories.ownerId, categories.id],
+    }),
   ],
 );
 

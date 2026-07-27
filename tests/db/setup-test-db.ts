@@ -47,6 +47,8 @@ const MIGRATION_FILES = [
   "0003_polite_thunderball.sql",
   "0004_user_unlock_methods_rls_and_roles.sql",
   "0005_open_vargas.sql",
+  "0006_burly_karma.sql",
+  "0007_category_suggestions_rls_and_roles.sql",
 ];
 
 /** Bookkeeping for which of MIGRATION_FILES this database has already seen.

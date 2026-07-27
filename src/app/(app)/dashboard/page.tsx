@@ -9,6 +9,9 @@ import { Money } from "@/components/money";
 import { Sparkline } from "@/components/sparkline";
 import { StatCard } from "@/components/stat-card";
 import { IncomeExpenseChart } from "@/components/income-expense-chart";
+import { NeedsReviewCard } from "@/components/needs-review-card";
+import { listCategories } from "@/domain/categorization";
+import { listEntries } from "@/domain/transactions";
 
 /** Time-of-day greeting from the SERVER's clock. This is a self-hosted,
  * single-household app, so the server and the household share a timezone —
@@ -23,7 +26,12 @@ function timeOfDay(hour: number): string {
 export default async function DashboardPage() {
   const session = await requireSession();
   await requireOnboarded(session.userId);
-  const [overview, profile] = await Promise.all([getOverview(session), getProfile(session.userId)]);
+  const [overview, profile, needsReview, categories] = await Promise.all([
+    getOverview(session),
+    getProfile(session.userId),
+    listEntries(session, { uncategorized: true, limit: 50 }),
+    listCategories(session),
+  ]);
 
   const name = profile?.displayName?.trim();
   // One template literal, not adjacent JSX text nodes — Turbopack trims the
@@ -100,6 +108,8 @@ export default async function DashboardPage() {
           series={overview.months.map((m) => m.expenses)}
         />
       </div>
+
+      <NeedsReviewCard entries={needsReview} categories={categories} />
 
       <Card>
         <CardHeader>

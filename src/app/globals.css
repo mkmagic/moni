@@ -34,6 +34,10 @@
   /* Money signal */
   --color-positive: oklch(0.74 0.13 172); /* teal/green — inflow, asset */
   --color-negative: oklch(0.66 0.19 20); /* coral/rose — outflow, liability */
+  /* Blue — money that only moved. A transfer's sign says which side of the
+     move you are looking at, not whether anything was earned or spent, so
+     teal/coral would read as a judgement the figure doesn't carry. */
+  --color-transfer: oklch(0.68 0.12 264);
 
   /* Charts */
   --color-chart-1: oklch(0.78 0.15 75); /* amber */

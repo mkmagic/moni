@@ -43,6 +43,20 @@
       "when": 1785077758483,
       "tag": "0005_open_vargas",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785093290784,
+      "tag": "0006_burly_karma",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1785093300617,
+      "tag": "0007_category_suggestions_rls_and_roles",
+      "breakpoints": true
     }
   ]
 }

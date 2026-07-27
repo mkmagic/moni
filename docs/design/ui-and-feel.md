@@ -47,6 +47,7 @@ All values below are transcribed verbatim from the `@theme` block in `src/app/gl
 |---|---|---|---|
 | `--color-positive` | `oklch(0.74 0.13 172)` | (teal/green) | Positive amounts: inflow, income, asset value. |
 | `--color-negative` | `oklch(0.66 0.19 20)` | (coral/rose) | Negative amounts: outflow, expense, liability. |
+| `--color-transfer` | `oklch(0.68 0.12 264)` | (blue) | Amounts that only *moved*: transfer-classified entries, e.g. a credit-card settlement. |
 
 ### Charts
 
@@ -63,6 +64,7 @@ Amber is a brand **accent**, not a UI color: reach for it to draw the eye to one
 ## 3. Money color semantics
 
 - **Positive** (inflow, income, asset value) → `text-positive` (teal). **Negative** (outflow, expense, liability) → `text-negative` (coral). **Neutral** (no direction implied — a category label, a non-monetary count) → `text-foreground`.
+- **Transfer** (money moved, not earned or spent — the entry's category is classified `transfer`) → `text-transfer` (blue), overriding the sign color. A transfer's minus sign says which side of the move you're looking at, not that anything was spent; teal/coral would assert a judgement the figure doesn't carry. Pass `transfer` to `<Money>`; the domain layer decides via `EntryView.isTransfer` (`src/domain/flows.ts`). This is the **only** sanctioned third money color — it is not a license to add more.
 - Every rendered amount carries `.tabular-nums`, which switches the figure to Geist Mono with `font-variant-numeric: tabular-nums` (defined in `globals.css`) so columns of money align regardless of digit width.
 - **Formatting and rounding happen only at the display edge, never in the domain layer** — cross-ref `money-and-currency.md` §3/§6. A component receives a value the domain layer already produced as an exact decimal string; it is not the component's job to compute, only to format and color it.
 - Money values arriving in a component are always `{ amount: string, currency }`. **Never render a JS `number`/float for money** — if a value shows up as a `number`, that's a bug upstream, not something to `.toFixed()` around in the UI.

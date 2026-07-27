@@ -3,19 +3,40 @@
 // narrowed set, and derives the reporting amount = entered × locked fx_rate
 // (data-model.md §4.3). Pending-FX entries are flagged, never faked to 1:1
 // (money-and-currency.md §4).
-import { and, desc, eq, gte, lte } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lte } from "drizzle-orm";
 import { withUser } from "@/db/client";
 import { accounts, categories, entries, merchants } from "@/db/schema";
 import { multiply, type Money } from "@/lib/money";
 import type { Session } from "@/lib/auth/session-store";
+import { normalizeDescription } from "@/lib/categorization/normalize";
 import { decText } from "./fields";
+import { isFieldLocked } from "./attribute-locks";
+import { loadTransferCategoryIds } from "./flows";
+
+/** Formatted here, on the server, with an explicit locale — a client
+ * component that called `toLocaleDateString()` on the raw ISO string would
+ * hydrate differently than it rendered (.agents/skills/ui-developer). */
+const DATE_LABEL = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium" });
 
 export interface EntryView {
   id: string;
   date: string;
+  /** Pre-formatted for display; safe to render inside a client component. */
+  dateLabel: string;
   description: string;
+  /** The normalized description — what an "apply to future" rule matches on.
+   * Computed here so the UI never has to re-derive merchant identity. */
+  matchText: string;
+  accountId: string;
   accountName: string;
+  categoryId: string | null;
   categoryName: string | null;
+  /** True once a human set the category — rules and the model skip it forever. */
+  categoryLocked: boolean;
+  /** The category is classified `transfer`: money moved, not earned or spent.
+   * The UI colors these blue rather than teal/coral, because the sign of a
+   * transfer is not good or bad news (`src/domain/flows.ts`). */
+  isTransfer: boolean;
   merchantName: string | null;
   /** Reporting (base-currency) amount when the rate is locked; the entered leg when pending. Sign carried. */
   amount: Money;
@@ -30,6 +51,10 @@ export interface EntryFilters {
   to?: string;
   accountId?: string;
   limit?: number;
+  /** The review queue: entries with no category yet. Excluded entries (one
+   * leg of an internal transfer) are left out — they are not "needing
+   * review", they are deliberately out of the totals. */
+  uncategorized?: boolean;
 }
 
 export async function listEntries(
@@ -42,6 +67,10 @@ export async function listEntries(
     if (filters.from) conds.push(gte(entries.date, filters.from));
     if (filters.to) conds.push(lte(entries.date, filters.to));
     if (filters.accountId) conds.push(eq(entries.accountId, filters.accountId));
+    if (filters.uncategorized) {
+      conds.push(isNull(entries.categoryId));
+      conds.push(eq(entries.excluded, false));
+    }
 
     const rows = await tx
       .select()
@@ -60,6 +89,7 @@ export async function listEntries(
 
     const catRows = await tx.select({ id: categories.id, name: categories.name }).from(categories);
     const catName = new Map(catRows.map((c) => [c.id, c.name]));
+    const transferCategoryIds = await loadTransferCategoryIds(tx);
 
     const merRows = await tx
       .select({ id: merchants.id, nameCt: merchants.nameCt, version: merchants.version })
@@ -84,9 +114,15 @@ export async function listEntries(
       return {
         id: e.id,
         date: e.date,
+        dateLabel: DATE_LABEL.format(new Date(e.date)),
         description,
+        matchText: normalizeDescription(description),
+        accountId: e.accountId,
         accountName: acctName.get(e.accountId) ?? "—",
+        categoryId: e.categoryId,
         categoryName: e.categoryId ? (catName.get(e.categoryId) ?? null) : null,
+        categoryLocked: isFieldLocked(e.lockedAttributes, "category_id"),
+        isTransfer: e.categoryId !== null && transferCategoryIds.has(e.categoryId),
         merchantName: e.merchantId ? (merName.get(e.merchantId) ?? null) : null,
         amount,
         fxPending,

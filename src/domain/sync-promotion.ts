@@ -34,6 +34,7 @@ import {
   type ScraperTransaction,
 } from "@/lib/connectors";
 import { decText, encText } from "./fields";
+import { categorizeEntries } from "./categorization";
 
 type Tx = Parameters<Parameters<typeof withUser>[1]>[0];
 
@@ -247,6 +248,13 @@ async function resolveFx(
 
 type TxnBranch = "new" | "matchedUnchanged" | "updatedPendingToPosted";
 
+/** The branch taken, plus the entry it landed on — the caller collects the
+ * ids so categorization can run once over the whole batch. */
+interface TxnOutcome {
+  branch: TxnBranch;
+  entryId: string;
+}
+
 /**
  * Reconciles one scraped transaction against `entries.import_key`
  * (data-model.md §5/§6.4, docs plan §D). Always logs the raw payload to
@@ -262,7 +270,7 @@ async function promoteTransaction(
   resolved: ResolvedAccount,
   reportingCurrency: string,
   txn: ScraperTransaction,
-): Promise<TxnBranch> {
+): Promise<TxnOutcome> {
   const enteredAmount = decimalStringFromScraperNumber(txn.originalAmount);
   const accountAmount = decimalStringFromScraperNumber(txn.chargedAmount);
   const enteredCurrency = txn.originalCurrency;
@@ -343,7 +351,7 @@ async function promoteTransaction(
       promotedEntryId: entryId,
     });
 
-    return "new";
+    return { branch: "new", entryId };
   }
 
   if (existing.status === "pending" && newStatus === "posted") {
@@ -390,7 +398,7 @@ async function promoteTransaction(
       promotedEntryId: existing.id,
     });
 
-    return "updatedPendingToPosted";
+    return { branch: "updatedPendingToPosted", entryId: existing.id };
   }
 
   // --- Matched, unchanged: staging row logged, nothing else touched. This
@@ -407,7 +415,7 @@ async function promoteTransaction(
     promotedEntryId: existing.id,
   });
 
-  return "matchedUnchanged";
+  return { branch: "matchedUnchanged", entryId: existing.id };
 }
 
 export interface PromoteScrapeResultInput {
@@ -431,6 +439,8 @@ export interface PromoteScrapeResultSummary {
   matchedUnchanged: number;
   updatedPendingToPosted: number;
   balanceSnapshots: number;
+  /** How many of this run's entries the categorization engine resolved. */
+  categorized: number;
 }
 
 /**
@@ -458,7 +468,14 @@ export async function promoteScrapeResult(
       matchedUnchanged: 0,
       updatedPendingToPosted: 0,
       balanceSnapshots: 0,
+      categorized: 0,
     };
+
+    // Entries worth running the categorizer over: the ones just created,
+    // plus the ones whose description a pending->posted update just changed
+    // (a new description can match a rule the old one didn't). Already
+    // categorized or user-locked entries are filtered out downstream.
+    const touchedEntryIds: string[] = [];
 
     for (const scraperAccount of input.accounts) {
       const resolved = await resolveAccount(
@@ -482,7 +499,7 @@ export async function promoteScrapeResult(
       if (gotSnapshot) summary.balanceSnapshots++;
 
       for (const txn of scraperAccount.txns) {
-        const branch = await promoteTransaction(
+        const { branch, entryId } = await promoteTransaction(
           tx,
           userId,
           dataKey,
@@ -492,11 +509,24 @@ export async function promoteScrapeResult(
           reportingCurrency,
           txn,
         );
-        if (branch === "new") summary.newEntries++;
-        else if (branch === "matchedUnchanged") summary.matchedUnchanged++;
-        else summary.updatedPendingToPosted++;
+        if (branch === "new") {
+          summary.newEntries++;
+          touchedEntryIds.push(entryId);
+        } else if (branch === "matchedUnchanged") {
+          summary.matchedUnchanged++;
+        } else {
+          summary.updatedPendingToPosted++;
+          touchedEntryIds.push(entryId);
+        }
       }
     }
+
+    // Categorization runs once for the whole batch, not per transaction:
+    // rule conditions are encrypted, so the ruleset has to be decrypted and
+    // compiled, and doing that per row would be wasteful
+    // (docs/design/categorization.md). Inside this same transaction, so a
+    // rolled-back scrape leaves no categories behind either.
+    summary.categorized = await categorizeEntries(tx, userId, dataKey, touchedEntryIds);
 
     // Last statement in the transaction on purpose (docs plan §D) — a
     // throw anywhere above means this line never runs and the whole

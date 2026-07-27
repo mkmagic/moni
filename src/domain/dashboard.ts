@@ -12,6 +12,7 @@ import { accounts, entries, fxRates } from "@/db/schema";
 import { multiply, type Money } from "@/lib/money";
 import type { Session } from "@/lib/auth/session-store";
 import { decText } from "./fields";
+import { countsAsFlow, loadTransferCategoryIds } from "./flows";
 
 export interface MonthPoint {
   month: string; // "YYYY-MM"
@@ -78,9 +79,13 @@ export async function getOverview(session: Session): Promise<Overview> {
       .from(entries)
       .where(and(gte(entries.date, windowStart), lte(entries.date, today)));
 
+    const transferCategoryIds = await loadTransferCategoryIds(tx);
+
     const buckets = new Map<string, { income: Decimal; expenses: Decimal }>();
     for (const e of entryRows) {
-      if (e.excluded) continue; // transfer legs etc. are not income/expense
+      // Excluded legs and transfer-classified categories are neither income
+      // nor expense — see flows.ts for why, and use it for any new aggregate.
+      if (!countsAsFlow(e, transferCategoryIds)) continue;
       if (e.fxStatus === "pending" || !e.fxRate) continue; // never fake a rate
       const entered = decText(dataKey, e.enteredAmountCt, e.id, "entered_amount_ct", e.version);
       if (entered == null) continue;

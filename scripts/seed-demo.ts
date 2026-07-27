@@ -211,25 +211,30 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
 
   await withUser(userId, async (tx) => {
     // --- categories ----------------------------------------------------
-    const categoryDefs = [
-      { key: "salary", name: "Salary", classification: "income" as const },
-      { key: "groceries", name: "Groceries", classification: "expense" as const },
-      { key: "transport", name: "Transport", classification: "expense" as const },
-      { key: "rent", name: "Rent & Housing", classification: "expense" as const },
-      { key: "entertainment", name: "Entertainment", classification: "expense" as const },
-    ];
-    const categoryIds: Record<string, string> = {};
-    for (const c of categoryDefs) {
-      const id = randomUUID();
-      categoryIds[c.key] = id;
-      await tx.insert(schema.categories).values({
-        id,
-        ownerId: userId,
-        name: c.name,
-        classification: c.classification,
-      });
-      counts.categories++;
-    }
+    // createUser() already seeded the shipped default tree
+    // (src/lib/categorization/default-categories.ts), so this looks up the
+    // handful the demo ledger needs by their stable `builtin_key` rather
+    // than inventing a second, divergent set.
+    const seededCategories = await tx
+      .select({ id: schema.categories.id, builtinKey: schema.categories.builtinKey })
+      .from(schema.categories);
+    counts.categories += seededCategories.length;
+
+    const idByBuiltinKey = new Map(
+      seededCategories.filter((c) => c.builtinKey).map((c) => [c.builtinKey as string, c.id]),
+    );
+    const requireCategory = (builtinKey: string): string => {
+      const id = idByBuiltinKey.get(builtinKey);
+      if (!id) throw new Error(`Default category "${builtinKey}" was not seeded`);
+      return id;
+    };
+    const categoryIds: Record<string, string> = {
+      salary: requireCategory("income-salary"),
+      groceries: requireCategory("food-groceries"),
+      transport: requireCategory("transport-public"),
+      rent: requireCategory("housing-rent"),
+      entertainment: requireCategory("entertainment-subscriptions"),
+    };
 
     // --- merchants -------------------------------------------------------
     const shufersalId = randomUUID();

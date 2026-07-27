@@ -11,7 +11,7 @@ This document defines the architectural rules and invariants for the domain laye
 The domain layer is the **only component allowed to execute database queries**. 
 
 - **App & API:** All UI actions, dashboard queries, and API endpoints must call domain-layer functions. There is no query bypass.
-- **Worker (pg-boss):** Background jobs (scraping, FX fetching) must import and call domain-layer methods. They must not write to the database directly.
+- **Worker:** Background jobs (scraping, FX fetching) must import and call domain-layer methods. They must not write to the database directly. There is **no job queue in v1.0** — the scrape worker is a `tsx` child process spawned fire-and-forget by the sync route (`scripts/scrape-worker.mts`). A Postgres-backed queue (`pg-boss`) is the intended destination but is not installed, so anything that would need scheduling either runs inline in an existing request/transaction or is deferred.
 - **MCP (AI Agents):** All LLM/agent interactions route through the domain layer. 
 
 **v1.0 is strictly read-only for AI.** The domain layer exposes only read methods to the MCP interface. Propose-and-confirm writes are deferred to future versions.
