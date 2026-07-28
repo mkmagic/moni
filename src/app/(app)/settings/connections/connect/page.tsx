@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { requireSession } from "@/domain/auth";
 import { Card } from "@/components/ui/card";
+import { todayIso } from "@/lib/backfill-window";
 import { ConnectWizard } from "./connect-wizard";
 
 export default async function ConnectPage() {
@@ -24,7 +25,9 @@ export default async function ConnectPage() {
       </div>
       <Card>
         <div className="p-6">
-          <ConnectWizard />
+          {/* Server-computed so the picker's bounds match the cap the sync
+              route enforces — see the same note in /onboarding. */}
+          <ConnectWizard today={todayIso()} />
         </div>
       </Card>
     </div>

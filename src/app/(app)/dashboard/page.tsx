@@ -3,7 +3,8 @@ import { requireSession } from "@/domain/auth";
 import { getOverview } from "@/domain/dashboard";
 import { getProfile } from "@/domain/profile";
 import { requireOnboarded } from "@/domain/onboarding";
-import { SyncPrompt } from "./sync-prompt";
+import { listConnections } from "@/domain/connections";
+import { DashboardSync } from "./dashboard-sync";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Money } from "@/components/money";
 import { Sparkline } from "@/components/sparkline";
@@ -26,11 +27,12 @@ function timeOfDay(hour: number): string {
 export default async function DashboardPage() {
   const session = await requireSession();
   await requireOnboarded(session.userId);
-  const [overview, profile, needsReview, categories] = await Promise.all([
+  const [overview, profile, needsReview, categories, connections] = await Promise.all([
     getOverview(session),
     getProfile(session.userId),
     listEntries(session, { uncategorized: true, limit: 50 }),
     listCategories(session),
+    listConnections(session.userId),
   ]);
 
   const name = profile?.displayName?.trim();
@@ -50,12 +52,12 @@ export default async function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <SyncPrompt show={session.promptSyncOnLogin} />
-
-      <div>
-        <h1 className="text-2xl font-semibold text-foreground">Overview</h1>
-        <p className="text-sm text-muted-foreground">{greeting}</p>
-      </div>
+      <DashboardSync
+        connectionIds={connections.map((c) => c.id)}
+        showReminder={session.promptSyncOnLogin}
+        title="Overview"
+        greeting={greeting}
+      />
 
       <Card>
         <CardContent className="flex flex-col gap-6 px-6 pb-6 pt-7 md:flex-row md:items-center md:justify-between">

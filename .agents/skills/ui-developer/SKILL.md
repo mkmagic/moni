@@ -42,6 +42,46 @@ new feedback lands.
 
 ## Feedback log (newest first — append, don't overwrite)
 
+### 2026-07-28 — connections UX (issue #4): backfill picker, dashboard sync, honest labels
+
+- **`cn` is a plain join, not tailwind-merge.** Passing `w-auto` to a primitive whose base is `w-full`
+  puts both classes on the element and the base wins — the backfill date field rendered full-width.
+  Use a `max-w-*` (which beats `width` outright) whenever you need to shrink a primitive, or add the
+  size to the primitive itself. This will bite again on `Input` and `Button`.
+- **A primary action goes top-right of the page heading row.** "Sync all" on the dashboard sits
+  opposite the `<h1>`, `variant="outline"` — the amber stays with the reminder card's own call to
+  action when it's showing (one accent per view). The heading row becomes
+  `flex flex-wrap items-start justify-between`, so the button wraps under the title on narrow
+  viewports rather than crushing it.
+- **A setting's label must describe what it does.** "Automatically sync connections on login?" never
+  synced anything — it shows an offer after an 8-hour gap, because Moni cannot use a stored bank
+  login without the password. Renamed to "Remind me to sync when I sign in", with `CONTEXT.md`
+  pinning "sync reminder" as the term. The column is still `auto_sync_on_login`; the comment there
+  reconciles the two.
+- **Selected-state styling for a pill group:** `border-primary/60 bg-primary/10 text-foreground`,
+  unselected `border-border bg-card text-muted-foreground hover:border-primary/50 hover:bg-muted`.
+  A 10% amber tint on a small pill is an accent, not a fill — consistent with the Switch and the
+  category-picker's `text-primary` check.
+- **Ref-clicking a button can focus without activating.** `computer{ref}` on an institution tile
+  drew the focus ring but never fired `onClick`; a coordinate click on the same tile worked. When a
+  click appears to do nothing, re-click by coordinate before assuming the handler is broken. (Same
+  family as the 2026-07-26 note about coordinate-clicking into inputs.)
+- **"Nothing for now" belongs in the answer row, not beside it.** The owner asked for a way to add a
+  connection without pulling history. It became the first pill under "How far back should we pull?" —
+  a legitimate answer to the question — rather than a separate checkbox. Selecting it disables the
+  date field (dimmed, `value=""` kept so React stays controlled) and swaps both the step subtitle and
+  the helper line. Verified at the DB: the connection lands with `last_sync_at` NULL and **zero**
+  `sync_runs` rows, so nothing is scraped.
+- **A re-seed mid-session looks exactly like a wrong password.** `POST /api/connections` returned
+  "invalid password" for the correct demo password for several attempts. Cause: the DB had been
+  re-seeded (new user UUIDs) while the RAM session still held the old `userId`, so
+  `unlockCredentialKey`'s RLS-scoped lookup found no unlock method and returned null — the same
+  answer as a bad password, by design. Log out and back in before believing an auth failure in dev.
+- **Fixture rows again.** The demo account has zero connections, so it redirects to `/onboarding` and
+  the dashboard never renders. Two throwaway `connections` rows (superuser SQL, junk `credentials_ct`)
+  are enough to render the populated dashboard and exercise the 423 → password-prompt path, since the
+  423 is returned before anything is decrypted. Deleted afterwards.
+
 ### 2026-07-26 (later) — settings, toggles, and "verify in the browser" means it
 
 **A settings screen means TABS, not one long page of sections.** The first build stacked Profile

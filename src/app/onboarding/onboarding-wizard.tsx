@@ -1,126 +1,104 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { InstitutionPicker } from "@/components/institution-picker";
-import { ConnectForm } from "@/components/connect-form";
-import type { ConnectorId } from "@/lib/connectors";
+import { Switch } from "@/components/ui/switch";
+import { ConnectFlow } from "@/components/connect-flow";
 
-type Step =
-  | { kind: "pick" }
-  | { kind: "connect"; connectorId: ConnectorId }
-  | { kind: "syncing"; syncRunId: string; status: string; error: string | null };
-
-/** Institution picker -> connect form -> first sync (docs plan §A3). The
- * connect form arms the credential window inline on success, so the sync
- * kicked off here needs no second password prompt. */
-export function OnboardingWizard() {
+/** Connect one or more institutions (each synced as it's added), then the
+ * sync-reminder question. The connection loop lives in ConnectFlow, shared
+ * with Settings -> Add connection. */
+export function OnboardingWizard({ today }: { today: string }) {
   const router = useRouter();
-  const [step, setStep] = useState<Step>({ kind: "pick" });
+  const [phase, setPhase] = useState<"connect" | "reminder">("connect");
 
-  async function onConnected(connectionId: string) {
+  if (phase === "connect") {
+    return (
+      <Card>
+        <div className="p-6">
+          <ConnectFlow
+            today={today}
+            allowAddAnother
+            doneLabel="Continue"
+            onDone={() => setPhase("reminder")}
+            pickIntro={
+              <div>
+                <h2 className="text-base font-semibold text-foreground">Connect an account</h2>
+                <p className="text-sm text-muted-foreground">
+                  Pick where your money lives. You can add as many as you like.
+                </p>
+              </div>
+            }
+          />
+        </div>
+      </Card>
+    );
+  }
+
+  return <SyncReminderStep onFinish={() => router.push("/dashboard")} />;
+}
+
+/**
+ * The last onboarding step: opt into the sync reminder. Pre-selected on —
+ * it only ever produces an OFFER to sync (never a silent one, and never a use
+ * of a stored bank login without the password), so the cost of a default-on
+ * is one dismissible card after a long absence.
+ */
+function SyncReminderStep({ onFinish }: { onFinish: () => void }) {
+  const [enabled, setEnabled] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function finish() {
+    setSaving(true);
+    setError(null);
     try {
-      const res = await fetch(`/api/connections/${connectionId}/sync`, { method: "POST" });
-      if (res.status === 202) {
-        const body = (await res.json()) as { syncRunId: string };
-        setStep({ kind: "syncing", syncRunId: body.syncRunId, status: "pending", error: null });
-        return;
-      }
+      const res = await fetch("/api/profile", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ autoSyncOnLogin: enabled }),
+      });
+      if (!res.ok) throw new Error();
+      onFinish();
     } catch {
-      // fall through to the dashboard below
+      setError("Could not save that — try again.");
+      setSaving(false);
     }
-    // The connection itself was created successfully even if the sync
-    // couldn't be kicked off (unexpected — first-connect arms inline). The
-    // zero-connections redirect no longer applies now that one exists; the
-    // user can retry the sync from /settings.
-    router.push("/dashboard");
-    router.refresh();
   }
 
-  useEffect(() => {
-    if (step.kind !== "syncing") return;
-    if (step.status === "succeeded" || step.status === "failed") return;
-    const timer = setInterval(async () => {
-      const res = await fetch(`/api/sync-runs/${step.syncRunId}`);
-      if (!res.ok) return;
-      const run = (await res.json()) as { status: string; error: string | null };
-      setStep((s) => (s.kind === "syncing" ? { ...s, status: run.status, error: run.error } : s));
-    }, 2000);
-    return () => clearInterval(timer);
-  }, [step]);
-
-  function goToDashboard() {
-    router.push("/dashboard");
-    router.refresh();
-  }
-
-  if (step.kind === "pick") {
-    return (
-      <Card>
-        <div className="p-6">
-          <h1 className="mb-1 text-xl font-semibold">Connect an account</h1>
-          <p className="mb-5 text-sm text-muted-foreground">
-            Pick where your money lives. You can add more institutions later.
-          </p>
-          <InstitutionPicker
-            onSelect={(connectorId) => setStep({ kind: "connect", connectorId })}
-          />
-        </div>
-      </Card>
-    );
-  }
-
-  if (step.kind === "connect") {
-    return (
-      <Card>
-        <div className="p-6">
-          <h1 className="mb-1 text-xl font-semibold">Enter your login</h1>
-          <p className="mb-5 text-sm text-muted-foreground">
-            We&apos;ll fetch the last 30 days to get you started.
-          </p>
-          <ConnectForm
-            connectorId={step.connectorId}
-            onBack={() => setStep({ kind: "pick" })}
-            onConnected={onConnected}
-          />
-        </div>
-      </Card>
-    );
-  }
-
-  // step.kind === "syncing"
-  const succeeded = step.status === "succeeded";
-  const failed = step.status === "failed";
   return (
     <Card>
-      <div className="flex flex-col items-center gap-4 p-8 text-center">
-        {!succeeded && !failed && (
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        )}
-        {succeeded && <CheckCircle2 className="h-8 w-8 text-positive" />}
-        {failed && <XCircle className="h-8 w-8 text-negative" />}
+      <div className="flex flex-col gap-5 p-6">
         <div>
-          <p className="text-sm font-medium text-foreground">
-            {succeeded ? "All set" : failed ? "Sync failed" : "Fetching your transactions…"}
+          <h2 className="text-base font-semibold text-foreground">One last thing</h2>
+          <p className="text-sm text-muted-foreground">
+            You can change this whenever you like, under Settings.
           </p>
-          <p className="text-xs text-muted-foreground">
-            {succeeded
-              ? "Your account is connected and up to date."
-              : failed
-                ? "The connection was saved — you can retry the sync from Settings."
-                : "This can take a minute for the first sync."}
-          </p>
-          {/* The run's own error, verbatim — without it a failure here is
-              indistinguishable between a wrong password and a bank that
-              never finished loading. */}
-          {failed && step.error && (
-            <p className="mt-2 break-words text-xs text-negative">{step.error}</p>
-          )}
         </div>
-        {(succeeded || failed) && <Button onClick={goToDashboard}>Go to dashboard</Button>}
+        <div className="flex items-start justify-between gap-6">
+          <div className="flex flex-col gap-1.5">
+            <span id="onboardingSyncReminder" className="text-sm font-medium text-foreground">
+              Remind me to sync when I sign in
+            </span>
+            <span className="text-xs leading-relaxed text-muted-foreground">
+              {
+                "After you've been away a while, Moni offers to refresh every connection. You'll still confirm with your password — that's what unlocks your stored bank logins, and it never happens without you."
+              }
+            </span>
+          </div>
+          <Switch
+            checked={enabled}
+            onCheckedChange={setEnabled}
+            aria-labelledby="onboardingSyncReminder"
+            className="mt-0.5"
+          />
+        </div>
+        {error && <p className="text-xs text-negative">{error}</p>}
+        <Button type="button" onClick={() => void finish()} disabled={saving} className="self-end">
+          {saving ? "Saving…" : "Go to dashboard"}
+        </Button>
       </div>
     </Card>
   );

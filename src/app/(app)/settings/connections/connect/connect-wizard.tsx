@@ -1,32 +1,20 @@
 "use client";
 
-import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { InstitutionPicker } from "@/components/institution-picker";
-import { ConnectForm } from "@/components/connect-form";
-import type { ConnectorId } from "@/lib/connectors";
+import { ConnectFlow } from "@/components/connect-flow";
 
-/** Same two-step institution-picker -> connect-form flow as onboarding,
- * reused rather than reinvented, for adding a second (or later) connection
- * from Settings. */
-export function ConnectWizard() {
+/** The same flow onboarding runs, reused rather than reinvented, for adding a
+ * second (or later) connection from Settings. It syncs the new connection
+ * immediately — that's what gives the backfill window somewhere to go, and it
+ * fixes a connection otherwise sitting unsynced until the user noticed the
+ * button. */
+export function ConnectWizard({ today }: { today: string }) {
   const router = useRouter();
-  const [connectorId, setConnectorId] = useState<ConnectorId | null>(null);
 
-  function onConnected() {
+  function done() {
     router.push("/settings/connections");
     router.refresh();
   }
 
-  if (connectorId) {
-    return (
-      <ConnectForm
-        connectorId={connectorId}
-        onBack={() => setConnectorId(null)}
-        onConnected={onConnected}
-      />
-    );
-  }
-
-  return <InstitutionPicker onSelect={setConnectorId} />;
+  return <ConnectFlow today={today} doneLabel="Done" onDone={done} />;
 }
