@@ -49,7 +49,7 @@ export function newAppRoleClient(): Client {
  * (19 tables; `fx_rates` is the sole non-RLS exception — data-model.md §2).
  */
 export const OWNER_SCOPED_TABLES_DELETE_ORDER = [
-  "category_suggestions",
+  "category_rejections",
   "entry_field_changelog",
   "entry_transactions",
   "sync_staging",

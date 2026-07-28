@@ -36,6 +36,27 @@ without the user's password, by design.
 _Avoid_: Auto-sync, automatic sync on login (the `auto_sync_on_login` column keeps
 that name for historical reasons; the concept is a reminder).
 
+### Categorizing
+
+**Match text**:
+The normalized form of a transaction's description — Moni's single definition of
+"the same payee text". Two transactions share a match text or they don't; there is
+no partial identity.
+_Avoid_: Normalized description, merchant key, payee string.
+
+**Suggestion**:
+A proposed category for a transaction no rule could place. Derived on demand, never
+authoritative, and never a category until a person accepts it — at which point it
+becomes an ordinary human categorization with no lingering trace of having been
+suggested.
+_Avoid_: Prediction, guess, auto-category, AI category.
+
+**Rejection**:
+A person's ruling that a category is wrong for a **match text**, not for one
+transaction. It suppresses that pairing from every future suggestion; it does not
+stop a rule from assigning the same category.
+_Avoid_: Thumbs-down, dismissal, veto, negative feedback.
+
 ### Getting started
 
 **Onboarded**:

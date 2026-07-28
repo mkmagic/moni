@@ -57,6 +57,27 @@
       "when": 1785093300617,
       "tag": "0007_category_suggestions_rls_and_roles",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785263520621,
+      "tag": "0008_drop_category_suggestions",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785263528424,
+      "tag": "0009_category_rejections",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785263537508,
+      "tag": "0010_category_rejections_rls_and_roles",
+      "breakpoints": true
     }
   ]
 }

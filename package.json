@@ -20,6 +20,7 @@
     "seed:demo": "tsx scripts/seed-demo.ts",
     "categories:sync": "tsx scripts/sync-categories.ts",
     "scrape:test": "tsx scripts/scrape-test.ts",
+    "suggestions:eval": "tsx scripts/eval-suggestions.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

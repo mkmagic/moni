@@ -12,6 +12,10 @@ import type { EntryView } from "@/domain/transactions";
 interface CategorizeDialogProps {
   entry: EntryView | null;
   categories: CategoryView[];
+  /** Pre-selects the suggested category for an uncategorized entry, so
+   * opening the dialog is a confirmation rather than a search. Never
+   * overrides a category the entry already has. */
+  suggestedCategoryId?: string | null;
   onClose: () => void;
 }
 
@@ -24,11 +28,18 @@ interface CategorizeDialogProps {
  * formatting an ISO string in a client component is a hydration mismatch
  * (.agents/skills/ui-developer).
  */
-export function CategorizeDialog({ entry, categories, onClose }: CategorizeDialogProps) {
+export function CategorizeDialog({
+  entry,
+  categories,
+  suggestedCategoryId = null,
+  onClose,
+}: CategorizeDialogProps) {
   const router = useRouter();
   // Callers mount this with `key={entry.id}`, so switching rows remounts the
   // component and these initializers ARE the reset — no effect needed.
-  const [categoryId, setCategoryId] = useState<string | null>(entry?.categoryId ?? null);
+  const [categoryId, setCategoryId] = useState<string | null>(
+    entry?.categoryId ?? suggestedCategoryId,
+  );
   const [createRule, setCreateRule] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

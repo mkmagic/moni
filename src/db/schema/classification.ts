@@ -6,7 +6,6 @@ import {
   date,
   boolean,
   integer,
-  numeric,
   foreignKey,
   unique,
 } from "drizzle-orm/pg-core";
@@ -24,11 +23,6 @@ export const entryFieldChangeSourceEnum = pgEnum("entry_field_change_source", [
   "rule",
   "model",
   "user",
-]);
-export const categorySuggestionStatusEnum = pgEnum("category_suggestion_status", [
-  "pending",
-  "accepted",
-  "rejected",
 ]);
 
 /** Tier-2, plaintext label — not sensitive (data-model.md §5). */
@@ -103,38 +97,40 @@ export const entryFieldChangelog = pgTable(
 );
 
 /**
- * A model's proposed category for one entry, awaiting user approval. Never
- * written to `entries.category_id` directly — v1.0 has no AI write path
- * (AGENTS.md). One row per entry (unique on `(owner_id, entry_id)`) is what
- * freezes the result, so the same input never re-categorizes differently
- * (vision.md §"deterministic-first, model-as-fallback"); a row with a null
- * `category_id` records "the model looked and had no answer", which is what
- * stops a later pass from asking again.
+ * A person's ruling that a category is wrong for a **match text** — the only
+ * thing the suggestion engine persists (docs/adr/0002-*).
+ *
+ * Suggestions themselves are derived on render and never stored: the engine
+ * is local and free, so re-asking costs nothing and its answer *should*
+ * improve as history grows. An accepted suggestion is likewise not recorded
+ * here — it becomes an ordinary categorization, leaving the category, the
+ * attribute lock and a changelog row behind it.
+ *
+ * Keyed on the match text rather than on an entry, so one thumbs-down clears
+ * a wrong guess from every transaction sharing that text, past and future.
+ *
+ * `match_text_ct` is a normalized counterparty string — Tier-1
+ * (security-design-principles.md §13), hence encrypted. The consequence is
+ * that there is no unique constraint to dedupe on: ciphertext is randomized,
+ * so two rows for the same pairing look different to Postgres. The domain
+ * layer decrypts the set and dedupes in memory, exactly as it already does
+ * for `rule_conditions.value_ct`.
  */
-export const categorySuggestions = pgTable(
-  "category_suggestions",
+export const categoryRejections = pgTable(
+  "category_rejections",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     ownerId: uuid("owner_id")
       .notNull()
       .references(() => users.id),
-    entryId: uuid("entry_id").notNull(),
-    categoryId: uuid("category_id"),
-    confidence: numeric("confidence"),
-    model: text("model").notNull(),
-    status: categorySuggestionStatusEnum("status").notNull().default("pending"),
-    /** The model's rationale — untrusted generated text about a Tier-1 description. */
-    reasonCt: bytea("reason_ct"),
+    /** Tier-1. AAD-bound to this row's own id/column/version (encryption.md §3). */
+    matchTextCt: bytea("match_text_ct").notNull(),
+    categoryId: uuid("category_id").notNull(),
     version: integer("version").notNull().default(1),
     ...timestamps,
   },
   (table) => [
-    unique("category_suggestions_owner_id_id_unique").on(table.ownerId, table.id),
-    unique("category_suggestions_owner_id_entry_id_unique").on(table.ownerId, table.entryId),
-    foreignKey({
-      columns: [table.ownerId, table.entryId],
-      foreignColumns: [entries.ownerId, entries.id],
-    }).onDelete("cascade"),
+    unique("category_rejections_owner_id_id_unique").on(table.ownerId, table.id),
     foreignKey({
       columns: [table.ownerId, table.categoryId],
       foreignColumns: [categories.ownerId, categories.id],
