@@ -92,3 +92,17 @@ Rules:
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review.
 - After modifying **code** (`src/**`, `scripts/**`, `tests/**`, config files), run `graphify update .` to keep the graph current — AST-only, no LLM, no token cost.
 - After modifying **only docs** (`*.md`, `docs/**`, `vision.md`, `.agents/skills/**`), do **not** run `graphify update .` unprompted. Doc changes trigger semantic re-extraction, which dispatches LLM subagents and costs real tokens (~240k for this corpus). Ask the owner first.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs live as GitHub issues in `mkmagic/moni`, driven by the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage roles, each label string equal to its name. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — `CONTEXT.md` + `docs/adr/` at the repo root, both created lazily. See `docs/agents/domain.md`.
