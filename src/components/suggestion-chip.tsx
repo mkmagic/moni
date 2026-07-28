@@ -36,12 +36,16 @@ export function SuggestionChip({ entryId, matchText, suggestion }: SuggestionChi
 
   async function send(url: string, method: "PATCH" | "POST", body: unknown) {
     setBusy(true);
-    const res = await fetch(url, {
-      method,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    setBusy(false);
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } finally {
+      setBusy(false);
+    }
     if (res.ok) router.refresh();
   }
 
