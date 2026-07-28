@@ -11,7 +11,7 @@ Moni is **TypeScript end-to-end**:
 - **UI:** Tailwind CSS + shadcn/ui + Recharts
 - **MCP:** `@modelcontextprotocol/sdk`
 - **Background Jobs:** none yet. Long-running work (bank scraping) is a fire-and-forget `spawn()` of a `tsx` child process from the API route (`scripts/scrape-worker.mts`); the parent marks the `sync_runs` row `running` and the UI polls it. A Postgres-backed queue (`pg-boss`) is the intended destination but **is not installed** — don't write code that assumes a scheduler exists.
-- **Testing & Tooling:** Vitest (`tests/unit/**` pure, `tests/db/**` against a real Postgres), Zod, `@node-rs/argon2` + `@noble/ciphers`/`@noble/hashes`. There is **no e2e/browser test layer** — Playwright is not installed.
+- **Testing & Tooling:** Vitest (tests live under `tests/unit/**` and `tests/db/**`; all tests currently require a live Postgres via `vitest.setup.ts`), Zod, `@node-rs/argon2` + `@noble/ciphers`/`@noble/hashes`. There is **no e2e/browser test layer** — Playwright is not installed.
 ## Non-Negotiable Invariants
 These override “simplicity” — never trade them away without asking.
 - **Money is exact-decimal.** Postgres `NUMERIC`, mapped by Drizzle to `string`. Arithmetic via a decimal library. Never a JS `number`/float for money — not even transiently.
