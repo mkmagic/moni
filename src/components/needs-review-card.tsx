@@ -23,6 +23,15 @@ interface NeedsReviewCardProps {
 export function NeedsReviewCard({ entries, categories, suggestions }: NeedsReviewCardProps) {
   const [selected, setSelected] = useState<EntryView | null>(null);
 
+  // Actionable rows first. This card is a work queue, not a ledger — a row
+  // you can clear in one click outranks one that needs the dialog. `sort` is
+  // stable, so newest-first survives inside each group. Sorted here rather
+  // than in the page because the ordering follows from what this card is FOR,
+  // and a future caller shouldn't have to remember it.
+  const queue = [...entries].sort(
+    (a, b) => Number(Boolean(suggestions[b.id])) - Number(Boolean(suggestions[a.id])),
+  );
+
   if (entries.length === 0) {
     return (
       <Card>
@@ -45,7 +54,7 @@ export function NeedsReviewCard({ entries, categories, suggestions }: NeedsRevie
         </CardHeader>
         <CardContent className="px-0">
           <ul className="max-h-[22rem] divide-y divide-border overflow-y-auto">
-            {entries.map((entry) => (
+            {queue.map((entry) => (
               // The chip carries its own buttons, so it sits BESIDE the row
               // button rather than inside it — a button inside a button is
               // invalid and swallows the inner click.
