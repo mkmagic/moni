@@ -23,6 +23,12 @@ drizzle/
 # Dependency lockfile — machine-generated, do not reformat
 package-lock.json
 
+# Next.js rewrites this on every `next dev` AND every `next build` — it
+# expands arrays multi-line and flips "jsx" to "react-jsx" — producing a file
+# Prettier then rejects. Next owns this file's formatting and always wins, so
+# checking it can only ever produce a failure nobody can act on.
+tsconfig.json
+
 # Standard cruft
 node_modules/
 coverage/

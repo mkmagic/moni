@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [master, dev]
+  pull_request:
+  workflow_dispatch:
+
+# Nothing here deploys, so a run is worthless the moment a newer commit exists
+# on the same ref — cancel it rather than race the newer run for a runner.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # `israeli-bank-scrapers` depends on puppeteer, whose postinstall downloads
+  # ~342MB of Chromium. Nothing in the suite launches a browser — the only
+  # test that touches the library (tests/unit/connector-registry.test.ts) reads
+  # the SCRAPERS metadata map and never calls .launch(). If a test ever does
+  # drive a real browser, it will fail here with "browser not found" and this
+  # line is what to remove.
+  PUPPETEER_SKIP_DOWNLOAD: "true"
+
+jobs:
+  # The four gates from AGENTS.md §5 that need no database, plus the
+  # production build. Every step runs even when an earlier one fails, so one
+  # run reports every problem instead of one per push.
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - if: ${{ !cancelled() }}
+        run: npm run lint
+      - if: ${{ !cancelled() }}
+        run: npm run format:check
+      # Runs last by preference, not by requirement: `next build` rewrites
+      # tsconfig.json, which is why that file is prettier-ignored.
+      - if: ${{ !cancelled() }}
+        run: npm run build
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      # Mirrors docker-compose.yml exactly (same image, user, password, port)
+      # so every default in tests/db/setup-test-db.ts resolves without a single
+      # env override: TEST_SUPERUSER_URL defaults to postgres:postgres@
+      # localhost:5432 and TEST_DATABASE_URL to moni_app@localhost:5432.
+      #
+      # POSTGRES_DB must be `moni` specifically. The test suite bootstraps an
+      # isolated `moni_test` database by replaying drizzle/*.sql against it,
+      # and drizzle/0001_rls_and_roles.sql hardcodes the literal database name
+      # in three statements (`GRANT CONNECT ON DATABASE moni ...`, lines 79/81,
+      # and `GRANT CREATE ON DATABASE moni ...`, line 95). Without a database
+      # of that name on the server those raise 3D000, the single bootstrap
+      # transaction rolls back, and every tests/db/** file fails with a
+      # confusing "relation does not exist". Creating `moni` makes them
+      # harmless no-ops, exactly as they are locally.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: moni
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d moni"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Deliberately a literal, not a repository secret. It gates signup
+      # against an empty database that is destroyed with the runner, so there
+      # is nothing to protect — and GitHub withholds secrets from
+      # `pull_request` runs on forks, which on a public repo would make every
+      # fork PR fail at import time (tests/db/registration.test.ts and nine
+      # others throw when this is unset).
+      MONI_SIGNUP_TOKEN: ci-signup-token
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm test
