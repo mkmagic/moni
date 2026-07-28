@@ -7,8 +7,11 @@ import { getConnectorDefinition, type ConnectorId } from "@/lib/connectors";
 
 interface ConnectFormProps {
   connectorId: ConnectorId;
-  /** Called with the new connection's id on success. */
-  onConnected: (connectionId: string) => void;
+  /** Called with the new connection's id and the nickname the user typed (null
+   * if they left it blank) on success. The caller needs the nickname because
+   * the credential-repair form PATCHes displayName alongside the credentials,
+   * and would otherwise clear it. */
+  onConnected: (connectionId: string, displayName: string | null) => void;
   onBack?: () => void;
 }
 
@@ -32,10 +35,11 @@ export function ConnectForm({ connectorId, onConnected, onBack }: ConnectFormPro
     setLoading(true);
     setError(null);
 
+    const nickname = displayName.trim() || null;
     const body = JSON.stringify({
       connectorId,
       credentials: values,
-      displayName: displayName.trim() || undefined,
+      displayName: nickname ?? undefined,
       password,
     });
     // Credentials and password must not linger in this component's state
@@ -51,7 +55,7 @@ export function ConnectForm({ connectorId, onConnected, onBack }: ConnectFormPro
       });
       if (res.status === 201) {
         const responseBody = (await res.json()) as { id: string };
-        onConnected(responseBody.id);
+        onConnected(responseBody.id, nickname);
         return;
       }
       const responseBody = (await res.json().catch(() => ({}))) as { error?: string };

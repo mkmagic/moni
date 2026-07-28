@@ -15,17 +15,23 @@ import { getSessionFromRequest } from "@/domain/auth";
 import { getConnection, getDecryptedCredentials } from "@/domain/connections";
 import { computeSyncStartDate, markSyncRunFailed, startSyncRun } from "@/domain/sync-promotion";
 import { getCredentialKey } from "@/lib/auth/cred-window";
+import { BACKFILL_MAX_MONTHS, isBackfillStartAllowed, todayIso } from "@/lib/backfill-window";
 import { encodeChildStdinFrame, isConnectorId, type ChildStdinPayload } from "@/lib/connectors";
 
 const ParamsSchema = z.object({ id: z.uuid() });
 
 // Zod at the trust boundary (docs/design/conventions.md — Validation). Body
-// is optional: an override for the computed scrape window (decision #7) —
-// a future backfill feature needs no new route, just this field.
+// is optional: the backfill window (ADR 0001), an override for the computed
+// scrape window (decision #7) used on a connection's first sync. Capped at
+// twelve months HERE as well as in the picker, because a client-side clamp
+// is advisory — an out-of-range date is a 400, not a silent adjustment.
 const SyncBodySchema = z.object({
   startDate: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "must be YYYY-MM-DD")
+    .refine((d) => isBackfillStartAllowed(d, todayIso()), {
+      message: `must be within the last ${BACKFILL_MAX_MONTHS} months and not in the future`,
+    })
     .optional(),
 });
 

@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getConnectorDefinition } from "@/lib/connectors";
+import { cn } from "@/lib/utils";
 
 interface ConnectionEditFormProps {
   connectionId: string;
@@ -11,6 +12,15 @@ interface ConnectionEditFormProps {
   displayName: string | null;
   onSaved: () => void;
   onCancel: () => void;
+  /** Open with the login fields already expanded. The connections row wants
+   * the "Replace login details" link (renaming is the common case there); the
+   * connect wizard reaches this form only after a credential failure, where
+   * replacing them IS the task. */
+  startReplacing?: boolean;
+  /** Replaces the row-embedded chrome (top border, card padding) when the
+   * form is rendered somewhere that already provides its own. */
+  className?: string;
+  saveLabel?: string;
 }
 
 /** Rename a connection and/or replace its stored bank credentials. Login
@@ -23,10 +33,13 @@ export function ConnectionEditForm({
   displayName,
   onSaved,
   onCancel,
+  startReplacing = false,
+  className,
+  saveLabel = "Save",
 }: ConnectionEditFormProps) {
   const def = getConnectorDefinition(connectorId);
   const [name, setName] = useState(displayName ?? "");
-  const [replacing, setReplacing] = useState(false);
+  const [replacing, setReplacing] = useState(startReplacing);
   const [values, setValues] = useState<Record<string, string>>({});
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -66,7 +79,10 @@ export function ConnectionEditForm({
   }
 
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-5 border-t border-border px-6 py-6">
+    <form
+      onSubmit={onSubmit}
+      className={cn("flex flex-col gap-5 border-t border-border px-6 py-6", className)}
+    >
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor={`name-${connectionId}`}
@@ -141,7 +157,7 @@ export function ConnectionEditForm({
           Cancel
         </Button>
         <Button type="submit" disabled={loading}>
-          {loading ? "Saving…" : "Save"}
+          {loading ? "Saving…" : saveLabel}
         </Button>
       </div>
     </form>

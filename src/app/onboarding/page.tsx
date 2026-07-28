@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { Wallet } from "lucide-react";
 import { requireSession } from "@/domain/auth";
 import { listConnections } from "@/domain/connections";
+import { todayIso } from "@/lib/backfill-window";
 import { OnboardingWizard } from "./onboarding-wizard";
 
 // Deliberately NOT under src/app/(app)/ despite the plan's file listing:
@@ -26,7 +27,11 @@ export default async function OnboardingPage() {
             <p className="text-xs text-muted-foreground">Let&apos;s connect your first account.</p>
           </div>
         </div>
-        <OnboardingWizard />
+        {/* Today's date is computed HERE, on the server, and passed down: the
+            backfill picker's bounds must agree with the cap the sync route
+            enforces, and deriving them in the browser would depend on the
+            visitor's clock. */}
+        <OnboardingWizard today={todayIso()} />
       </div>
     </main>
   );
