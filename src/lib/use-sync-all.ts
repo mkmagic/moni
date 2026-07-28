@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { armCredentialWindow, startSyncRun, waitForSyncRun } from "@/lib/sync-client";
 
 /**
@@ -37,44 +37,64 @@ export interface SyncAllCallbacks {
 
 export function useSyncAll(callbacks: SyncAllCallbacks = {}) {
   const [state, setState] = useState<SyncAllState>({ kind: "idle" });
+  /** Re-entry guard, in a ref rather than state because it must be readable
+   * and writable BETWEEN renders. The gap that needs it is `arm()`: it awaits
+   * the network while the password prompt is still on screen and enabled, so
+   * a double submit would otherwise start two chains over the same ids. */
+  const busy = useRef(false);
 
   /** Runs `ids` one after another, pausing the moment one comes back locked.
    * A run that merely fails does not stop the chain — one dead bank shouldn't
    * block the rest. */
   async function runChain(ids: string[], alreadyDone: number, total: number) {
-    for (let i = 0; i < ids.length; i++) {
-      const id = ids[i];
-      setState({ kind: "running", done: alreadyDone + i, total });
-      const started = await startSyncRun(id);
-      if (started.kind === "locked") {
-        setState({ kind: "locked", remaining: ids.slice(i), done: alreadyDone + i, total });
-        return;
+    busy.current = true;
+    try {
+      for (let i = 0; i < ids.length; i++) {
+        const id = ids[i];
+        setState({ kind: "running", done: alreadyDone + i, total });
+        const started = await startSyncRun(id);
+        if (started.kind === "locked") {
+          setState({ kind: "locked", remaining: ids.slice(i), done: alreadyDone + i, total });
+          return;
+        }
+        if (started.kind === "error") {
+          callbacks.onRunFinished?.(id, "failed", started.message);
+          continue;
+        }
+        callbacks.onRunStarted?.(id);
+        const run = await waitForSyncRun(started.syncRunId);
+        callbacks.onRunFinished?.(id, run.status, run.error);
       }
-      if (started.kind === "error") {
-        callbacks.onRunFinished?.(id, "failed", started.message);
-        continue;
-      }
-      callbacks.onRunStarted?.(id);
-      const run = await waitForSyncRun(started.syncRunId);
-      callbacks.onRunFinished?.(id, run.status, run.error);
+      setState({ kind: "idle" });
+      callbacks.onChainFinished?.();
+    } finally {
+      // Also clears on the locked early-return: the chain is paused, waiting
+      // on a password, and `arm` is what may resume it.
+      busy.current = false;
     }
-    setState({ kind: "idle" });
-    callbacks.onChainFinished?.();
   }
 
   return {
     state,
     start(ids: string[]) {
-      if (ids.length > 0) void runChain(ids, 0, ids.length);
+      if (busy.current || ids.length === 0) return;
+      void runChain(ids, 0, ids.length);
     },
     async arm(password: string) {
-      if (state.kind !== "locked") return;
+      if (busy.current || state.kind !== "locked") return;
+      busy.current = true;
       const { remaining, done, total } = state;
-      if (!(await armCredentialWindow(password))) {
-        setState({ kind: "idle" });
-        callbacks.onArmRejected?.(remaining[0]);
-        return;
+      try {
+        if (!(await armCredentialWindow(password))) {
+          setState({ kind: "idle" });
+          callbacks.onArmRejected?.(remaining[0]);
+          return;
+        }
+      } finally {
+        busy.current = false;
       }
+      // No await between the release above and runChain's own re-acquire, so
+      // nothing can slip in between.
       void runChain(remaining, done, total);
     },
   };

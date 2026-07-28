@@ -10,7 +10,7 @@ import { ConnectionEditForm } from "@/components/connection-edit-form";
 import { BackfillWindowPicker } from "@/components/backfill-window-picker";
 import { BACKFILL_PRESETS, presetStartDate } from "@/lib/backfill-window";
 import { classifySyncFailure } from "@/lib/sync-error";
-import { startSyncRun, waitForSyncRun } from "@/lib/sync-client";
+import { armCredentialWindow, startSyncRun, waitForSyncRun } from "@/lib/sync-client";
 import { getConnectorDefinition, type ConnectorId } from "@/lib/connectors";
 
 /** Institution -> credentials + backfill window -> first sync -> outcome. One
@@ -47,8 +47,9 @@ type Step =
   | { kind: "failed"; target: Target; error: string | null }
   /** A credential failure the user chose to repair — the edit form, inline. */
   | { kind: "fixing"; target: Target }
-  /** 423: the credential window lapsed between connecting and retrying. */
-  | { kind: "locked"; target: Target };
+  /** 423: the credential window lapsed between connecting and retrying.
+   * `error` carries a rejected password back to the prompt. */
+  | { kind: "locked"; target: Target; error: string | null };
 
 /** Matches what an unpicked first sync fetched before the backfill window
  * existed, so the default changes nothing for a user who ignores the picker. */
@@ -88,7 +89,7 @@ export function ConnectFlow({
     setStep({ kind: "syncing", target });
     const started = await startSyncRun(target.connectionId, startDate ?? undefined);
     if (started.kind === "locked") {
-      setStep({ kind: "locked", target });
+      setStep({ kind: "locked", target, error: null });
       return;
     }
     if (started.kind === "error") {
@@ -103,6 +104,17 @@ export function ConnectFlow({
       return;
     }
     setStep({ kind: "failed", target, error: run.error });
+  }
+
+  /** The 423 remediation: re-open the credential window with the user's Moni
+   * password, THEN retry. Retrying without arming would just take another 423
+   * and land back here, with no way out. */
+  async function armAndRetry(password: string, target: Target) {
+    if (!(await armCredentialWindow(password))) {
+      setStep({ kind: "locked", target, error: "Wrong password" });
+      return;
+    }
+    void runSync(target);
   }
 
   function addAnother() {
@@ -181,8 +193,12 @@ export function ConnectFlow({
         icon={<XCircle className="h-8 w-8 text-muted-foreground" />}
         title="Confirm it's you"
         body="Your password unlocks the stored bank login. It's needed again because a few minutes have passed."
+        detail={step.error}
       >
-        <ArmPrompt label="Unlock and retry" onArm={() => void runSync(step.target)} />
+        <ArmPrompt
+          label="Unlock and retry"
+          onArm={(password) => void armAndRetry(password, step.target)}
+        />
       </Outcome>
     );
   }
