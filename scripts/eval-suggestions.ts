@@ -92,7 +92,12 @@ async function main(): Promise<void> {
   const holdout = shuffled.slice(0, holdoutSize);
   const training: LabeledExample[] = shuffled.slice(holdoutSize);
 
-  const corpus = buildCorpus([...training, ...fixed]);
+  // TWO corpora, tried in order — mirroring `suggestCategories`. Merging them
+  // would measure an engine Moni does not run: cosine favours short corpus
+  // texts, so a merged corpus lets a one-token built-in outrank the user's own
+  // richer history, which is precisely the ordering the domain layer avoids.
+  const ownCorpus = buildCorpus([...training, ...fixed.filter((e) => e.source !== "builtin")]);
+  const builtinCorpus = buildCorpus(fixed.filter((e) => e.source === "builtin"));
   const trainingTexts = new Set([...training, ...fixed].map((e) => e.matchText));
 
   const tallies = new Map<number, Tally>(
@@ -104,12 +109,20 @@ async function main(): Promise<void> {
     const unseen = !trainingTexts.has(held.matchText);
     if (unseen) unseenTotal += 1;
 
-    const ranked = suggest(held.matchText, corpus);
-    const top = ranked[0];
-    if (!top) continue;
+    const ownTop = suggest(held.matchText, ownCorpus)[0];
+    const builtinTop = suggest(held.matchText, builtinCorpus)[0];
 
     for (const threshold of THRESHOLDS) {
-      if (top.score < threshold) continue;
+      // Which candidate wins is threshold-dependent: the built-in corpus is
+      // consulted only when the user's own has nothing clearing the bar.
+      const top =
+        ownTop && ownTop.score >= threshold
+          ? ownTop
+          : builtinTop && builtinTop.score >= threshold
+            ? builtinTop
+            : null;
+      if (!top) continue;
+
       const tally = tallies.get(threshold)!;
       tally.suggested += 1;
       if (top.categoryId === held.categoryId) tally.correct += 1;
