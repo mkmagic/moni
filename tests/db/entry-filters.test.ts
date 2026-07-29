@@ -25,6 +25,9 @@ const dataKey = getDevUserDataKey(userId);
 const accountId = randomUUID();
 const groceriesId = randomUUID();
 const rentId = randomUUID();
+const incomeId = randomUUID();
+const salaryId = randomUUID();
+const bonusId = randomUUID();
 
 const session: Session = {
   id: "test-session",
@@ -70,6 +73,9 @@ let inGroceries: string;
 let inRent: string;
 let plainUncategorized: string;
 let excludedUncategorized: string;
+let inSalary: string;
+let inBonus: string;
+let onIncomeItself: string;
 
 describe("listEntries filters", () => {
   beforeAll(async () => {
@@ -90,6 +96,15 @@ describe("listEntries filters", () => {
     await elevatedDb.insert(schema.categories).values([
       { id: groceriesId, ownerId: userId, name: "Groceries", classification: "expense" },
       { id: rentId, ownerId: userId, name: "Rent", classification: "expense" },
+      { id: incomeId, ownerId: userId, name: "Income", classification: "income" },
+      {
+        id: salaryId,
+        ownerId: userId,
+        name: "Salary",
+        classification: "income",
+        parentId: incomeId,
+      },
+      { id: bonusId, ownerId: userId, name: "Bonus", classification: "income", parentId: incomeId },
     ]);
 
     inGroceries = await addEntry({
@@ -104,6 +119,13 @@ describe("listEntries filters", () => {
       description: "card settlement",
       excluded: true,
     });
+    inSalary = await addEntry({ date: "2026-02-01", description: "payroll", categoryId: salaryId });
+    inBonus = await addEntry({ date: "2026-02-05", description: "q4 bonus", categoryId: bonusId });
+    onIncomeItself = await addEntry({
+      date: "2026-02-09",
+      description: "rebate",
+      categoryId: incomeId,
+    });
   });
 
   afterAll(async () => {
@@ -113,12 +135,32 @@ describe("listEntries filters", () => {
 
   it("returns every entry when no filter is given", async () => {
     const rows = await listEntries(session);
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(7);
   });
 
   it("filters to a single category", async () => {
     const rows = await listEntries(session, { categoryId: groceriesId });
     expect(rows.map((r) => r.id)).toEqual([inGroceries]);
+  });
+
+  it("a parent category matches everything filed under its children", async () => {
+    // Entries carry the subcategory they were filed under, so a parent is a
+    // heading rather than a label. Filtering by "Income" and getting an empty
+    // table while its children plainly have rows is the bug this pins.
+    const rows = await listEntries(session, { categoryId: incomeId });
+    expect(rows.map((r) => r.id).sort()).toEqual([inSalary, inBonus, onIncomeItself].sort());
+  });
+
+  it("a child category does not reach back up to its siblings", async () => {
+    const rows = await listEntries(session, { categoryId: salaryId });
+    expect(rows.map((r) => r.id)).toEqual([inSalary]);
+  });
+
+  it("a childless category still matches its own entries", async () => {
+    // The parent's id stays in the expanded list — otherwise widening the
+    // predicate would break every flat category.
+    const rows = await listEntries(session, { categoryId: rentId });
+    expect(rows.map((r) => r.id)).toEqual([inRent]);
   });
 
   it("filters to entries with no category, keeping excluded ones", async () => {

@@ -3,7 +3,7 @@
 // narrowed set, and derives the reporting amount = entered × locked fx_rate
 // (data-model.md §4.3). Pending-FX entries are flagged, never faked to 1:1
 // (money-and-currency.md §4).
-import { and, desc, eq, gte, isNull, lte } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import { withUser } from "@/db/client";
 import { accounts, categories, entries, merchants } from "@/db/schema";
 import { multiply, type Money } from "@/lib/money";
@@ -53,9 +53,10 @@ export interface EntryFilters {
   from?: string;
   to?: string;
   accountId?: string;
-  /** A category id, or `NO_CATEGORY` for entries with none. This is a
-   * statement about the category column and nothing else — unlike
-   * `uncategorized`, it keeps excluded entries. */
+  /** A category id, or `NO_CATEGORY` for entries with none. A parent category
+   * also matches everything filed under its children. This is a statement
+   * about the category column and nothing else — unlike `uncategorized`, it
+   * keeps excluded entries. */
   categoryId?: string;
   limit?: number;
   /** The review queue: entries with no category yet. Excluded entries (one
@@ -70,15 +71,29 @@ export async function listEntries(
 ): Promise<EntryView[]> {
   const { userId, dataKey } = session;
   return withUser(userId, async (tx) => {
+    // Read before the entries query, not after: a category filter has to know
+    // the tree before it can build its predicate. Reused below for names.
+    const catRows = await tx
+      .select({ id: categories.id, name: categories.name, parentId: categories.parentId })
+      .from(categories);
+
     const conds = [];
     if (filters.from) conds.push(gte(entries.date, filters.from));
     if (filters.to) conds.push(lte(entries.date, filters.to));
     if (filters.accountId) conds.push(eq(entries.accountId, filters.accountId));
     if (filters.categoryId) {
+      const { categoryId } = filters;
       conds.push(
-        filters.categoryId === NO_CATEGORY
+        categoryId === NO_CATEGORY
           ? isNull(entries.categoryId)
-          : eq(entries.categoryId, filters.categoryId),
+          : // A parent is a heading, not a label — entries are filed under its
+            // children, so an equality test on "Income" matches nothing at
+            // all. The id itself stays in the list because nothing stops a
+            // childless top-level category from being assigned directly.
+            inArray(entries.categoryId, [
+              categoryId,
+              ...catRows.filter((c) => c.parentId === categoryId).map((c) => c.id),
+            ]),
       );
     }
     if (filters.uncategorized) {
@@ -101,7 +116,6 @@ export async function listEntries(
       acctRows.map((a) => [a.id, decText(dataKey, a.nameCt, a.id, "name_ct", a.version) ?? ""]),
     );
 
-    const catRows = await tx.select({ id: categories.id, name: categories.name }).from(categories);
     const catName = new Map(catRows.map((c) => [c.id, c.name]));
     const transferCategoryIds = await loadTransferCategoryIds(tx);
 
