@@ -2,13 +2,17 @@ import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { sql } from "drizzle-orm";
 import * as schema from "@/db/schema";
+import { assertDatabaseTls } from "@/lib/transport";
 
 /**
  * Host-agnostic connection pool. `DATABASE_URL` is the app-runtime
  * connection — it authenticates as the RLS-subject `moni_app` role (see
  * .env.example). Works unmodified against local Docker Postgres or a
- * managed provider; `sslmode` is controlled entirely by the URL.
+ * managed provider; `sslmode` is controlled entirely by the URL — which is
+ * why the URL is checked here before anything connects.
  */
+assertDatabaseTls(process.env.DATABASE_URL);
+
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 export const db = drizzle(pool, { schema });
