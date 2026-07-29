@@ -11,10 +11,10 @@ import Decimal from "decimal.js";
 import { inArray } from "drizzle-orm";
 import { withUser } from "@/db/client";
 import { categories, entries, merchants } from "@/db/schema";
-import { add, divide, multiply, type Money } from "@/lib/money";
+import { abs, add, divide, multiply, type Money } from "@/lib/money";
 import { normalizeDescription } from "@/lib/categorization/normalize";
-import { matchCatalog } from "@/lib/merchants/catalog";
-import { deriveCadence, type Cadence } from "@/lib/recurring/cadence";
+import { matchCatalog, merchantIdentity } from "@/lib/merchants/catalog";
+import { asSettableCadence, deriveCadence, type Cadence } from "@/lib/recurring/cadence";
 import type { Session } from "@/lib/auth/session-store";
 import { decText } from "./fields";
 import { countsAsFlow, loadTransferCategoryIds } from "./flows";
@@ -86,16 +86,6 @@ function rangeStart(range: RecurringRange, today: string): string | null {
   const d = new Date(`${today}T00:00:00Z`);
   d.setUTCMonth(d.getUTCMonth() - RANGE_MONTHS[range]);
   return d.toISOString().slice(0, 10);
-}
-
-/**
- * What makes two payees the same payee — the catalog entry when there is one,
- * the match text when there isn't (docs/adr/0005-*). Derived from the
- * description rather than read from `entries.merchant_id`, so the view is
- * correct for history scraped before merchant resolution existed.
- */
-function identityOf(matchText: string): string {
-  return matchCatalog(matchText)?.key ?? matchText;
 }
 
 interface Payment {
@@ -170,13 +160,13 @@ export async function getRecurringView(
       // Category totals follow the range; everything else does not.
       if (start === null || e.date >= start) {
         const key = e.categoryId as string;
-        const magnitude: Money = { amount: stripSign(reporting.amount), currency: reporting.currency }; // prettier-ignore
+        const magnitude = abs(reporting);
         totals.set(key, totals.get(key) ? add(totals.get(key) as Money, magnitude) : magnitude);
       }
 
       const matchText = normalizeDescription(description);
       if (matchText === "") continue;
-      const identity = identityOf(matchText);
+      const identity = merchantIdentity(matchText);
 
       const bucket = buckets.get(identity) ?? {
         identity,
@@ -201,7 +191,7 @@ export async function getRecurringView(
     for (const m of merchantRows) {
       const mt = decText(dataKey, m.matchTextCt, m.id, "match_text_ct", m.version);
       if (mt === null) continue;
-      merchantByIdentity.set(identityOf(mt), m);
+      merchantByIdentity.set(merchantIdentity(mt), m);
     }
 
     const rowsByCategory = new Map<string, RecurringRow[]>();
@@ -248,7 +238,7 @@ function toRow(
   const magnitudes: RecurringPayment[] = payments.map((p) => ({
     date: p.date,
     dateLabel: DATE_LABEL.format(new Date(p.date)),
-    amount: { amount: stripSign(p.amount.amount), currency: p.amount.currency },
+    amount: abs(p.amount),
   }));
 
   const lastThree = magnitudes.slice(-3);
@@ -258,7 +248,7 @@ function toRow(
   } as Money);
 
   const catalog = matchCatalog(bucket.matchText);
-  const override = merchant?.cadenceOverride as Cadence | null | undefined;
+  const override = asSettableCadence(merchant?.cadenceOverride ?? null);
   const firstSeen = magnitudes[0].date;
 
   return {
@@ -280,10 +270,4 @@ function toRow(
     firstSeenLabel: `since ${MONTH_LABEL.format(new Date(firstSeen))}`,
     payments: magnitudes,
   };
-}
-
-/** Expenses are reported as positive magnitudes, as the dashboard does — the
- * section a row sits in is what says whether it was earned or spent. */
-function stripSign(amount: string): string {
-  return amount.startsWith("-") ? amount.slice(1) : amount;
 }

@@ -7,12 +7,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSessionFromRequest } from "@/domain/auth";
 import { setMerchantCadence } from "@/domain/merchants";
+import { SETTABLE_CADENCES } from "@/lib/recurring/cadence";
 
 const BodySchema = z.object({
   matchText: z.string().min(1).max(400),
-  // `null` clears the override and hands the answer back to the dates.
-  // "unknown" and "irregular" are outcomes of derivation, never choices.
-  cadence: z.enum(["monthly", "bi-monthly", "quarterly", "yearly"]).nullable(),
+  // `null` clears the override and hands the answer back to the dates. The
+  // enum is the one shared list, so this validator can never drift from the
+  // picker's options — "unknown" and "irregular" are outcomes of derivation,
+  // never choices, and are absent from it by construction.
+  cadence: z.enum(SETTABLE_CADENCES).nullable(),
 });
 
 export async function PATCH(req: NextRequest): Promise<NextResponse> {

@@ -15,6 +15,7 @@ import {
   type PaymentWindow,
   type RecurringRange,
 } from "@/lib/recurring/range";
+import { CADENCE_LABELS, SETTABLE_CADENCES } from "@/lib/recurring/cadence";
 import { cn } from "@/lib/utils";
 import type { RecurringGroup, RecurringRow } from "@/domain/recurring";
 
@@ -23,15 +24,6 @@ interface Props {
   expenses: RecurringGroup[];
   range: RecurringRange;
 }
-
-const CADENCE_LABELS: Record<string, string> = {
-  monthly: "Monthly",
-  "bi-monthly": "Every 2 months",
-  quarterly: "Quarterly",
-  yearly: "Yearly",
-  irregular: "Irregular",
-  unknown: "Not enough history",
-};
 
 export function RecurringList({ income, expenses, range }: Props) {
   const router = useRouter();
@@ -161,7 +153,7 @@ function Row({ row, tone }: { row: RecurringRow; tone: "positive" | "negative" }
             {`${row.paymentCount} payment${row.paymentCount === 1 ? "" : "s"} ${row.firstSeenLabel}`}
           </span>
         </div>
-        <Badge>{CADENCE_LABELS[row.cadence] ?? row.cadence}</Badge>
+        <Badge>{CADENCE_LABELS[row.cadence]}</Badge>
         {/* Fixed slot: without it a longer cadence badge shifts this row's
             figures and the amounts stop lining up between rows. */}
         <div className="flex w-32 shrink-0 flex-col items-end">
@@ -188,10 +180,11 @@ function Row({ row, tone }: { row: RecurringRow; tone: "positive" | "negative" }
                 className="rounded-[var(--radius)] border border-input bg-card px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
               >
                 <option value="">{"Read from the dates"}</option>
-                <option value="monthly">{"Monthly"}</option>
-                <option value="bi-monthly">{"Every 2 months"}</option>
-                <option value="quarterly">{"Quarterly"}</option>
-                <option value="yearly">{"Yearly"}</option>
+                {SETTABLE_CADENCES.map((c) => (
+                  <option key={c} value={c}>
+                    {CADENCE_LABELS[c]}
+                  </option>
+                ))}
               </select>
             </label>
             {/* Counted in payments, not months: a yearly renewal shows years

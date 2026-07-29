@@ -7,8 +7,36 @@
 // cleverness fixes: an annual subscription with one payment so far has no gap
 // to read at all.
 
+/**
+ * The cadences a user may choose as an override.
+ *
+ * One list, consulted by the API's validator, the picker's options and the
+ * labels below — adding a cadence should be one edit, not four. `irregular`
+ * and `unknown` are deliberately absent: they are outcomes of reading the
+ * dates, never things a person asks for.
+ */
+export const SETTABLE_CADENCES = ["monthly", "bi-monthly", "quarterly", "yearly"] as const;
+export type SettableCadence = (typeof SETTABLE_CADENCES)[number];
+
 /** The vocabulary in CONTEXT.md — `irregular` is a real answer, not a failure. */
-export type Cadence = "monthly" | "bi-monthly" | "quarterly" | "yearly" | "irregular" | "unknown";
+export type Cadence = SettableCadence | "irregular" | "unknown";
+
+/** Display text for every cadence, including the two that can't be chosen. */
+export const CADENCE_LABELS: Record<Cadence, string> = {
+  monthly: "Monthly",
+  "bi-monthly": "Every 2 months",
+  quarterly: "Quarterly",
+  yearly: "Yearly",
+  irregular: "Irregular",
+  unknown: "Not enough history",
+};
+
+/** Narrows a stored override string, which the database types only as `text`. */
+export function asSettableCadence(value: string | null): SettableCadence | null {
+  return value != null && (SETTABLE_CADENCES as readonly string[]).includes(value)
+    ? (value as SettableCadence)
+    : null;
+}
 
 /**
  * Day-count windows for each cadence. Wide enough to absorb month lengths

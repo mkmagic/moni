@@ -120,3 +120,17 @@ export function matchCatalog(matchText: string): CatalogEntry | null {
   const tokens = matchText.split(" ");
   return CATALOG.find((e) => e.needles.some((n) => needleMatches(tokens, n))) ?? null;
 }
+
+/**
+ * What makes two payees the same payee: the catalog key when the catalog
+ * knows them, the match text when it doesn't (docs/adr/0005-*).
+ *
+ * This is what collapses `PAYPAL *NETFLIX` and `NETFLIX` — two different
+ * match texts — into one Netflix. It lives here, beside the catalog it
+ * consults, because both the merchant writer and the recurring view have to
+ * agree on it exactly; when they each had their own copy, a change to one
+ * would have split every catalog payee into two rows.
+ */
+export function merchantIdentity(matchText: string): string {
+  return matchCatalog(matchText)?.key ?? matchText;
+}

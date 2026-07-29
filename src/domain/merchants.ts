@@ -18,7 +18,8 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import { withUser } from "@/db/client";
 import { entries, merchants } from "@/db/schema";
 import { normalizeDescription } from "@/lib/categorization/normalize";
-import { matchCatalog } from "@/lib/merchants/catalog";
+import { matchCatalog, merchantIdentity } from "@/lib/merchants/catalog";
+import type { SettableCadence } from "@/lib/recurring/cadence";
 import type { Session } from "@/lib/auth/session-store";
 import { decText, encText } from "./fields";
 
@@ -31,12 +32,44 @@ export interface MerchantResolutionSummary {
 }
 
 /**
- * What makes two payees the same payee. The catalog key when there is one —
- * so every spelling of Netflix lands on one merchant — otherwise the match
- * text itself.
+ * The existing merchants, decrypted once and indexed by identity — the
+ * in-memory stand-in for the unique constraint randomized ciphertext makes
+ * impossible (docs/adr/0002-*, docs/adr/0005-*).
  */
-function identityOf(matchText: string): string {
-  return matchCatalog(matchText)?.key ?? matchText;
+async function merchantIdsByIdentity(tx: Tx, dataKey: Uint8Array): Promise<Map<string, string>> {
+  const rows = await tx
+    .select({ id: merchants.id, matchTextCt: merchants.matchTextCt, version: merchants.version })
+    .from(merchants);
+  const byIdentity = new Map<string, string>();
+  for (const m of rows) {
+    const matchText = decText(dataKey, m.matchTextCt, m.id, "match_text_ct", m.version);
+    if (matchText === null) continue;
+    byIdentity.set(merchantIdentity(matchText), m.id);
+  }
+  return byIdentity;
+}
+
+/** Creates the merchant row for a match text, catalog-named when known. */
+async function insertMerchant(
+  tx: Tx,
+  ownerId: string,
+  dataKey: Uint8Array,
+  matchText: string,
+  cadenceOverride: string | null = null,
+): Promise<string> {
+  const entry = matchCatalog(matchText);
+  const id = randomUUID();
+  await tx.insert(merchants).values({
+    id,
+    ownerId,
+    nameCt: encText(dataKey, entry?.name ?? matchText, id, "name_ct", 1),
+    matchTextCt: encText(dataKey, matchText, id, "match_text_ct", 1),
+    // Origin-local or null, never an external URL (docs/adr/0007-*).
+    logoUrl: entry?.logoPath ?? null,
+    source: entry ? "catalog" : "match_text",
+    cadenceOverride,
+  });
+  return id;
 }
 
 /**
@@ -68,17 +101,7 @@ export async function resolveMerchants(
     .where(and(inArray(entries.id, entryIds), isNull(entries.merchantId)));
   if (rows.length === 0) return summary;
 
-  // Decrypt the existing merchants once and index them by identity — the
-  // in-memory stand-in for the unique constraint we cannot have.
-  const existing = await tx
-    .select({ id: merchants.id, matchTextCt: merchants.matchTextCt, version: merchants.version })
-    .from(merchants);
-  const byIdentity = new Map<string, string>();
-  for (const m of existing) {
-    const matchText = decText(dataKey, m.matchTextCt, m.id, "match_text_ct", m.version);
-    if (matchText === null) continue;
-    byIdentity.set(identityOf(matchText), m.id);
-  }
+  const byIdentity = await merchantIdsByIdentity(tx, dataKey);
 
   for (const row of rows) {
     const description = decText(dataKey, row.descriptionCt, row.id, "description_ct", row.version);
@@ -86,21 +109,11 @@ export async function resolveMerchants(
     const matchText = normalizeDescription(description);
     if (matchText === "") continue;
 
-    const identity = identityOf(matchText);
+    const identity = merchantIdentity(matchText);
     let merchantId = byIdentity.get(identity);
 
     if (!merchantId) {
-      const entry = matchCatalog(matchText);
-      merchantId = randomUUID();
-      await tx.insert(merchants).values({
-        id: merchantId,
-        ownerId,
-        nameCt: encText(dataKey, entry?.name ?? matchText, merchantId, "name_ct", 1),
-        matchTextCt: encText(dataKey, matchText, merchantId, "match_text_ct", 1),
-        // Origin-local or null, never an external URL (docs/adr/0007-*).
-        logoUrl: entry?.logoPath ?? null,
-        source: entry ? "catalog" : "match_text",
-      });
+      merchantId = await insertMerchant(tx, ownerId, dataKey, matchText);
       byIdentity.set(identity, merchantId);
       summary.merchantsCreated++;
     }
@@ -125,52 +138,20 @@ export async function resolveMerchants(
 export async function setMerchantCadence(
   session: Session,
   matchText: string,
-  cadence: string | null,
+  cadence: SettableCadence | null,
 ): Promise<void> {
   const { userId, dataKey } = session;
-  const identity = identityOf(matchText);
+  const identity = merchantIdentity(matchText);
 
   await withUser(userId, async (tx) => {
-    const rows = await tx.select().from(merchants);
-    for (const m of rows) {
-      const mt = decText(dataKey, m.matchTextCt, m.id, "match_text_ct", m.version);
-      if (mt === null || identityOf(mt) !== identity) continue;
-      await tx.update(merchants).set({ cadenceOverride: cadence }).where(eq(merchants.id, m.id));
+    const existing = (await merchantIdsByIdentity(tx, dataKey)).get(identity);
+    if (existing) {
+      await tx
+        .update(merchants)
+        .set({ cadenceOverride: cadence })
+        .where(eq(merchants.id, existing));
       return;
     }
-
-    const entry = matchCatalog(matchText);
-    const id = randomUUID();
-    await tx.insert(merchants).values({
-      id,
-      ownerId: userId,
-      nameCt: encText(dataKey, entry?.name ?? matchText, id, "name_ct", 1),
-      matchTextCt: encText(dataKey, matchText, id, "match_text_ct", 1),
-      logoUrl: entry?.logoPath ?? null,
-      source: entry ? "catalog" : "match_text",
-      cadenceOverride: cadence,
-    });
-  });
-}
-
-/**
- * Resolves merchants for every entry that still has none — the one-time pass
- * over history already scraped before merchant resolution existed, and the
- * repair path if anything is ever missed. Safe to re-run: an entry that
- * already has a merchant is not reconsidered.
- */
-export async function backfillMerchants(session: Session): Promise<MerchantResolutionSummary> {
-  const { userId, dataKey } = session;
-  return withUser(userId, async (tx) => {
-    const pending = await tx
-      .select({ id: entries.id })
-      .from(entries)
-      .where(isNull(entries.merchantId));
-    return resolveMerchants(
-      tx,
-      userId,
-      dataKey,
-      pending.map((e) => e.id),
-    );
+    await insertMerchant(tx, userId, dataKey, matchText, cadence);
   });
 }

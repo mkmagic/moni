@@ -39,9 +39,19 @@ suggester shipped before any model integration.
   exactly as `category_rejections` and `rule_conditions.value_ct` already do.
 - **`merchants.cadence_override` is plaintext.** It is an enum string with no
   user-specific content — Tier-2, like `categories.name`.
-- **Existing entries need a backfill.** Every already-scraped entry has a null
-  `merchant_id`, and the recurring view groups by merchant. Resolution runs
-  during sync promotion for new entries and once over history for old ones.
+- **The recurring view does not read `entries.merchant_id`.** It re-derives the
+  identity from each entry's description, and looks a merchant row up by that
+  identity only for the display name, the icon and the cadence override. So the
+  view is complete for history scraped long before merchant resolution existed,
+  and correct on the very first render after this ships.
+- **There is deliberately no backfill of `entries.merchant_id`.** Resolution
+  runs during sync promotion, so the column fills in going forward and stays
+  null for older rows. A one-off pass was written and then deleted: nothing
+  needed it (the view derives its own identity, and the cadence override
+  creates a merchant on demand), and it could not have run outside a request
+  anyway — a data key lives in RAM only, so no CLI or migration can decrypt a
+  description to resolve one. The visible cost is that the transactions table's
+  merchant column stays empty for entries scraped before this change.
 - **Renaming a merchant renames it everywhere, forever.** That is the point —
   one rename fixes every past and future transaction sharing the text — but it
   also means a rename applied to an over-broad match text (a bare `PAYPAL`)

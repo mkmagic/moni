@@ -32,12 +32,20 @@ model we have already rejected in writing.
 
 ## Consequences
 
-- **Cadence is derived, not stored — but is overridable.** The median gap
-  between a merchant's transaction dates gives monthly / bi-monthly / quarterly
-  / yearly / irregular. Unknown at one transaction, a guess from a single gap at
-  two, solid from three. `merchants.cadence_override` exists precisely because
-  an annual subscription with one payment so far cannot be inferred at all, and
-  the user knows the answer.
+- **Cadence is derived, not stored — but is overridable.** The gaps between a
+  merchant's transaction dates give monthly / bi-monthly / quarterly / yearly /
+  irregular. Unknown at one transaction, a guess from a single gap at two, solid
+  from three. `merchants.cadence_override` exists precisely because an annual
+  subscription with one payment so far cannot be inferred at all, and the user
+  knows the answer.
+- **The gaps are read by a plurality vote, not by their median.** Each gap is
+  sorted into a day-count band and the most popular band wins, provided it holds
+  at least 60% of the gaps. The median was the obvious choice and is wrong: two
+  payments 30 and 365 days apart have a median of ~197 days, which is not a
+  cadence anyone was ever charged at, and a single 200-day hole in an otherwise
+  monthly series drags the median out of the monthly band entirely. A vote lets
+  the outlier simply lose, and the 60% floor is what keeps "half monthly, half
+  noise" honest at `irregular`.
 - **Irregular is a real answer.** A payee with unstable spacing is labelled
   irregular and left out of any per-month normalisation rather than being
   assigned a cadence it does not have.
@@ -52,9 +60,13 @@ model we have already rejected in writing.
   cost class as `dashboard.ts`, which already decrypts every entry in a period.
 - **FX-pending entries are skipped**, following `dashboard.ts:96` — never fake a
   rate, in an average any more than in a total.
-- **`lib/money` gains `divide`.** It had `add`, `multiply`, `isZero` and
-  `negate`, and an average needs division — the one operation where exact
-  decimal stops being exact. It rounds to 2dp, half-up, and that policy lives in
-  one function rather than at each call site.
+- **`lib/money` gains `divide` and `abs`.** An average needs division — the one
+  operation here whose result need not terminate. `divide` deliberately does
+  **not** round: `money-and-currency.md` §3 says "Never round intermediate
+  arithmetic" and "Rounding **never** happens in the domain/service layer", and
+  `formatMoney` already rounds `halfExpand` at the minor unit, so an average of
+  3.3333… reaches the screen as ₪3.33 with no help from the domain layer. `abs`
+  replaced ad-hoc string surgery on the minus sign, which is the sort of thing
+  that has no business happening outside the money module.
 - **If cadence detection is ever built, it adds a table designed for it.** That
   is the intended outcome, not a regret.

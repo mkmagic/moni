@@ -7,7 +7,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import * as schema from "@/db/schema";
 import { encryptField, getDevUserDataKey, type AadContext } from "@/lib/crypto";
-import { backfillMerchants } from "@/domain/merchants";
+import { withUser } from "@/db/client";
+import { entries as entriesTable } from "@/db/schema";
+import { resolveMerchants, type MerchantResolutionSummary } from "@/domain/merchants";
 import { listEntries } from "@/domain/transactions";
 import type { Session } from "@/lib/auth/session-store";
 import { cleanupOwners, elevatedDb, elevatedPool } from "./helpers";
@@ -91,6 +93,23 @@ async function merchantNames(session: Session): Promise<(string | null)[]> {
   return (await listEntries(session)).map((e) => e.merchantName);
 }
 
+/**
+ * Drives the real seam the way sync promotion does — inside one `withUser`
+ * transaction, over a batch of entry ids. Sync passes the ids it just
+ * touched; here it is every entry the user has.
+ */
+async function resolveAll(f: Fixture): Promise<MerchantResolutionSummary> {
+  return withUser(f.userId, async (tx) => {
+    const rows = await tx.select({ id: entriesTable.id }).from(entriesTable);
+    return resolveMerchants(
+      tx,
+      f.userId,
+      f.dataKey,
+      rows.map((r) => r.id),
+    );
+  });
+}
+
 describe("merchant resolution", () => {
   let userA: Fixture;
   let userB: Fixture;
@@ -106,7 +125,7 @@ describe("merchant resolution", () => {
   });
 
   it("creates one merchant per distinct payee and links every entry", async () => {
-    const result = await backfillMerchants(userA.session);
+    const result = await resolveAll(userA);
     // Six entries, three payees: Netflix (twice over, two spellings),
     // ג'ופניקה, and the hotel.
     expect(result.merchantsCreated).toBe(3);
@@ -136,14 +155,14 @@ describe("merchant resolution", () => {
   });
 
   it("is idempotent — a second run creates nothing and links nothing", async () => {
-    const again = await backfillMerchants(userA.session);
+    const again = await resolveAll(userA);
     expect(again).toEqual({ merchantsCreated: 0, entriesLinked: 0 });
   });
 
   it("never reaches across tenants — B's entries are untouched by A's run", async () => {
     expect(await merchantNames(userB.session)).toEqual(DESCRIPTIONS.map(() => null));
 
-    const bResult = await backfillMerchants(userB.session);
+    const bResult = await resolveAll(userB);
     expect(bResult.merchantsCreated).toBe(3);
     expect(await merchantNames(userB.session)).not.toContain(null);
   });
