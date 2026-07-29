@@ -49,8 +49,6 @@ export interface EntryView {
   status: string;
 }
 
-export { NO_CATEGORY };
-
 export interface EntryFilters {
   from?: string;
   to?: string;

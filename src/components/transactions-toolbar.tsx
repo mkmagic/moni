@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronDown, Search, X } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 // From `lib`, never from `@/domain/transactions`: importing a runtime value
 // out of the domain layer pulls `pg` into the client bundle.
 import { NO_CATEGORY } from "@/lib/transactions/filters";
@@ -26,7 +27,10 @@ interface TransactionsToolbarProps {
   onControlsChange: (next: TableControls) => void;
 }
 
-const fieldClass =
+// Only the <select> needs this: there is no Select primitive yet, and the
+// text/date/amount fields all go through <Input>. Kept in sync with
+// `ui/input.tsx` by eye — if a Select primitive lands, this goes.
+const selectClass =
   "w-full rounded-[var(--radius)] border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring";
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -72,7 +76,12 @@ export function TransactionsToolbar({
 
   function clearAll() {
     onControlsChange({ ...controls, query: "", minAmount: "", maxAmount: "" });
-    startTransition(() => router.push("/transactions"));
+    // Clears this toolbar's own keys rather than the whole query string, so
+    // anything else the URL is carrying survives — same contract as
+    // `setServerFilter`.
+    const next = new URLSearchParams(searchParams.toString());
+    for (const key of ["category", "from", "to"]) next.delete(key);
+    startTransition(() => router.push(next.toString() ? `?${next}` : "/transactions"));
   }
 
   return (
@@ -87,12 +96,12 @@ export function TransactionsToolbar({
           <Field label="Search">
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <input
+              <Input
                 type="text"
                 value={controls.query}
                 onChange={(e) => set("query", e.target.value)}
                 placeholder="Search payee"
-                className={`${fieldClass} pl-9`}
+                className="pl-9"
               />
             </div>
           </Field>
@@ -104,7 +113,7 @@ export function TransactionsToolbar({
               <select
                 value={serverFilters.category}
                 onChange={(e) => setServerFilter("category", e.target.value)}
-                className={`${fieldClass} appearance-none pr-8`}
+                className={`${selectClass} appearance-none pr-8`}
               >
                 <option value="">All categories</option>
                 <option value={NO_CATEGORY}>Uncategorized</option>
@@ -134,22 +143,20 @@ export function TransactionsToolbar({
       <div className="flex flex-wrap items-end gap-3">
         <div className="w-40">
           <Field label="From">
-            <input
+            <Input
               type="date"
               value={serverFilters.from}
               onChange={(e) => setServerFilter("from", e.target.value)}
-              className={fieldClass}
             />
           </Field>
         </div>
 
         <div className="w-40">
           <Field label="To">
-            <input
+            <Input
               type="date"
               value={serverFilters.to}
               onChange={(e) => setServerFilter("to", e.target.value)}
-              className={fieldClass}
             />
           </Field>
         </div>
@@ -158,26 +165,26 @@ export function TransactionsToolbar({
           hands back a coerced float, and money is an exact decimal string. */}
         <div className="w-32">
           <Field label="Min amount">
-            <input
+            <Input
               type="text"
               inputMode="decimal"
               value={controls.minAmount}
               onChange={(e) => set("minAmount", e.target.value)}
               placeholder="0"
-              className={`${fieldClass} tabular-nums`}
+              className="tabular-nums"
             />
           </Field>
         </div>
 
         <div className="w-32">
           <Field label="Max amount">
-            <input
+            <Input
               type="text"
               inputMode="decimal"
               value={controls.maxAmount}
               onChange={(e) => set("maxAmount", e.target.value)}
               placeholder="Any"
-              className={`${fieldClass} tabular-nums`}
+              className="tabular-nums"
             />
           </Field>
         </div>

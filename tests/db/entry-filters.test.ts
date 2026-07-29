@@ -10,7 +10,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import * as schema from "@/db/schema";
 import { encryptField, getDevUserDataKey, type AadContext } from "@/lib/crypto";
-import { listEntries, NO_CATEGORY } from "@/domain/transactions";
+import { listEntries } from "@/domain/transactions";
+import { NO_CATEGORY } from "@/lib/transactions/filters";
 import type { Session } from "@/lib/auth/session-store";
 import { cleanupOwners, elevatedDb, elevatedPool } from "./helpers";
 

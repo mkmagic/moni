@@ -28,8 +28,11 @@ interface TransactionsTableProps {
   /** The SQL-side filters currently in the URL, echoed into the toolbar. */
   serverFilters: ServerFilters;
   /** How many entries the server was willing to return, so the table can say
-   * how far the client-side search and amount filters actually reach. */
+   * how far the client-side search, sort and amount filters actually reach. */
   windowSize: number;
+  /** True when the server found more entries than the window holds. Decided
+   * there by over-fetching one row, not guessed from `entries.length`. */
+  capped: boolean;
 }
 
 const COLUMNS: { column: SortColumn; label: string; align?: "right" }[] = [
@@ -51,6 +54,7 @@ export function TransactionsTable({
   suggestions,
   serverFilters,
   windowSize,
+  capped,
 }: TransactionsTableProps) {
   const [selected, setSelected] = useState<EntryView | null>(null);
   const [controls, setControls] = useState<TableControls>(DEFAULT_TABLE_CONTROLS);
@@ -69,19 +73,24 @@ export function TransactionsTable({
 
   const hasAmountBound = controls.minAmount !== "" || controls.maxAmount !== "";
   const clientFiltered = controls.query !== "" || hasAmountBound;
-  // The window is full, so there is very likely more history behind it — the
-  // one thing the table must not do is let a search look exhaustive when it
-  // only reached this far.
-  const capped = entries.length >= windowSize;
 
   const notes: string[] = [];
   if (clientFiltered) notes.push(`${visible.length} of ${entries.length} shown`);
   if (capped) {
+    // Sorting has to be named here too, not just the filters. "Amount,
+    // descending" over a truncated window presents the largest of the newest
+    // hundred as if it were the largest outright — the most quietly wrong of
+    // the three.
     notes.push(
-      `Search and amount filters cover only the ${windowSize} most recent transactions in this range — narrow the dates to look further back.`,
+      `Search, sorting and amount filters cover only the ${windowSize} most recent transactions in this range — narrow the dates to look further back.`,
     );
   }
-  if (hasAmountBound) notes.push("Amount range matches a transaction's size, ignoring sign.");
+  if (hasAmountBound) {
+    // Currency belongs in this caveat alongside sign: a pending-FX row carries
+    // its entered leg, not a base-currency figure, so the bound is compared
+    // against a number in another currency (`EntryView.fxPending`).
+    notes.push("Amount range matches a transaction's size, ignoring sign and currency.");
+  }
 
   // An empty table has three quite different causes, and telling the user
   // "nothing matched" when they have never synced is the unhelpful one.

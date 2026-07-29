@@ -1,6 +1,7 @@
 import { requireSession } from "@/domain/auth";
 import { requireOnboarded } from "@/domain/onboarding";
-import { listEntries, NO_CATEGORY } from "@/domain/transactions";
+import { listEntries } from "@/domain/transactions";
+import { NO_CATEGORY } from "@/lib/transactions/filters";
 import { listCategories, suggestCategories } from "@/domain/categorization";
 import { TransactionsTable } from "@/components/transactions-table";
 
@@ -14,8 +15,16 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** A search param is user input reaching a SQL predicate. Drizzle parameterizes
  * it, but a malformed date or id still makes Postgres throw, so anything that
- * isn't a well-formed value is dropped rather than passed through. */
-const asDate = (v: string | undefined) => (v && ISO_DATE.test(v) ? v : undefined);
+ * isn't a well-formed value is dropped rather than passed through.
+ *
+ * The shape check alone is not enough: `2026-99-99` matches the pattern and
+ * still blows up the `date` column, so the value has to survive a round-trip
+ * through `Date` as well. */
+const asDate = (v: string | undefined) => {
+  if (!v || !ISO_DATE.test(v)) return undefined;
+  const parsed = new Date(`${v}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === v ? v : undefined;
+};
 const asCategory = (v: string | undefined) =>
   v && (v === NO_CATEGORY || UUID.test(v)) ? v : undefined;
 
@@ -36,10 +45,15 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
     to: asDate(params.to),
   };
 
-  const [entries, categories] = await Promise.all([
-    listEntries(session, { ...filters, limit: WINDOW_SIZE }),
+  // One row past the window, so "there is more behind this" is something the
+  // page knows rather than infers: a user with exactly WINDOW_SIZE matching
+  // entries would otherwise be told to narrow a range that hides nothing.
+  const [window, categories] = await Promise.all([
+    listEntries(session, { ...filters, limit: WINDOW_SIZE + 1 }),
     listCategories(session),
   ]);
+  const capped = window.length > WINDOW_SIZE;
+  const entries = capped ? window.slice(0, WINDOW_SIZE) : window;
 
   // Only the uncategorized rows can carry a suggestion — layers 0-2 already
   // spoke for the rest, and a locked field is nobody else's business.
@@ -61,6 +75,7 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
         to: filters.to ?? "",
       }}
       windowSize={WINDOW_SIZE}
+      capped={capped}
     />
   );
 }

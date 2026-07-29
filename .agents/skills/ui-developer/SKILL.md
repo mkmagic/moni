@@ -66,8 +66,9 @@ new feedback lands.
 - **Six filter controls do not fit on one line.** A single `flex-wrap` row orphaned "Max amount" onto
   a row of its own with a wide gap beside it. Two deliberate rows read better than one wrapping one:
   search + category (what to look for), then from/to/min/max (how far to look), with "Clear" pushed to
-  `ml-auto` on the first row. Also **cap the search input** (`max-w-sm`) — `flex-1` stretched it to
-  ~860px, the same empty-measure problem as the 2026-07-26 helper-text note.
+  `ml-auto` on the first row. Also **cap the search field's wrapper** (`max-w-sm` on the flex child,
+  not on the `Input` — `cn` is a plain join and the primitive's own `w-full` would win) — `flex-1`
+  stretched it to ~860px, the same empty-measure problem as the 2026-07-26 helper-text note.
 - **A scoped filter has to admit its scope.** Payee and amount are ciphertext, so search and
   amount-range only cover the rows already fetched. The table prints "Search and amount filters cover
   only the N most recent transactions in this range" **whenever the window is full**, and stays quiet
