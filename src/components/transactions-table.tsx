@@ -111,7 +111,14 @@ export function TransactionsTable({
         {/* The scroll lives here, not on the page, so the header can stay put
             while a long ledger moves under it. */}
         <div className="max-h-[70vh] overflow-auto">
-          <table className="w-full text-sm">
+          {/* `border-separate` is load-bearing, not cosmetic. Under the default
+              `border-collapse: collapse` a cell's border belongs to the table's
+              collapsed border grid rather than to the cell, so it does not
+              travel with a sticky <th> — the header loses its bottom rule the
+              moment you scroll, and floats on the rows. Verified in the browser
+              by toggling the property live. The cost: a border on a <tr> then
+              renders nowhere, so the row rules have to live on the <td>s. */}
+          <table className="w-full border-separate border-spacing-0 text-sm">
             <thead>
               <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
                 {COLUMNS.map(({ column, label, align }) => {
@@ -160,7 +167,7 @@ export function TransactionsTable({
                 })}
               </tr>
             </thead>
-            <tbody className="divide-y divide-border">
+            <tbody className="[&>tr:last-child>td]:border-b-0">
               {visible.map((entry) => (
                 <tr
                   key={entry.id}
@@ -180,11 +187,13 @@ export function TransactionsTable({
                     entry.excluded && "opacity-50",
                   )}
                 >
-                  <td className="whitespace-nowrap px-5 py-3 tabular-nums text-muted-foreground">
+                  <td className="whitespace-nowrap border-b border-border px-5 py-3 tabular-nums text-muted-foreground">
                     {entry.dateLabel}
                   </td>
-                  <td className="px-5 py-3 text-foreground">{entry.accountName}</td>
-                  <td className="px-5 py-3">
+                  <td className="border-b border-border px-5 py-3 text-foreground">
+                    {entry.accountName}
+                  </td>
+                  <td className="border-b border-border px-5 py-3">
                     {entry.categoryName ? (
                       <Badge>{entry.categoryName}</Badge>
                     ) : suggestions[entry.id] ? (
@@ -197,13 +206,13 @@ export function TransactionsTable({
                       <span className="text-muted-foreground">—</span>
                     )}
                   </td>
-                  <td className="px-5 py-3 text-foreground">
+                  <td className="border-b border-border px-5 py-3 text-foreground">
                     {/* Hebrew payee names reorder an adjacent LTR badge unless
                         they are bidi-isolated. */}
                     <bdi>{payeeOf(entry)}</bdi>
                     {entry.excluded && <Badge className="ml-2">transfer</Badge>}
                   </td>
-                  <td className="whitespace-nowrap px-5 py-3 text-right">
+                  <td className="whitespace-nowrap border-b border-border px-5 py-3 text-right">
                     {/* A transfer's sign says which side of the move you are
                         looking at, not whether money was earned or spent — so
                         it gets blue, not teal/coral. */}

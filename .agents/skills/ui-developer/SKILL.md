@@ -42,6 +42,46 @@ new feedback lands.
 
 ## Feedback log (newest first — append, don't overwrite)
 
+### 2026-07-29 — the transactions table (issue #14): sticky headers, and a client import that shipped Postgres
+
+- **A runtime value imported from `@/domain/**` into a `"use client"` component pulls `pg` into the
+  browser bundle.** The toolbar imported one constant (`NO_CATEGORY`) from `@/domain/transactions`;
+  Turbopack followed it to `src/db/client.ts` and the page died on `Can't resolve 'dns'/'net'/'tls'`,
+  white screen, six module-not-found errors. **Types are erased and safe to import from the domain
+  layer; constants are not.** The fix is a `lib` module both sides can import
+  (`src/lib/transactions/filters.ts`). Typecheck, lint and the test suite were all green with this
+  bug in place — only loading the page found it. Assume this recurs the next time a client component
+  needs a shared enum or sentinel.
+- **A sticky `<th>` loses its bottom border under `border-collapse: collapse`.** A cell's border
+  belongs to the collapsed border grid, not the cell, so it does not travel with the sticky element:
+  the header floats over the rows with no rule under it the moment you scroll. Fix is
+  `border-separate border-spacing-0` on the `<table>` — at which point a border on a `<tr>` renders
+  nowhere, so `divide-y` on `<tbody>` stops working and the row rules have to move onto the `<td>`s
+  (`[&>tr:last-child>td]:border-b-0` drops the last one). Verified by toggling `borderCollapse` live
+  in the console and re-zooming.
+- **Diagnose sticky-header artifacts with `elementFromPoint`, not with your eyes.** The half-scrolled
+  row peeking below a sticky header looks exactly like a background-painting bug and is not one — it
+  is just the part of the row below the header's bottom edge, which is correct. One
+  `document.elementFromPoint(x, th.bottom - 6)` returning the `TH` settled it and stopped a wrong fix.
+- **Six filter controls do not fit on one line.** A single `flex-wrap` row orphaned "Max amount" onto
+  a row of its own with a wide gap beside it. Two deliberate rows read better than one wrapping one:
+  search + category (what to look for), then from/to/min/max (how far to look), with "Clear" pushed to
+  `ml-auto` on the first row. Also **cap the search input** (`max-w-sm`) — `flex-1` stretched it to
+  ~860px, the same empty-measure problem as the 2026-07-26 helper-text note.
+- **A scoped filter has to admit its scope.** Payee and amount are ciphertext, so search and
+  amount-range only cover the rows already fetched. The table prints "Search and amount filters cover
+  only the N most recent transactions in this range" **whenever the window is full**, and stays quiet
+  when it isn't — a caveat that is always on is noise, and one that never appears is a lie.
+- **An `<option>`'s leading plain whitespace is collapsed**, so a flat 100+ category list cannot show
+  nesting that way. Non-breaking spaces work and now carry a comment saying why, since they look like
+  a typo.
+- **Fixture notes that cost time again**: the dev DB was empty (`db:migrate` + `seed:demo` needed),
+  and `seed-demo.ts` creates **no `connections` rows**, so `requireOnboarded()` bounces
+  `/transactions` → `/onboarding`. One throwaway `connections` row fixes it — superuser is
+  `postgresql://postgres:postgres@localhost:5432/moni` (`DATABASE_URL_MIGRATE`'s role is RLS-bound and
+  silently returns zero rows), `status` must be one of `active|error|disconnected`. And re-seeding
+  mid-session invalidates the browser session, which presents as a redirect to `/login`.
+
 ### 2026-07-28 (later) — suggestion chips (issue #2): dashed vs solid, and a money column that drifted
 
 - **A proposal and a fact must not look alike.** The suggestion chip reuses `Badge`'s shape but with
