@@ -29,7 +29,15 @@ promoteScrapeResult()                       src/domain/sync-promotion.ts
   └─ categorizeEntries(tx, ownerId, dataKey, touchedEntryIds)
 ```
 
-`categorizeEntries` takes the caller's `tx`, so a rolled-back scrape leaves no categories behind. `recategorizeUncategorized(session)` is the same engine wrapped in its own transaction — the backfill path, and what makes a newly created rule take effect on entries that are still uncategorized.
+`categorizeEntries` takes the caller's `tx`, so a rolled-back scrape leaves no categories behind. `recategorizeUncategorized(session)` is the same engine wrapped in its own transaction, over the entries that still have no category.
+
+**A rule change re-derives; it does not only fill blanks.** Every path that writes a rule — the dialog's "Create a rule", the Rules tab, re-activating a rule — runs the engine over `ruleCandidateEntryIds`: every non-excluded entry whose `category_id` is **not locked**. That is wider than "uncategorized", deliberately.
+
+A category assigned by a rule or the built-in table is *derived*: the ruleset is its only justification, so when the ruleset changes it has to be recomputed. A category a person set by hand is locked (§4) and is never a candidate. **Locked is authoritative, unlocked is derived** — that one line is the whole policy.
+
+Without it, layer 1's precedence over layer 2 held only for transactions that had not arrived yet. A café called `יאלנס רכבת` is claimed at ingest by the built-in `רכבת` (train) rule; a user rule saying otherwise would fix the entry they were looking at and silently leave its siblings filed as Public Transport, because a blanks-only backfill can never revisit them.
+
+The pass does **not** clear a category when nothing matches. Deleting a rule deliberately leaves behind what it filed (§3), so blanking unjustified categories here would quietly undo that. It re-files, it never un-files.
 
 **Why matching happens in memory rather than in SQL.** `rule_conditions.value_ct` is encrypted, so a condition cannot become a `WHERE` clause. The ruleset is decrypted **once per batch** into a compiled form (`loadContext`) and the batch is evaluated against it — the same decrypt-then-compute trade-off already accepted by `transactions.ts` and `dashboard.ts`. Doing it per row would re-decrypt every rule for every transaction.
 
@@ -154,7 +162,7 @@ The explicit path is the **"Create a rule"** section of the categorize dialog, w
 
 Default-on is deliberate. Its predecessor was an off-by-default checkbox hard-wired to the entire match text, which made it doubly useless: nobody enabled it, and when they did it produced a rule that only ever fired on that exact payee string. A condition you can *see and widen before saving* is worth defaulting to; a fixed exact match is not. Editing the text down to the discriminating part (`שופרסל` rather than `שופרסל דיל רמת גן`) is the user's call in v1.0. *Proposing* that narrowing — picking the discriminating token by IDF and proving it safe against already-categorized history before offering it — is deliberately out of scope here and tracked separately.
 
-Both paths retarget an existing rule for the same *(operator, text)* pairing instead of duplicating it. Narrowing `contains X` to `is exactly X` therefore writes a second, more specific rule rather than rewriting the broad one, which someone else's transactions may still depend on; specificity scoring (§3) settles which one wins. Neither path sets `effective_date` — the engine only writes where `category_id` IS NULL, so a rule cannot rewrite history at any date, and dating it today would only stop it from filling in the blanks it was created to fill.
+Both paths retarget an existing rule for the same *(operator, text)* pairing instead of duplicating it. Narrowing `contains X` to `is exactly X` therefore writes a second, more specific rule rather than rewriting the broad one, which someone else's transactions may still depend on; specificity scoring (§3) settles which one wins. Neither path sets `effective_date` — the engine never touches a locked category, so a rule cannot overwrite a human decision at any date, and dating it today would only stop it from reaching the transactions it was created for.
 
 ## 9. Rules-only mode
 

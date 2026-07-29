@@ -647,6 +647,60 @@ describe("learning from past corrections", () => {
     expect(await categoryNameFor(fx, "חנות בלתי מזוהה אונליין")).toBe("Groceries");
   });
 
+  it("a user rule displaces a category the built-in table already assigned", async () => {
+    // "יאלנס רכבת" is a café. The built-in `רכבת` (train) rule claims it on
+    // sight, so both entries arrive already categorized as Public Transport —
+    // and a backfill that only filled blanks would never revisit the sibling.
+    const fx = await freshFixture("cat-displace");
+    await scrape(fx, [
+      txn({ description: "יאלנס רכבת" }),
+      txn({ description: "יאלנס רכבת", identifier: "b2", date: "2026-05-11" }),
+    ]);
+    const all = await listEntries(fx.session, { limit: 200 });
+    const both = all.filter((e) => e.description === "יאלנס רכבת");
+    expect(both).toHaveLength(2);
+    expect(both.map((e) => e.categoryName)).toEqual(["Public Transport", "Public Transport"]);
+
+    await setEntryCategory(
+      fx.session,
+      both[0].id,
+      await categoryIdByBuiltinKey(fx.userId, "food-restaurants"),
+      { createRule: { operator: "equals", value: "יאלנס רכבת" } },
+    );
+
+    const after = await listEntries(fx.session, { limit: 200 });
+    const names = after.filter((e) => e.description === "יאלנס רכבת").map((e) => e.categoryName);
+    expect(names).toEqual(["Restaurants & Cafés", "Restaurants & Cafés"]);
+  });
+
+  it("a hand-set category survives a later rule that would have filed it elsewhere", async () => {
+    const fx = await freshFixture("cat-locked-wins");
+    await scrape(fx, [
+      txn({ description: "חנות בלתי מזוהה" }),
+      txn({ description: "חנות בלתי מזוהה", identifier: "b2", date: "2026-05-11" }),
+    ]);
+    const pending = await listEntries(fx.session, { uncategorized: true });
+
+    // Filed by hand, no rule — this one is locked.
+    await setEntryCategory(
+      fx.session,
+      pending[0].id,
+      await categoryIdByBuiltinKey(fx.userId, "food-restaurants"),
+    );
+    // Now a rule that covers the same text, from the sibling.
+    await setEntryCategory(
+      fx.session,
+      pending[1].id,
+      await categoryIdByBuiltinKey(fx.userId, "entertainment-travel"),
+      { createRule: { operator: "contains", value: "חנות" } },
+    );
+
+    const after = await listEntries(fx.session, { limit: 200 });
+    const byId = new Map(after.map((e) => [e.id, e.categoryName]));
+    expect(byId.get(pending[0].id)).toBe("Restaurants & Cafés");
+    expect(byId.get(pending[1].id)).toBe("Travel & Vacation");
+  });
+
   it("narrowing to 'is exactly' writes a second rule rather than rewriting the broad one", async () => {
     const fx = await freshFixture("cat-operator");
     await scrape(fx, [txn({ description: "חנות בלתי מזוהה" })]);

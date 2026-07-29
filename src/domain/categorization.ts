@@ -323,6 +323,16 @@ async function logCategoryChange(
  * Runs the deterministic layers over `entryIds` and writes the categories it
  * resolves. Takes the caller's transaction so a scrape stays atomic.
  *
+ * Re-derives rather than only filling blanks. A category assigned by a rule
+ * or the built-in table is *derived* — the ruleset is its only justification,
+ * so when the ruleset changes it has to be recomputed. A category a person
+ * set by hand is locked, and locked entries are never candidates here. That
+ * is the whole distinction: locked is authoritative, unlocked is derived.
+ *
+ * It does not *clear* a category when nothing matches. Deleting a rule
+ * deliberately leaves behind what it filed (see `deleteRule`), so a pass that
+ * blanked unjustified categories would quietly undo that.
+ *
  * Only plaintext columns are written (`category_id`). `entries.version` is
  * deliberately NOT bumped: it is one version shared by every ciphertext
  * column on the row (sync-promotion.ts's trap #3), so bumping it here would
@@ -345,13 +355,14 @@ export async function categorizeEntries(
       id: entries.id,
       date: entries.date,
       accountId: entries.accountId,
+      categoryId: entries.categoryId,
       descriptionCt: entries.descriptionCt,
       enteredAmountCt: entries.enteredAmountCt,
       version: entries.version,
       lockedAttributes: entries.lockedAttributes,
     })
     .from(entries)
-    .where(and(inArray(entries.id, entryIds), isNull(entries.categoryId)));
+    .where(inArray(entries.id, entryIds));
 
   const candidates = rows.filter((r) => !isFieldLocked(r.lockedAttributes, "category_id"));
   if (candidates.length === 0) return 0;
@@ -382,6 +393,9 @@ export async function categorizeEntries(
       if (builtin) categoryId = builtinKeyToId.get(builtin.categoryKey) ?? null;
     }
     if (!categoryId) continue;
+    // Re-deriving the same answer is not a change: writing it anyway would
+    // put a changelog row on every entry on every rule edit.
+    if (categoryId === row.categoryId) continue;
 
     await tx.update(entries).set({ categoryId }).where(eq(entries.id, row.id));
     await logCategoryChange(tx, ownerId, dataKey, row.id, categoryId, "rule");
@@ -391,13 +405,30 @@ export async function categorizeEntries(
   return categorized;
 }
 
-/** Every entry still awaiting a category — the backfill candidate set. */
+/** Every entry still awaiting a category. */
 async function uncategorizedEntryIds(tx: Tx): Promise<string[]> {
   const rows = await tx
     .select({ id: entries.id })
     .from(entries)
     .where(and(isNull(entries.categoryId), eq(entries.excluded, false)));
   return rows.map((r) => r.id);
+}
+
+/**
+ * Every entry a change to the ruleset may act on: not excluded, and not
+ * locked to a category a person chose.
+ *
+ * Wider than `uncategorizedEntryIds` on purpose. A café named "יאלנס רכבת"
+ * is claimed at ingest by the built-in `רכבת` rule; writing a rule that says
+ * otherwise has to be able to displace that, or the user's own rule loses to
+ * a shipped default on every transaction that arrived first.
+ */
+async function ruleCandidateEntryIds(tx: Tx): Promise<string[]> {
+  const rows = await tx
+    .select({ id: entries.id, lockedAttributes: entries.lockedAttributes })
+    .from(entries)
+    .where(eq(entries.excluded, false));
+  return rows.filter((r) => !isFieldLocked(r.lockedAttributes, "category_id")).map((r) => r.id);
 }
 
 /**
@@ -731,11 +762,11 @@ export async function setEntryCategory(
     }
 
     // A new rule that only applies to transactions not yet scraped would be
-    // useless the moment it is written; run it over everything still
-    // uncategorized. Entries that already have a category are untouched —
-    // `categorizeEntries` only ever writes where `category_id` IS NULL.
+    // useless the moment it is written; run it over every entry it is allowed
+    // to touch. The entry being edited was locked a few lines above, so it is
+    // not among them — this pass is for its siblings.
     if (ruleChanged) {
-      await categorizeEntries(tx, userId, dataKey, await uncategorizedEntryIds(tx));
+      await categorizeEntries(tx, userId, dataKey, await ruleCandidateEntryIds(tx));
     }
   });
 }
@@ -1351,15 +1382,15 @@ export async function upsertRule(
       value: input.categoryId,
     });
 
-    // Saving a rule runs it immediately over everything still uncategorized —
-    // a rule that only took effect on the next scrape would look broken.
-    // Already-categorized entries are safe: `categorizeEntries` writes only
-    // where `category_id` IS NULL, and a hand-set category is locked besides.
+    // Saving a rule runs it immediately — a rule that only took effect on the
+    // next scrape would look broken. It can re-file entries a weaker rule or
+    // the built-in table had claimed; anything a person categorized by hand is
+    // locked and stays put.
     const categorized = await categorizeEntries(
       tx,
       userId,
       dataKey,
-      await uncategorizedEntryIds(tx),
+      await ruleCandidateEntryIds(tx),
     );
 
     return { id: ruleId, categorized };
@@ -1382,7 +1413,7 @@ export async function setRuleActive(
       .returning({ id: rules.id });
     if (updated.length === 0) throw new RuleNotFoundError(ruleId);
     if (!active) return 0;
-    return categorizeEntries(tx, userId, dataKey, await uncategorizedEntryIds(tx));
+    return categorizeEntries(tx, userId, dataKey, await ruleCandidateEntryIds(tx));
   });
 }
 
