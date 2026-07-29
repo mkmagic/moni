@@ -9,6 +9,9 @@ import { accounts, categories, entries, merchants } from "@/db/schema";
 import { multiply, type Money } from "@/lib/money";
 import type { Session } from "@/lib/auth/session-store";
 import { normalizeDescription } from "@/lib/categorization/normalize";
+// Defined in `lib` so the transactions toolbar can import it without dragging
+// this module — and `pg` — into the client bundle. See its header.
+import { NO_CATEGORY } from "@/lib/transactions/filters";
 import { decText } from "./fields";
 import { isFieldLocked } from "./attribute-locks";
 import { loadTransferCategoryIds } from "./flows";
@@ -46,10 +49,16 @@ export interface EntryView {
   status: string;
 }
 
+export { NO_CATEGORY };
+
 export interface EntryFilters {
   from?: string;
   to?: string;
   accountId?: string;
+  /** A category id, or `NO_CATEGORY` for entries with none. This is a
+   * statement about the category column and nothing else — unlike
+   * `uncategorized`, it keeps excluded entries. */
+  categoryId?: string;
   limit?: number;
   /** The review queue: entries with no category yet. Excluded entries (one
    * leg of an internal transfer) are left out — they are not "needing
@@ -67,6 +76,13 @@ export async function listEntries(
     if (filters.from) conds.push(gte(entries.date, filters.from));
     if (filters.to) conds.push(lte(entries.date, filters.to));
     if (filters.accountId) conds.push(eq(entries.accountId, filters.accountId));
+    if (filters.categoryId) {
+      conds.push(
+        filters.categoryId === NO_CATEGORY
+          ? isNull(entries.categoryId)
+          : eq(entries.categoryId, filters.categoryId),
+      );
+    }
     if (filters.uncategorized) {
       conds.push(isNull(entries.categoryId));
       conds.push(eq(entries.excluded, false));
