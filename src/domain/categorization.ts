@@ -6,8 +6,9 @@
 //   0. attribute lock  — a human already set it; skip the entry entirely
 //   1. user rules      — including learned ones, ranked by specificity
 //   2. built-in rules  — the shipped Israeli keyword table (code constants)
-//   3. model           — scaffold only in v1.0; writes a suggestion, never a
-//                        category (there is no AI write path — AGENTS.md)
+//   3. suggestion      — derived from everything Moni already knows about
+//                        this text; proposed to a person, never written
+//                        (there is no AI write path — AGENTS.md)
 //
 // There is deliberately no separate "learned from history" layer: learning
 // writes a real user rule, so it resolves in layer 1. One mechanism, and one
@@ -24,7 +25,7 @@ import { withUser } from "@/db/client";
 import {
   accounts,
   categories,
-  categorySuggestions,
+  categoryRejections,
   entries,
   entryFieldChangelog,
   recurringSeries,
@@ -49,7 +50,15 @@ import {
   type CategoryClassification,
 } from "@/lib/categorization/default-categories";
 import { isCategoryIcon } from "@/lib/categorization/category-icons";
-import { getSuggester, type SuggestInput } from "@/lib/categorization/suggester";
+import { BUILTIN_RULES } from "@/lib/categorization/builtin-rules";
+import {
+  buildCorpus,
+  suggest,
+  MIN_SUGGESTION_SCORE,
+  type Corpus,
+  type ExampleSource,
+  type LabeledExample,
+} from "@/lib/categorization/similarity";
 import { decText, encText } from "./fields";
 import { isFieldLocked, withFieldLocked, withFieldUnlocked } from "./attribute-locks";
 
@@ -314,6 +323,16 @@ async function logCategoryChange(
  * Runs the deterministic layers over `entryIds` and writes the categories it
  * resolves. Takes the caller's transaction so a scrape stays atomic.
  *
+ * Re-derives rather than only filling blanks. A category assigned by a rule
+ * or the built-in table is *derived* — the ruleset is its only justification,
+ * so when the ruleset changes it has to be recomputed. A category a person
+ * set by hand is locked, and locked entries are never candidates here. That
+ * is the whole distinction: locked is authoritative, unlocked is derived.
+ *
+ * It does not *clear* a category when nothing matches. Deleting a rule
+ * deliberately leaves behind what it filed (see `deleteRule`), so a pass that
+ * blanked unjustified categories would quietly undo that.
+ *
  * Only plaintext columns are written (`category_id`). `entries.version` is
  * deliberately NOT bumped: it is one version shared by every ciphertext
  * column on the row (sync-promotion.ts's trap #3), so bumping it here would
@@ -336,13 +355,14 @@ export async function categorizeEntries(
       id: entries.id,
       date: entries.date,
       accountId: entries.accountId,
+      categoryId: entries.categoryId,
       descriptionCt: entries.descriptionCt,
       enteredAmountCt: entries.enteredAmountCt,
       version: entries.version,
       lockedAttributes: entries.lockedAttributes,
     })
     .from(entries)
-    .where(and(inArray(entries.id, entryIds), isNull(entries.categoryId)));
+    .where(inArray(entries.id, entryIds));
 
   const candidates = rows.filter((r) => !isFieldLocked(r.lockedAttributes, "category_id"));
   if (candidates.length === 0) return 0;
@@ -373,6 +393,9 @@ export async function categorizeEntries(
       if (builtin) categoryId = builtinKeyToId.get(builtin.categoryKey) ?? null;
     }
     if (!categoryId) continue;
+    // Re-deriving the same answer is not a change: writing it anyway would
+    // put a changelog row on every entry on every rule edit.
+    if (categoryId === row.categoryId) continue;
 
     await tx.update(entries).set({ categoryId }).where(eq(entries.id, row.id));
     await logCategoryChange(tx, ownerId, dataKey, row.id, categoryId, "rule");
@@ -382,13 +405,30 @@ export async function categorizeEntries(
   return categorized;
 }
 
-/** Every entry still awaiting a category — the backfill candidate set. */
+/** Every entry still awaiting a category. */
 async function uncategorizedEntryIds(tx: Tx): Promise<string[]> {
   const rows = await tx
     .select({ id: entries.id })
     .from(entries)
     .where(and(isNull(entries.categoryId), eq(entries.excluded, false)));
   return rows.map((r) => r.id);
+}
+
+/**
+ * Every entry a change to the ruleset may act on: not excluded, and not
+ * locked to a category a person chose.
+ *
+ * Wider than `uncategorizedEntryIds` on purpose. A café named "יאלנס רכבת"
+ * is claimed at ingest by the built-in `רכבת` rule; writing a rule that says
+ * otherwise has to be able to displace that, or the user's own rule loses to
+ * a shipped default on every transaction that arrived first.
+ */
+async function ruleCandidateEntryIds(tx: Tx): Promise<string[]> {
+  const rows = await tx
+    .select({ id: entries.id, lockedAttributes: entries.lockedAttributes })
+    .from(entries)
+    .where(eq(entries.excluded, false));
+  return rows.filter((r) => !isFieldLocked(r.lockedAttributes, "category_id")).map((r) => r.id);
 }
 
 /**
@@ -404,91 +444,243 @@ export async function recategorizeUncategorized(session: Session): Promise<numbe
 }
 
 // ---------------------------------------------------------------------------
-// The model fallback (scaffold — no provider ships in v1.0)
+// Suggestions (layer 3) — derived, never stored
 // ---------------------------------------------------------------------------
 
 /**
- * Asks the configured model backend about the entries the deterministic
- * layers couldn't place, and records what it says as *suggestions* awaiting
- * approval. It never writes `entries.category_id` — v1.0 has no AI write
- * path (AGENTS.md).
- *
- * With no backend configured — every v1.0 deployment — this returns 0
- * without touching the database. That is the supported path, not a stub:
- * rules-only mode is a hard invariant.
- *
- * The unique `(owner_id, entry_id)` constraint is the freeze: one answer per
- * entry, forever, so the same input can never re-categorize differently. An
- * entry the model declined gets a row with a null `category_id`, which is
- * what stops the next pass from paying to ask again.
+ * A proposed category for a transaction no rule could place, with the
+ * evidence behind it. Built fresh on every render: the engine is local and
+ * free, so re-deriving costs nothing and the answer *improves* as the user
+ * categorizes more (docs/adr/0002-*).
  */
-export async function runSuggestionPass(session: Session, limit = 50): Promise<number> {
-  const suggester = getSuggester();
-  if (!suggester) return 0;
+export interface SuggestionView {
+  categoryId: string;
+  categoryName: string;
+  /** The corpus text that argued for it. Tier-1 counterparty text — the UI
+   * MUST bidi-isolate it (categorization.md §12). */
+  matchedText: string;
+  matchedSource: ExampleSource;
+  /** Past transactions filed this way under `matchedText`; 0 for a rule or
+   * a built-in, which carry no count. */
+  supportCount: number;
+}
+
+/** The rejection set's composite key. The category id goes first because it
+ * is a fixed-shape uuid, so no match text can ever collide across the
+ * separator no matter what a payee is called. */
+function rejectionKey(matchText: string, categoryId: string): string {
+  return `${categoryId}:${matchText}`;
+}
+
+/**
+ * The user's rejections, decrypted once for the caller's whole batch, as a
+ * set of `rejectionKey` strings.
+ *
+ * `match_text_ct` cannot become a WHERE clause any more than
+ * `rule_conditions.value_ct` can, so this is the same decrypt-then-compute
+ * trade-off `loadContext` already makes. The set is bounded by how many times
+ * a person clicked thumbs-down, which is small by construction.
+ */
+async function loadRejections(tx: Tx, dataKey: Uint8Array): Promise<Set<string>> {
+  const rows = await tx.select().from(categoryRejections);
+  const suppressed = new Set<string>();
+  for (const row of rows) {
+    const matchText = decText(dataKey, row.matchTextCt, row.id, "match_text_ct", row.version);
+    if (matchText === null) continue;
+    suppressed.add(rejectionKey(matchText, row.categoryId));
+  }
+  return suppressed;
+}
+
+/**
+ * Every labeled `(match text -> category)` pair Moni knows.
+ *
+ * Three feeders, deliberately:
+ *
+ * - **Categorized entries**, with no time window. The learner forgets past
+ *   `LEARN_WINDOW_DAYS` on purpose, but forgetting is wrong here: arnona, car
+ *   test and insurance recur once a year, and they are exactly the
+ *   transactions nobody remembers how they filed last time.
+ * - **The user's own rules**, whose description conditions are the strongest
+ *   statement of intent in the system. A rule that *almost* fires — an
+ *   `equals` on "שופרסל דיל" against "שופרסל אונליין" — contributes nothing
+ *   at layer 1 but everything here.
+ * - **The shipped built-in table**, which solves cold start: a day-one user
+ *   has the largest backlog they will ever have and zero history to learn
+ *   from. Rules carrying `onlyOn` are skipped — that gate exists because the
+ *   same text means opposite things on a card and on the bank account that
+ *   settles it (categorization.md §6a), and similarity has no account to
+ *   gate on.
+ */
+async function collectLabeledExamples(tx: Tx, dataKey: Uint8Array): Promise<LabeledExample[]> {
+  const examples: LabeledExample[] = [];
+
+  const categorized = await tx
+    .select({
+      id: entries.id,
+      categoryId: entries.categoryId,
+      descriptionCt: entries.descriptionCt,
+      version: entries.version,
+    })
+    .from(entries)
+    .where(sql`${entries.categoryId} is not null`);
+
+  for (const row of categorized) {
+    if (!row.categoryId) continue;
+    const matchText = normalizeDescription(
+      decText(dataKey, row.descriptionCt, row.id, "description_ct", row.version) ?? "",
+    );
+    if (matchText === "") continue;
+    examples.push({ matchText, categoryId: row.categoryId, source: "entry" });
+  }
+
+  const { compiled, builtinKeyToId } = await loadContext(tx, dataKey);
+  for (const rule of compiled) {
+    for (const condition of rule.conditions) {
+      const leaves = condition.conditionType === "group" ? (condition.children ?? []) : [condition];
+      for (const leaf of leaves) {
+        if (leaf.conditionType !== "description" || leaf.value === "") continue;
+        examples.push({ matchText: leaf.value, categoryId: rule.categoryId, source: "rule" });
+      }
+    }
+  }
+
+  for (const rule of BUILTIN_RULES) {
+    if (rule.onlyOn) continue;
+    const categoryId = builtinKeyToId.get(rule.categoryKey);
+    if (!categoryId) continue;
+    for (const needle of rule.match) {
+      examples.push({ matchText: needle, categoryId, source: "builtin" });
+    }
+  }
+
+  return examples;
+}
+
+/**
+ * The corpus feeders, unbuilt.
+ *
+ * Exported for `npm run suggestions:eval`, which holds out a slice of the
+ * `entry` examples and measures what the rest predicts. It has to read the
+ * same examples production does, or it would be tuning a threshold for an
+ * engine nobody runs.
+ */
+export async function loadSuggestionExamples(session: Session): Promise<LabeledExample[]> {
+  return withUser(session.userId, (tx) => collectLabeledExamples(tx, session.dataKey));
+}
+
+/**
+ * Suggests a category for each of `matchTexts`, keyed by the caller's own id
+ * for the row (an entry id, in every caller today).
+ *
+ * The corpus is built once for the whole batch — the expensive part is
+ * decrypting history, and doing it per row would repeat that for every
+ * transaction on the page.
+ *
+ * A rejected pairing does not merely blank the row: it is skipped and the
+ * next candidate that still clears `MIN_SUGGESTION_SCORE` takes its place.
+ * Entries with no suggestion simply have no key in the result.
+ */
+export async function suggestCategories(
+  session: Session,
+  targets: { id: string; matchText: string }[],
+): Promise<Record<string, SuggestionView>> {
+  if (targets.length === 0) return {};
 
   const { userId, dataKey } = session;
   return withUser(userId, async (tx) => {
-    const answered = await tx
-      .select({ entryId: categorySuggestions.entryId })
-      .from(categorySuggestions);
-    const alreadyAnswered = new Set(answered.map((r) => r.entryId));
+    const examples = await collectLabeledExamples(tx, dataKey);
+    if (examples.length === 0) return {};
 
-    const rows = await tx
-      .select()
-      .from(entries)
-      .where(and(isNull(entries.categoryId), eq(entries.excluded, false)))
-      .orderBy(desc(entries.date))
-      .limit(limit + alreadyAnswered.size);
+    // TWO corpora, tried in order, for the same reason layer 2 runs after
+    // layer 1: the user's own evidence outranks anything Moni shipped.
+    // Merging them would not preserve that, because cosine favours SHORT
+    // corpus texts — the one-token built-in "שופרסל" outscores this
+    // household's own "שופרסל דיל רמת גן" against any query carrying the
+    // brand. Where the two disagree, merging would let a shipped default
+    // overrule how the user has consistently filed the merchant.
+    const ownCorpus = buildCorpus(examples.filter((e) => e.source !== "builtin"));
+    const builtinCorpus = buildCorpus(examples.filter((e) => e.source === "builtin"));
 
-    const pending = rows
-      .filter((r) => !alreadyAnswered.has(r.id))
-      .filter((r) => !isFieldLocked(r.lockedAttributes, "category_id"))
-      .slice(0, limit);
-    if (pending.length === 0) return 0;
+    const suppressed = await loadRejections(tx, dataKey);
+    const catRows = await tx.select({ id: categories.id, name: categories.name }).from(categories);
+    const catName = new Map(catRows.map((c) => [c.id, c.name]));
 
-    const allowedCategories = (await tx.select().from(categories)).map((c) => ({
-      id: c.id,
-      name: c.name,
-      classification: c.classification,
-      parentId: c.parentId,
-    }));
-
-    const inputs: SuggestInput[] = pending.map((r) => {
-      const amount =
-        decText(dataKey, r.enteredAmountCt, r.id, "entered_amount_ct", r.version) ?? "0";
-      return {
-        entryId: r.id,
-        // Raw, NOT normalized — a model reads the original text better than
-        // the matcher's stripped form. Untrusted: tagged data, never
-        // instructions (conventions.md).
-        description: decText(dataKey, r.descriptionCt, r.id, "description_ct", r.version) ?? "",
-        amount: amount.startsWith("-") ? amount.slice(1) : amount,
-        currency: r.enteredCurrency,
-        direction: amount.startsWith("-") ? ("outflow" as const) : ("inflow" as const),
-      };
-    });
-
-    const allowedIds = new Set(allowedCategories.map((c) => c.id));
-    const suggestions = await suggester.suggest({ inputs, allowedCategories });
-
-    let written = 0;
-    for (const s of suggestions) {
-      // Model output is untrusted: a category id it invented, or one for
-      // another user, is dropped rather than stored.
-      const categoryId = s.categoryId && allowedIds.has(s.categoryId) ? s.categoryId : null;
-      const id = randomUUID();
-      await tx.insert(categorySuggestions).values({
-        id,
-        ownerId: userId,
-        entryId: s.entryId,
-        categoryId,
-        confidence: s.confidence,
-        model: suggester.model,
-        reasonCt: s.reason ? encText(dataKey, s.reason, id, "reason_ct", 1) : null,
-      });
-      written += 1;
+    /** The best candidate in one corpus that clears the bar and has not been
+     * rejected — a rejected top candidate falls through to the next. */
+    function pick(matchText: string, corpus: Corpus): SuggestionView | null {
+      for (const candidate of suggest(matchText, corpus)) {
+        if (candidate.score < MIN_SUGGESTION_SCORE) break;
+        if (suppressed.has(rejectionKey(matchText, candidate.categoryId))) continue;
+        const name = catName.get(candidate.categoryId);
+        if (!name) continue;
+        return {
+          categoryId: candidate.categoryId,
+          categoryName: name,
+          matchedText: candidate.matchedText,
+          matchedSource: candidate.matchedSource,
+          supportCount: candidate.supportCount,
+        };
+      }
+      return null;
     }
-    return written;
+
+    // Many rows on a page share a match text; score each distinct text once.
+    const byText = new Map<string, SuggestionView | null>();
+    const out: Record<string, SuggestionView> = {};
+
+    for (const target of targets) {
+      if (target.matchText === "") continue;
+
+      let view = byText.get(target.matchText);
+      if (view === undefined) {
+        view = pick(target.matchText, ownCorpus) ?? pick(target.matchText, builtinCorpus);
+        byText.set(target.matchText, view);
+      }
+
+      if (view) out[target.id] = view;
+    }
+
+    return out;
+  });
+}
+
+/**
+ * Records that a category is wrong for a match text.
+ *
+ * Scoped to the text, not to the transaction the user clicked: one
+ * thumbs-down on a recurring merchant clears the wrong guess from every entry
+ * sharing it. It suppresses *suggestions only* — a rule may still assign that
+ * category, and the learner may still write one, which is what keeps the
+ * blast radius small.
+ *
+ * Idempotent. There is no unique constraint to lean on, because the key is
+ * encrypted and ciphertext is randomized, so the dedupe happens here.
+ */
+export async function rejectSuggestion(
+  session: Session,
+  matchText: string,
+  categoryId: string,
+): Promise<void> {
+  const { userId, dataKey } = session;
+  await withUser(userId, async (tx) => {
+    const [category] = await tx
+      .select({ id: categories.id })
+      .from(categories)
+      .where(eq(categories.id, categoryId))
+      .limit(1);
+    if (!category) throw new CategoryNotFoundError(categoryId);
+
+    const suppressed = await loadRejections(tx, dataKey);
+    if (suppressed.has(rejectionKey(matchText, categoryId))) return;
+
+    const id = randomUUID();
+    await tx.insert(categoryRejections).values({
+      id,
+      ownerId: userId,
+      matchTextCt: encText(dataKey, matchText, id, "match_text_ct", 1),
+      categoryId,
+    });
   });
 }
 
@@ -496,10 +688,16 @@ export async function runSuggestionPass(session: Session, limit = 50): Promise<n
 // The user path
 // ---------------------------------------------------------------------------
 
+/** The description operators a rule written from the categorize dialog may
+ * use — the description third of `rule-form`'s vocabulary, minus the amount
+ * operators, which have no meaning for a payee string. */
+export type DescriptionOperator = "contains" | "starts_with" | "equals";
+
 export interface SetEntryCategoryOptions {
   /** Also write a rule so future transactions matching this text get the
-   * same category. The text is normalized before it is stored. */
-  createRule?: { matchText: string };
+   * same category. The value is normalized before it is stored, because the
+   * matcher compares against a normalized description. */
+  createRule?: { operator: DescriptionOperator; value: string };
 }
 
 /**
@@ -550,12 +748,13 @@ export async function setEntryCategory(
 
     let ruleChanged = false;
     if (opts.createRule) {
-      const matchText = normalizeDescription(opts.createRule.matchText);
-      if (matchText !== "") {
+      const value = normalizeDescription(opts.createRule.value);
+      if (value !== "") {
         ruleChanged = await upsertDescriptionRule(tx, userId, dataKey, {
-          matchText,
+          operator: opts.createRule.operator,
+          value,
           categoryId,
-          name: matchText,
+          name: value,
         });
       }
     } else {
@@ -563,11 +762,11 @@ export async function setEntryCategory(
     }
 
     // A new rule that only applies to transactions not yet scraped would be
-    // useless the moment it is written; run it over everything still
-    // uncategorized. Entries that already have a category are untouched —
-    // `categorizeEntries` only ever writes where `category_id` IS NULL.
+    // useless the moment it is written; run it over every entry it is allowed
+    // to touch. The entry being edited was locked a few lines above, so it is
+    // not among them — this pass is for its siblings.
     if (ruleChanged) {
-      await categorizeEntries(tx, userId, dataKey, await uncategorizedEntryIds(tx));
+      await categorizeEntries(tx, userId, dataKey, await ruleCandidateEntryIds(tx));
     }
   });
 }
@@ -622,17 +821,21 @@ async function learnCategoryRule(
   if (agreeing < LEARN_AGREEMENT_THRESHOLD) return false;
 
   return upsertDescriptionRule(tx, ownerId, dataKey, {
-    matchText: description,
+    operator: "contains",
+    value: description,
     categoryId,
     name: `Learned: ${description}`,
   });
 }
 
 /**
- * Creates — or retargets — the single `description contains <matchText>`
- * rule for this text. Retargeting rather than duplicating is Maybe's
+ * Creates — or retargets — the single `description <operator> <value>` rule
+ * for this pairing. Retargeting rather than duplicating is Maybe's
  * `eligible_for_category_rule?` dedupe: a user who re-categorizes the same
  * merchant twice should end up with one rule, not two contradictory ones.
+ * The operator is part of that identity, so narrowing an existing
+ * `contains X` to `is exactly X` writes a second, more specific rule rather
+ * than silently rewriting the broad one someone may still be relying on.
  *
  * `effective_date` is left null: the engine only ever writes to entries whose
  * `category_id` IS NULL, so a rule cannot rewrite history no matter its date,
@@ -646,7 +849,7 @@ async function upsertDescriptionRule(
   tx: Tx,
   ownerId: string,
   dataKey: Uint8Array,
-  input: { matchText: string; categoryId: string; name: string },
+  input: { operator: DescriptionOperator; value: string; categoryId: string; name: string },
 ): Promise<boolean> {
   // Condition values are encrypted, so finding "the rule for this text"
   // means decrypting the ruleset — which loadContext already does.
@@ -655,8 +858,8 @@ async function upsertDescriptionRule(
     (r) =>
       r.conditions.length === 1 &&
       r.conditions[0].conditionType === "description" &&
-      r.conditions[0].operator === "contains" &&
-      r.conditions[0].value === input.matchText,
+      r.conditions[0].operator === input.operator &&
+      r.conditions[0].value === input.value,
   );
 
   if (existing) {
@@ -683,8 +886,8 @@ async function upsertDescriptionRule(
     ownerId,
     ruleId,
     conditionType: "description",
-    operator: "contains",
-    valueCt: encText(dataKey, input.matchText, conditionId, "value_ct", 1),
+    operator: input.operator,
+    valueCt: encText(dataKey, input.value, conditionId, "value_ct", 1),
   });
   await tx.insert(ruleActions).values({
     ownerId,
@@ -980,7 +1183,7 @@ export async function deleteCategory(session: Session, categoryId: string): Prom
         .where(eq(entries.id, entry.id));
     }
 
-    await tx.delete(categorySuggestions).where(eq(categorySuggestions.categoryId, categoryId));
+    await tx.delete(categoryRejections).where(eq(categoryRejections.categoryId, categoryId));
     await tx
       .update(recurringSeries)
       .set({ categoryId: null })
@@ -1179,15 +1382,15 @@ export async function upsertRule(
       value: input.categoryId,
     });
 
-    // Saving a rule runs it immediately over everything still uncategorized —
-    // a rule that only took effect on the next scrape would look broken.
-    // Already-categorized entries are safe: `categorizeEntries` writes only
-    // where `category_id` IS NULL, and a hand-set category is locked besides.
+    // Saving a rule runs it immediately — a rule that only took effect on the
+    // next scrape would look broken. It can re-file entries a weaker rule or
+    // the built-in table had claimed; anything a person categorized by hand is
+    // locked and stays put.
     const categorized = await categorizeEntries(
       tx,
       userId,
       dataKey,
-      await uncategorizedEntryIds(tx),
+      await ruleCandidateEntryIds(tx),
     );
 
     return { id: ruleId, categorized };
@@ -1210,7 +1413,7 @@ export async function setRuleActive(
       .returning({ id: rules.id });
     if (updated.length === 0) throw new RuleNotFoundError(ruleId);
     if (!active) return 0;
-    return categorizeEntries(tx, userId, dataKey, await uncategorizedEntryIds(tx));
+    return categorizeEntries(tx, userId, dataKey, await ruleCandidateEntryIds(tx));
   });
 }
 

@@ -19,8 +19,9 @@ import {
   listCategories,
   listRules,
   recategorizeUncategorized,
-  runSuggestionPass,
+  rejectSuggestion,
   setEntryCategory,
+  suggestCategories,
   setRuleActive,
   syncDefaultCategories,
   upsertRule,
@@ -575,7 +576,7 @@ describe("learning from past corrections", () => {
     expect(rules[0].conditions[0].value).toBe("חנות מסתורית");
   });
 
-  it("the 'apply to matching' checkbox backfills sibling entries, including older ones", async () => {
+  it("the rule written from the dialog backfills sibling entries, including older ones", async () => {
     const fx = await freshFixture("cat-createrule");
     await scrape(fx, [
       txn({ description: "חנות בלתי מזוהה", date: "2026-06-01", processedDate: "2026-06-01" }),
@@ -590,7 +591,7 @@ describe("learning from past corrections", () => {
       fx.session,
       pending[0].id,
       await categoryIdByBuiltinKey(fx.userId, "food-restaurants"),
-      { createRule: { matchText: "חנות בלתי מזוהה" } },
+      { createRule: { operator: "contains", value: "חנות בלתי מזוהה" } },
     );
 
     const rules = await listRules(fx.session);
@@ -608,18 +609,119 @@ describe("learning from past corrections", () => {
       fx.session,
       entry.id,
       await categoryIdByBuiltinKey(fx.userId, "food-restaurants"),
-      { createRule: { matchText: "חנות בלתי מזוהה" } },
+      { createRule: { operator: "contains", value: "חנות בלתי מזוהה" } },
     );
     await setEntryCategory(
       fx.session,
       entry.id,
       await categoryIdByBuiltinKey(fx.userId, "entertainment-travel"),
-      { createRule: { matchText: "חנות בלתי מזוהה" } },
+      { createRule: { operator: "contains", value: "חנות בלתי מזוהה" } },
     );
 
     const rules = await listRules(fx.session);
     expect(rules).toHaveLength(1);
     expect(rules[0].categoryName).toBe("Travel & Vacation");
+  });
+
+  it("an edited rule value reaches siblings the full match text never would", async () => {
+    const fx = await freshFixture("cat-widened");
+    // Neither text is in the built-in table, so both arrive uncategorized and
+    // the assertion can only be satisfied by the rule under test.
+    await scrape(fx, [
+      txn({ description: "חנות בלתי מזוהה סניף א" }),
+      txn({ description: "חנות בלתי מזוהה אונליין", identifier: "b2" }),
+    ]);
+    const pending = await listEntries(fx.session, { uncategorized: true });
+    expect(pending).toHaveLength(2);
+    const target = pending.find((e) => e.description === "חנות בלתי מזוהה סניף א")!;
+
+    // The old checkbox could only send the whole match text, which matches
+    // exactly one of these two. Editing it down is the entire point.
+    await setEntryCategory(
+      fx.session,
+      target.id,
+      await categoryIdByBuiltinKey(fx.userId, "food-groceries"),
+      { createRule: { operator: "contains", value: "חנות בלתי מזוהה" } },
+    );
+
+    expect(await categoryNameFor(fx, "חנות בלתי מזוהה אונליין")).toBe("Groceries");
+  });
+
+  it("a user rule displaces a category the built-in table already assigned", async () => {
+    // "יאלנס רכבת" is a café. The built-in `רכבת` (train) rule claims it on
+    // sight, so both entries arrive already categorized as Public Transport —
+    // and a backfill that only filled blanks would never revisit the sibling.
+    const fx = await freshFixture("cat-displace");
+    await scrape(fx, [
+      txn({ description: "יאלנס רכבת" }),
+      txn({ description: "יאלנס רכבת", identifier: "b2", date: "2026-05-11" }),
+    ]);
+    const all = await listEntries(fx.session, { limit: 200 });
+    const both = all.filter((e) => e.description === "יאלנס רכבת");
+    expect(both).toHaveLength(2);
+    expect(both.map((e) => e.categoryName)).toEqual(["Public Transport", "Public Transport"]);
+
+    await setEntryCategory(
+      fx.session,
+      both[0].id,
+      await categoryIdByBuiltinKey(fx.userId, "food-restaurants"),
+      { createRule: { operator: "equals", value: "יאלנס רכבת" } },
+    );
+
+    const after = await listEntries(fx.session, { limit: 200 });
+    const names = after.filter((e) => e.description === "יאלנס רכבת").map((e) => e.categoryName);
+    expect(names).toEqual(["Restaurants & Cafés", "Restaurants & Cafés"]);
+  });
+
+  it("a hand-set category survives a later rule that would have filed it elsewhere", async () => {
+    const fx = await freshFixture("cat-locked-wins");
+    await scrape(fx, [
+      txn({ description: "חנות בלתי מזוהה" }),
+      txn({ description: "חנות בלתי מזוהה", identifier: "b2", date: "2026-05-11" }),
+    ]);
+    const pending = await listEntries(fx.session, { uncategorized: true });
+
+    // Filed by hand, no rule — this one is locked.
+    await setEntryCategory(
+      fx.session,
+      pending[0].id,
+      await categoryIdByBuiltinKey(fx.userId, "food-restaurants"),
+    );
+    // Now a rule that covers the same text, from the sibling.
+    await setEntryCategory(
+      fx.session,
+      pending[1].id,
+      await categoryIdByBuiltinKey(fx.userId, "entertainment-travel"),
+      { createRule: { operator: "contains", value: "חנות" } },
+    );
+
+    const after = await listEntries(fx.session, { limit: 200 });
+    const byId = new Map(after.map((e) => [e.id, e.categoryName]));
+    expect(byId.get(pending[0].id)).toBe("Restaurants & Cafés");
+    expect(byId.get(pending[1].id)).toBe("Travel & Vacation");
+  });
+
+  it("narrowing to 'is exactly' writes a second rule rather than rewriting the broad one", async () => {
+    const fx = await freshFixture("cat-operator");
+    await scrape(fx, [txn({ description: "חנות בלתי מזוהה" })]);
+    const [entry] = await listEntries(fx.session, { uncategorized: true });
+
+    await setEntryCategory(
+      fx.session,
+      entry.id,
+      await categoryIdByBuiltinKey(fx.userId, "food-restaurants"),
+      { createRule: { operator: "contains", value: "חנות" } },
+    );
+    await setEntryCategory(
+      fx.session,
+      entry.id,
+      await categoryIdByBuiltinKey(fx.userId, "entertainment-travel"),
+      { createRule: { operator: "equals", value: "חנות בלתי מזוהה" } },
+    );
+
+    const rules = await listRules(fx.session);
+    expect(rules).toHaveLength(2);
+    expect(rules.map((r) => r.conditions[0].operator).sort()).toEqual(["contains", "equals"]);
   });
 });
 
@@ -632,17 +734,141 @@ describe("rules-only mode", () => {
     ]);
     expect(summary.categorized).toBe(1);
 
-    // getSuggester() returns null in v1.0 — the pass must no-op, not throw,
-    // and must leave no suggestion rows behind.
-    await expect(runSuggestionPass(fx.session)).resolves.toBe(0);
-    const suggestions = await withUser(fx.userId, async (tx) =>
-      tx.select().from(schema.categorySuggestions),
-    );
-    expect(suggestions).toEqual([]);
-
-    // And the tail is still reachable for the user to clear by hand.
+    // The tail is still reachable for the user to clear by hand, and layer 3
+    // reaches no network at all — a Moni with nothing configured is whole.
     const queue = await listEntries(fx.session, { uncategorized: true });
     expect(queue).toHaveLength(1);
+    await expect(
+      suggestCategories(fx.session, [{ id: queue[0].id, matchText: queue[0].matchText }]),
+    ).resolves.toBeDefined();
+  });
+});
+
+describe("suggestions", () => {
+  /** Categorizes `description` by hand, which is what puts it into the
+   * suggestion corpus. Returns the category it was filed under. */
+  async function fileByHand(fx: Fixture, description: string, builtinKey: string): Promise<string> {
+    const rows = await listEntries(fx.session, { limit: 200 });
+    const entry = rows.find((e) => e.description === description);
+    if (!entry) throw new Error(`no entry ${description}`);
+    const categoryId = await categoryIdByBuiltinKey(fx.userId, builtinKey);
+    await setEntryCategory(fx.session, entry.id, categoryId);
+    return categoryId;
+  }
+
+  async function suggestFor(fx: Fixture, description: string) {
+    const queue = await listEntries(fx.session, { uncategorized: true });
+    const entry = queue.find((e) => e.description === description);
+    if (!entry) throw new Error(`${description} is not uncategorized`);
+    const out = await suggestCategories(fx.session, [{ id: entry.id, matchText: entry.matchText }]);
+    return { entry, suggestion: out[entry.id] ?? null };
+  }
+
+  it("suggests from a near-miss the rule layer cannot match", async () => {
+    const fx = await freshFixture("cat-suggest-nearmiss");
+    // A made-up merchant, so nothing in the built-in table can reach it and
+    // the suggestion can only come from the user's own history.
+    await scrape(fx, [
+      txn({ description: "מרקטפלייס גלעדי סניף חולון" }),
+      txn({ description: "מרקטפלייס גלעדי אונליין" }),
+    ]);
+
+    const categoryId = await fileByHand(fx, "מרקטפלייס גלעדי סניף חולון", "food-groceries");
+
+    const { suggestion } = await suggestFor(fx, "מרקטפלייס גלעדי אונליין");
+    expect(suggestion?.categoryId).toBe(categoryId);
+    expect(suggestion?.matchedSource).toBe("entry");
+    expect(suggestion?.matchedText).toBe("מרקטפלייס גלעדי סניף חולון");
+  });
+
+  it("a rejection suppresses the pairing for every entry sharing the match text", async () => {
+    const fx = await freshFixture("cat-suggest-reject");
+    await scrape(fx, [
+      txn({ description: "מרקטפלייס גלעדי סניף חולון" }),
+      txn({ description: "מרקטפלייס גלעדי אונליין" }),
+      txn({ description: "מרקטפלייס גלעדי אונליין", identifier: "second" }),
+    ]);
+    const categoryId = await fileByHand(fx, "מרקטפלייס גלעדי סניף חולון", "food-groceries");
+
+    const before = await suggestFor(fx, "מרקטפלייס גלעדי אונליין");
+    expect(before.suggestion?.categoryId).toBe(categoryId);
+
+    await rejectSuggestion(fx.session, before.entry.matchText, categoryId);
+
+    // Both entries share the match text, so one thumbs-down clears both.
+    const queue = await listEntries(fx.session, { uncategorized: true });
+    const targets = queue.filter((e) => e.description === "מרקטפלייס גלעדי אונליין");
+    expect(targets).toHaveLength(2);
+    const after = await suggestCategories(
+      fx.session,
+      targets.map((e) => ({ id: e.id, matchText: e.matchText })),
+    );
+    for (const target of targets) {
+      expect(after[target.id]?.categoryId).not.toBe(categoryId);
+    }
+  });
+
+  it("rejecting suppresses suggestions only — a rule still assigns the category", async () => {
+    const fx = await freshFixture("cat-suggest-reject-rule");
+    await scrape(fx, [txn({ description: "מרקטפלייס גלעדי אונליין" })]);
+    const categoryId = await categoryIdByBuiltinKey(fx.userId, "food-groceries");
+    const queue = await listEntries(fx.session, { uncategorized: true });
+
+    await rejectSuggestion(fx.session, queue[0].matchText, categoryId);
+
+    await upsertRule(fx.session, {
+      name: "Giladi",
+      active: true,
+      effectiveDate: null,
+      categoryId,
+      conditions: [{ conditionType: "description", operator: "contains", value: "מרקטפלייס" }],
+    });
+
+    expect(await categoryNameFor(fx, "מרקטפלייס גלעדי אונליין")).not.toBeNull();
+  });
+
+  it("rejections are idempotent", async () => {
+    const fx = await freshFixture("cat-suggest-reject-twice");
+    const categoryId = await categoryIdByBuiltinKey(fx.userId, "food-groceries");
+    await rejectSuggestion(fx.session, "מרקטפלייס גלעדי", categoryId);
+    await rejectSuggestion(fx.session, "מרקטפלייס גלעדי", categoryId);
+
+    const rows = await withUser(fx.userId, async (tx) =>
+      tx.select().from(schema.categoryRejections),
+    );
+    expect(rows).toHaveLength(1);
+  });
+
+  it("the user's own history outranks the shipped built-in table", async () => {
+    const fx = await freshFixture("cat-suggest-precedence");
+    // Neither description contains a built-in needle as a SUBSTRING, so
+    // layer 2 leaves both alone and the question reaches layer 3 — where the
+    // built-in "רמי לוי" and the user's own filing both score above the bar
+    // and disagree. Cosine favours the shorter built-in text, so only the
+    // corpus ordering keeps the user's answer on top.
+    await scrape(fx, [
+      txn({ description: "לוי רמי מרקט סניף" }),
+      txn({ description: "לוי רמי מרקט" }),
+    ]);
+
+    const homeId = await fileByHand(fx, "לוי רמי מרקט סניף", "housing-maintenance");
+    const groceriesId = await categoryIdByBuiltinKey(fx.userId, "food-groceries");
+    expect(homeId).not.toBe(groceriesId);
+
+    const { suggestion } = await suggestFor(fx, "לוי רמי מרקט");
+    expect(suggestion?.categoryId).toBe(homeId);
+    expect(suggestion?.matchedSource).toBe("entry");
+  });
+
+  it("cold start: a built-in merchant is suggested with no history at all", async () => {
+    const fx = await freshFixture("cat-suggest-coldstart");
+    // Built-in matching is substring-based, so a reordered name — which
+    // issuers do emit — misses layer 2 entirely. Token similarity does not
+    // care about order, and this user has no history of their own.
+    await scrape(fx, [txn({ description: "לוי רמי" })]);
+    const { suggestion } = await suggestFor(fx, "לוי רמי");
+    expect(suggestion?.matchedSource).toBe("builtin");
+    expect(suggestion?.categoryName).toBe("Groceries");
   });
 });
 

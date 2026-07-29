@@ -1,6 +1,6 @@
 # Moni — Categorization
 
-**Purpose:** The deterministic-first, model-as-fallback pipeline that assigns a category to a ledger entry, and how it interacts with attribute-locking.
+**Purpose:** The deterministic-first, suggestion-as-fallback pipeline that assigns a category to a ledger entry, and how it interacts with attribute-locking.
 
 **Related:** `../../vision.md` · `conventions.md` · `data-model.md` · `domain-layer.md`
 
@@ -15,7 +15,7 @@ Every entry runs through these layers in order. The first one to produce a categ
 | 0 | **Attribute lock** — a human already set this field, so the entry is skipped entirely | — | `src/domain/attribute-locks.ts` |
 | 1 | **User rules**, including learned ones, ranked by specificity | `rules` + `rule_conditions` + `rule_actions` | `src/lib/categorization/matcher.ts` |
 | 2 | **Built-in rules** — the shipped Israeli merchant keyword table | code constants | `src/lib/categorization/builtin-rules.ts` |
-| 3 | **Model** — writes a *suggestion* awaiting approval, never a category | `category_suggestions` | `src/lib/categorization/suggester.ts` |
+| 3 | **Suggestion** — *proposed* to a person, never written | derived on render | `src/lib/categorization/similarity.ts` |
 | 4 | Otherwise the entry stays uncategorized and appears in the review queue | — | dashboard "Needs categorizing" |
 
 There is deliberately **no separate "learned from history" layer**. Learning writes a real user rule, so it resolves at layer 1 — one mechanism, and one the user can see, disable, and delete on `/transactions/rules`.
@@ -29,7 +29,15 @@ promoteScrapeResult()                       src/domain/sync-promotion.ts
   └─ categorizeEntries(tx, ownerId, dataKey, touchedEntryIds)
 ```
 
-`categorizeEntries` takes the caller's `tx`, so a rolled-back scrape leaves no categories behind. `recategorizeUncategorized(session)` is the same engine wrapped in its own transaction — the backfill path, and what makes a newly created rule take effect on entries that are still uncategorized.
+`categorizeEntries` takes the caller's `tx`, so a rolled-back scrape leaves no categories behind. `recategorizeUncategorized(session)` is the same engine wrapped in its own transaction, over the entries that still have no category.
+
+**A rule change re-derives; it does not only fill blanks.** Every path that writes a rule — the dialog's "Create a rule", the Rules tab, re-activating a rule — runs the engine over `ruleCandidateEntryIds`: every non-excluded entry whose `category_id` is **not locked**. That is wider than "uncategorized", deliberately.
+
+A category assigned by a rule or the built-in table is *derived*: the ruleset is its only justification, so when the ruleset changes it has to be recomputed. A category a person set by hand is locked (§4) and is never a candidate. **Locked is authoritative, unlocked is derived** — that one line is the whole policy.
+
+Without it, layer 1's precedence over layer 2 held only for transactions that had not arrived yet. A café called `יאלנס רכבת` is claimed at ingest by the built-in `רכבת` (train) rule; a user rule saying otherwise would fix the entry they were looking at and silently leave its siblings filed as Public Transport, because a blanks-only backfill can never revisit them.
+
+The pass does **not** clear a category when nothing matches. Deleting a rule deliberately leaves behind what it filed (§3), so blanking unjustified categories here would quietly undo that. It re-files, it never un-files.
 
 **Why matching happens in memory rather than in SQL.** `rule_conditions.value_ct` is encrypted, so a condition cannot become a `WHERE` clause. The ruleset is decrypted **once per batch** into a compiled form (`loadContext`) and the batch is evaluated against it — the same decrypt-then-compute trade-off already accepted by `transactions.ts` and `dashboard.ts`. Doing it per row would re-decrypt every rule for every transaction.
 
@@ -136,36 +144,71 @@ Two things this deliberately does **not** do. It does not set `excluded` — tha
 
 Net worth is unaffected either way — it sums account balances, not entries (`money-and-currency.md` §5).
 
-## 7. Normalization
+## 7. Match text
 
-`normalizeDescription` (`src/lib/categorization/normalize.ts`) is the single definition of "the same merchant text", shared by built-in rules, the learner, and rule creation from the dialog. It applies NFKC, lowercases, strips Hebrew niqqud and geresh variants, drops runs of 4+ digits (card suffixes and reference numbers), strips punctuation, collapses whitespace, and removes at most one leading bank prefix.
+`normalizeDescription` (`src/lib/categorization/normalize.ts`) is the single definition of "the same payee text", and its output is called the **match text** (`CONTEXT.md`; `EntryView.matchText`). It is shared by built-in rules, the learner, rule creation from the dialog, the suggestion corpus, and rejections. It applies NFKC, lowercases, strips Hebrew niqqud and geresh variants, drops runs of 4+ digits (card suffixes and reference numbers), strips punctuation, collapses whitespace, and removes at most one leading bank prefix.
 
 That is what collapses `שופרסל דיל 1234` and `שופרסל  דיל-5678` to one key.
 
+**A match text is Tier-1.** It is a normalized counterparty string, so `security-design-principles.md` §13 applies to it exactly as it does to the description it came from. Every table keyed by one stores it encrypted (`rule_conditions.value_ct`, `category_rejections.match_text_ct`) and looks it up by decrypting the set once per batch — never as a SQL predicate, and never as a hash that would restore equality lookup at the cost of an equality-and-frequency oracle over payee names (ADR 0002).
+
 ## 8. Learning from corrections
 
-Actual Budget's `getProbableCategory`, materialized as a rule. When a user sets a category, the domain layer looks at the most recent **5** entries sharing that normalized description within **180 days**; if at least **3** agree, it writes (or retargets) a rule named `Learned: <text>`.
+Actual Budget's `getProbableCategory`, materialized as a rule. When a user sets a category, the domain layer looks at the most recent **5** entries sharing that match text within **180 days**; if at least **3** agree, it writes (or retargets) a rule named `Learned: <text>`.
 
 Writing a visible rule rather than hidden state is the point: the user can see *why* a transaction was categorized and delete the reason. The Rules tab is therefore not optional — it is what makes silent rule creation acceptable.
 
-The explicit path is the **"Also categorize future transactions matching …"** checkbox in the categorize dialog, which writes the same rule shape immediately. Both paths retarget an existing rule for the same text instead of duplicating it, and both set `effective_date` to today.
+The explicit path is the **"Create a rule"** section of the categorize dialog, which writes the same rule shape immediately. It is **on by default**, prefilled with `description contains <match text>`, and both the operator (`contains` / `starts with` / `is exactly`) and the text are editable before saving — the same vocabulary as the Rules tab, so a rule written here and a rule edited there read identically.
+
+Default-on is deliberate. Its predecessor was an off-by-default checkbox hard-wired to the entire match text, which made it doubly useless: nobody enabled it, and when they did it produced a rule that only ever fired on that exact payee string. A condition you can *see and widen before saving* is worth defaulting to; a fixed exact match is not. Editing the text down to the discriminating part (`שופרסל` rather than `שופרסל דיל רמת גן`) is the user's call in v1.0. *Proposing* that narrowing — picking the discriminating token by IDF and proving it safe against already-categorized history before offering it — is deliberately out of scope here and tracked separately.
+
+Both paths retarget an existing rule for the same *(operator, text)* pairing instead of duplicating it. Narrowing `contains X` to `is exactly X` therefore writes a second, more specific rule rather than rewriting the broad one, which someone else's transactions may still depend on; specificity scoring (§3) settles which one wins. Neither path sets `effective_date` — the engine never touches a locked category, so a rule cannot overwrite a human decision at any date, and dating it today would only stop it from reaching the transactions it was created for.
 
 ## 9. Rules-only mode
 
-`getSuggester()` returns `null` in v1.0, and every caller must treat that as "do nothing", not as an error. **A Moni with no model configured is a fully working Moni** — this is a hard invariant (`AGENTS.md`; `../security/security-design-principles.md` §22) and is covered by a test.
+Layer 3 reaches no network and needs no configuration: it reads only what is already in this user's database. **A Moni with no model configured is a fully working Moni** — a hard invariant (`AGENTS.md`; `../security/security-design-principles.md` §22), and now a trivially satisfied one. When an external source arrives (issue #12) it must be opt-in and off by default, and everything here must keep working with it disabled (ADR 0003).
 
-## 10. The model fallback (scaffold)
+## 10. Suggestions (layer 3)
 
-Not implemented — no provider ships in v1.0. What *is* pinned down:
+A suggestion is a category **proposed** for an entry no rule could place. It is derived on render and never stored — there is no AI write path and no automatic write of any kind (`AGENTS.md`). Only a person turns a suggestion into a category.
 
-- **The model cannot invent a category.** `allowedCategories` is the exact set a provider must constrain output to, as a JSON-schema enum of category **ids**. (Maybe round-trips category *names* and maps back afterwards, which breaks on duplicate names.)
-- **Descriptions are untrusted input.** A payee can be named anything, so the description travels as a tagged data field and is never concatenated into the instruction portion of a prompt (`conventions.md`). Model output is untrusted too: an id outside the allowed set is dropped.
-- **No AI write path.** A result becomes a `category_suggestions` row with `status = 'pending'`, awaiting human approval — never a direct write to `entries.category_id`.
-- **The result is frozen.** `category_suggestions` is unique on `(owner_id, entry_id)`, so the same input can never re-categorize differently. An entry the model declined gets a row with a **null** `category_id`, which is what stops the next pass from paying to ask again.
+### The signal
+
+`src/lib/categorization/similarity.ts` is a pure scorer: cosine similarity over IDF-weighted token vectors, run against a corpus of every labeled `(match text → category)` pair Moni knows.
+
+Israeli descriptions are overwhelmingly `BRAND · BRANCH · CITY`. The brand decides the category and the rest is noise, but *which* words are noise depends on the household — `רמת גן` is meaningless for someone who shops there daily and informative for someone who passed through once. IDF reads that off the user's own corpus, so there is **no hand-maintained Hebrew stopword list** to fall out of date. Document frequency counts distinct match texts rather than examples, so a merchant visited weekly cannot drive its own brand token's frequency up until the token looks like noise.
+
+Cosine rather than coverage: dividing by the query's weight alone never charges for the brand an example *failed* to explain, which would let `רמי לוי רמת גן` score well against `שופרסל דיל רמת גן`. Cosine also tolerates the length mismatch that a Jaccard union over-punishes — `שופרסל דיל סניף חולון` and `שופרסל דיל אונליין` are the same shop.
+
+### The corpus
+
+Three feeders, each there for a reason:
+
+| Feeder | Why |
+|---|---|
+| Categorized entries, **all** of them | The learner (§8) forgets past 180 days on purpose. Forgetting is wrong here: arnona, car test and insurance recur yearly, and they are exactly what nobody remembers filing. |
+| The user's own rules | The strongest statement of intent in the system. A rule that *almost* fires — `equals "שופרסל דיל"` against `שופרסל אונליין` — contributes nothing at layer 1 and everything here. |
+| The built-in table (§6) | Cold start. A day-one user has the largest backlog they will ever have and zero history. Rules carrying `onlyOn` are skipped — that gate exists because the same text means opposite things on a card and on the bank account settling it (§6a), and similarity has no account to gate on. |
+
+**The learner's discarded evidence is the whole point.** §8 fires only when 3 of 5 entries share an *exactly* equal match text; every manual categorization below that bar is thrown away. Layer 3 spends it.
+
+### Accept and reject
+
+**Accept is an ordinary categorization.** It routes through `setEntryCategory`: sets the category, **locks** the field, logs `source: 'user'`, and lets the learner fire if history supports it. A human clicking ✓ is a human decision, and it deserves the same protection from later rules as one they typed. It deliberately does *not* auto-write a rule — one accept is one data point, and the dialog's "Create a rule" section (§8) is where someone who wants one goes, with the condition in front of them.
+
+**Reject is scoped to the match text, not the entry.** One ✗ clears a wrong guess from every transaction sharing that text, past and future, which is the only version that scales with a backlog. It suppresses *suggestions only*: a rule may still assign that category and the learner may still write one, which is what keeps the blast radius small. Rejections live in `category_rejections` — see §7 on why the key is encrypted, and ADR 0002 for why suggestions themselves are not stored.
+
+### What the user sees
+
+One candidate or none. A suggestion below `MIN_SUGGESTION_SCORE` is not shown at all — ✓ is a one-click **locking** write, so a weak suggestion is worse than no suggestion. The chip carries its evidence (*"filed this way 4× for ⁨שופרסל דיל⁩"*) rather than a confidence number, which is false precision a human cannot calibrate.
+
+**The threshold is measured, not chosen.** `npm run suggestions:eval` holds out a fifth of the user's categorized transactions, rebuilds the corpus from the rest, and reports coverage and precision across thresholds — including an "unseen" column restricted to texts the corpus has never observed, which is where similarity either earns its keep or does not. A fixture written alongside the algorithm would only prove the scorer agrees with itself.
 
 ## 11. Review queue
 
 The dashboard's "Needs categorizing" card is `category_id IS NULL AND excluded = false`, newest first. `excluded` rows — one leg of an internal transfer — are left out: they are not awaiting review, they are deliberately out of the totals.
+
+Suggestion chips render on this card and in the transactions table — the same `suggestion-chip.tsx` in both, and no third surface. There is no separate review route: the table already *is* the bulk-triage UI, and splitting categorization across two places would only make the second one stale.
 
 ## 12. Bidi
 

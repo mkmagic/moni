@@ -35,7 +35,7 @@ interface OwnerFixture {
   accountId: string;
   entryId: string;
   ruleId: string;
-  suggestionId: string;
+  rejectionId: string;
 }
 
 async function seedOwner(label: string): Promise<OwnerFixture> {
@@ -100,16 +100,14 @@ async function seedOwner(label: string): Promise<OwnerFixture> {
     value: category.id,
   });
 
-  const [suggestion] = await elevatedDb
-    .insert(schema.categorySuggestions)
+  const [rejection] = await elevatedDb
+    .insert(schema.categoryRejections)
     .values({
       ownerId: user.id,
-      entryId: entry.id,
       categoryId: category.id,
-      model: "test-model",
-      confidence: "0.9",
+      matchTextCt: ct(`${label}-rejected`),
     })
-    .returning({ id: schema.categorySuggestions.id });
+    .returning({ id: schema.categoryRejections.id });
 
   return {
     userId: user.id,
@@ -117,7 +115,7 @@ async function seedOwner(label: string): Promise<OwnerFixture> {
     accountId: account.id,
     entryId: entry.id,
     ruleId: rule.id,
-    suggestionId: suggestion.id,
+    rejectionId: rejection.id,
   };
 }
 
@@ -161,7 +159,7 @@ describe("RLS cross-tenant isolation", () => {
     });
   });
 
-  it("A sees only A's rows across the categorization tables (rules, conditions, actions, suggestions)", async () => {
+  it("A sees only A's rows across the categorization tables (rules, conditions, actions, rejections)", async () => {
     await withUser(userA.userId, async (tx) => {
       const rules = await tx.select().from(schema.rules);
       expect(rules.map((r) => r.id)).toEqual([userA.ruleId]);
@@ -172,17 +170,17 @@ describe("RLS cross-tenant isolation", () => {
       const actions = await tx.select().from(schema.ruleActions);
       expect(actions.map((a) => a.ruleId)).toEqual([userA.ruleId]);
 
-      const suggestions = await tx.select().from(schema.categorySuggestions);
-      expect(suggestions.map((s) => s.id)).toEqual([userA.suggestionId]);
+      const rejections = await tx.select().from(schema.categoryRejections);
+      expect(rejections.map((r) => r.id)).toEqual([userA.rejectionId]);
     });
   });
 
-  it("B cannot read A's category suggestions even by explicit id", async () => {
+  it("B cannot read A's category rejections even by explicit id", async () => {
     await withUser(userB.userId, async (tx) => {
       const rows = await tx
         .select()
-        .from(schema.categorySuggestions)
-        .where(sql`${schema.categorySuggestions.id} = ${userA.suggestionId}::uuid`);
+        .from(schema.categoryRejections)
+        .where(sql`${schema.categoryRejections.id} = ${userA.rejectionId}::uuid`);
       expect(rows).toEqual([]);
     });
   });

@@ -42,6 +42,37 @@ new feedback lands.
 
 ## Feedback log (newest first — append, don't overwrite)
 
+### 2026-07-28 (later) — suggestion chips (issue #2): dashed vs solid, and a money column that drifted
+
+- **A proposal and a fact must not look alike.** The suggestion chip reuses `Badge`'s shape but with
+  `border-dashed` and no fill, so "Groceries ✓ ✗" (proposed) reads differently from "Groceries"
+  (assigned) at a glance. Verified by zooming a table with both states adjacent — they are
+  distinguishable, and the ✓/✗ carry most of the signal.
+- **Amber yields again, this time to the money colors.** A table of N rows would otherwise carry N
+  amber accents (same rule as the Rules tab's toggles). Accept/reject are muted icon buttons that go
+  `hover:text-positive` / `hover:text-negative` — teal already reads as affirmative in this UI, so
+  the money palette does the work with no new token.
+- **A fixed-width slot is what keeps a money column straight.** On the "Needs categorizing" card the
+  row button is `flex-1` and the chip sat beside it at auto width, so a wider category name pushed
+  that row's amount left and the amounts stopped lining up between rows. Rows with no suggestion
+  were worse — nothing rendered at all, so their amount ran to the full width. Fix: always render
+  the slot (`w-44 shrink-0 justify-end`), chip or not. **Whenever a variable-width element sits
+  beside a `flex-1` sibling, every number inside that sibling moves.**
+- **A chip with its own buttons cannot live inside a row button.** The card's rows were a single
+  `<button>`; nesting the accept/reject buttons inside is invalid HTML and swallows the inner click.
+  Restructured the `<li>` into a flex row — button for the clickable area, chip as a sibling — and
+  moved `hover:bg-muted` up to the `<li>` so the whole row still highlights as one.
+- **`stopPropagation` on both click and keydown.** The transactions table's rows are
+  `role="button"` with Enter/Space handling, so a chip button inside a cell fires the row handler
+  too and opens the dialog behind the action you just took.
+- **Bidi in a `title` attribute needs the FSI/PDI characters, not `<bdi>`.** The evidence tooltip
+  embeds a scraped Hebrew payee inside an LTR sentence; an attribute cannot hold JSX, so it is
+  `⁨`/`⁩` there while the visible chip text uses the element.
+- **A dev server was already running on :3000.** `npm run dev` refuses with "Another next dev server
+  is already running" and exits 1 — check before assuming a port conflict is yours. Also: the
+  browser session survived a re-seed, so `/login` redirected to `/onboarding` for a user that no
+  longer had connections. `POST /api/auth/logout` via `javascript_tool` clears it.
+
 ### 2026-07-28 — connections UX (issue #4): backfill picker, dashboard sync, honest labels
 
 - **`cn` is a plain join, not tailwind-merge.** Passing `w-auto` to a primitive whose base is `w-full`

@@ -11,7 +11,7 @@ import { Sparkline } from "@/components/sparkline";
 import { StatCard } from "@/components/stat-card";
 import { IncomeExpenseChart } from "@/components/income-expense-chart";
 import { NeedsReviewCard } from "@/components/needs-review-card";
-import { listCategories } from "@/domain/categorization";
+import { listCategories, suggestCategories } from "@/domain/categorization";
 import { listEntries } from "@/domain/transactions";
 
 /** Time-of-day greeting from the SERVER's clock. This is a self-hosted,
@@ -34,6 +34,13 @@ export default async function DashboardPage() {
     listCategories(session),
     listConnections(session.userId),
   ]);
+
+  // The queue is already only uncategorized entries, so every row here is a
+  // suggestion candidate.
+  const suggestions = await suggestCategories(
+    session,
+    needsReview.map((e) => ({ id: e.id, matchText: e.matchText })),
+  );
 
   const name = profile?.displayName?.trim();
   // One template literal, not adjacent JSX text nodes — Turbopack trims the
@@ -111,7 +118,7 @@ export default async function DashboardPage() {
         />
       </div>
 
-      <NeedsReviewCard entries={needsReview} categories={categories} />
+      <NeedsReviewCard entries={needsReview} categories={categories} suggestions={suggestions} />
 
       <Card>
         <CardHeader>

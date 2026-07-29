@@ -5,19 +5,23 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Money } from "@/components/money";
 import { CategorizeDialog } from "@/components/categorize-dialog";
+import { SuggestionChip } from "@/components/suggestion-chip";
 import { cn } from "@/lib/utils";
-import type { CategoryView } from "@/domain/categorization";
+import type { CategoryView, SuggestionView } from "@/domain/categorization";
 import type { EntryView } from "@/domain/transactions";
 
 interface TransactionsTableProps {
   entries: EntryView[];
   categories: CategoryView[];
+  /** Entry id -> proposed category, for the rows no rule could place. Absent
+   * for anything already categorized or below the confidence bar. */
+  suggestions: Record<string, SuggestionView>;
 }
 
 /** Client component so a row can open the categorize dialog. Dates arrive
  * pre-formatted as `dateLabel` — formatting an ISO string on this side of
  * the boundary is a hydration mismatch (.agents/skills/ui-developer). */
-export function TransactionsTable({ entries, categories }: TransactionsTableProps) {
+export function TransactionsTable({ entries, categories, suggestions }: TransactionsTableProps) {
   const [selected, setSelected] = useState<EntryView | null>(null);
 
   return (
@@ -60,6 +64,12 @@ export function TransactionsTable({ entries, categories }: TransactionsTableProp
                 <td className="px-5 py-3">
                   {entry.categoryName ? (
                     <Badge>{entry.categoryName}</Badge>
+                  ) : suggestions[entry.id] ? (
+                    <SuggestionChip
+                      entryId={entry.id}
+                      matchText={entry.matchText}
+                      suggestion={suggestions[entry.id]}
+                    />
                   ) : (
                     <span className="text-muted-foreground">—</span>
                   )}
@@ -94,6 +104,7 @@ export function TransactionsTable({ entries, categories }: TransactionsTableProp
         key={selected?.id}
         entry={selected}
         categories={categories}
+        suggestedCategoryId={selected ? (suggestions[selected.id]?.categoryId ?? null) : null}
         onClose={() => setSelected(null)}
       />
     </>
