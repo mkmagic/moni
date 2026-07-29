@@ -44,7 +44,7 @@ export async function POST(req: Request): Promise<NextResponse> {
     res.cookies.set(SESSION_COOKIE, sessionId, {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure: true, // Moni is HTTPS-only (src/proxy.ts); never conditional on the build mode.
       path: "/",
       maxAge: 8 * 60 * 60,
     });

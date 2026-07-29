@@ -1,0 +1,36 @@
+# EXAMPLE — not live configuration. Nothing runs this today.
+#
+# Moni is HTTPS-only in code (src/proxy.ts), but no TLS terminator is
+# deployed yet: local development runs on http://localhost, which browsers
+# already treat as a secure context. See docs/deployment/tls.md and
+# docs/adr/0004-the-app-is-https-only-the-terminator-is-deferred.md.
+#
+# When Moni needs to be reachable from a second device, copy this to the
+# deployment host and pick ONE of the site blocks below. Next must be bound to
+# loopback (`next start -H 127.0.0.1`) so the proxy is the only listener.
+#
+# Either way `reverse_proxy` sets X-Forwarded-Proto, which is the single header
+# src/proxy.ts reads — no app code knows or cares which block you chose.
+
+# ── Option A: a domain you own, certificate from Let's Encrypt ──────────────
+# The stable choice. The origin never changes, so WebAuthn credentials (#7)
+# survive the move to the cloud. Use the DNS-01 challenge if the host is not
+# reachable from the internet; that needs an API token for your DNS provider
+# and a Caddy build including that provider's module.
+#
+# moni.example.com {
+# 	reverse_proxy 127.0.0.1:3000
+# }
+
+# ── Option B: a Tailscale node, certificate from the local tailscaled ───────
+# No domain purchase and no CA to install on client devices, but the origin
+# belongs to Tailscale — moving off it later invalidates every passkey.
+# Requires HTTPS enabled for the tailnet, and Caddy able to fetch certs (run
+# as root, or set TS_PERMIT_CERT_UID where that file exists).
+#
+# moni.<TAILNET>.ts.net {
+# 	reverse_proxy 127.0.0.1:3000
+# }
+
+# Strict-Transport-Security is emitted by the app (next.config.ts), not here,
+# so there is one source of truth for the policy.
