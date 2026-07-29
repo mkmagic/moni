@@ -657,10 +657,16 @@ export async function rejectSuggestion(
 // The user path
 // ---------------------------------------------------------------------------
 
+/** The description operators a rule written from the categorize dialog may
+ * use — the description third of `rule-form`'s vocabulary, minus the amount
+ * operators, which have no meaning for a payee string. */
+export type DescriptionOperator = "contains" | "starts_with" | "equals";
+
 export interface SetEntryCategoryOptions {
   /** Also write a rule so future transactions matching this text get the
-   * same category. The text is normalized before it is stored. */
-  createRule?: { matchText: string };
+   * same category. The value is normalized before it is stored, because the
+   * matcher compares against a normalized description. */
+  createRule?: { operator: DescriptionOperator; value: string };
 }
 
 /**
@@ -711,12 +717,13 @@ export async function setEntryCategory(
 
     let ruleChanged = false;
     if (opts.createRule) {
-      const matchText = normalizeDescription(opts.createRule.matchText);
-      if (matchText !== "") {
+      const value = normalizeDescription(opts.createRule.value);
+      if (value !== "") {
         ruleChanged = await upsertDescriptionRule(tx, userId, dataKey, {
-          matchText,
+          operator: opts.createRule.operator,
+          value,
           categoryId,
-          name: matchText,
+          name: value,
         });
       }
     } else {
@@ -783,17 +790,21 @@ async function learnCategoryRule(
   if (agreeing < LEARN_AGREEMENT_THRESHOLD) return false;
 
   return upsertDescriptionRule(tx, ownerId, dataKey, {
-    matchText: description,
+    operator: "contains",
+    value: description,
     categoryId,
     name: `Learned: ${description}`,
   });
 }
 
 /**
- * Creates — or retargets — the single `description contains <matchText>`
- * rule for this text. Retargeting rather than duplicating is Maybe's
+ * Creates — or retargets — the single `description <operator> <value>` rule
+ * for this pairing. Retargeting rather than duplicating is Maybe's
  * `eligible_for_category_rule?` dedupe: a user who re-categorizes the same
  * merchant twice should end up with one rule, not two contradictory ones.
+ * The operator is part of that identity, so narrowing an existing
+ * `contains X` to `is exactly X` writes a second, more specific rule rather
+ * than silently rewriting the broad one someone may still be relying on.
  *
  * `effective_date` is left null: the engine only ever writes to entries whose
  * `category_id` IS NULL, so a rule cannot rewrite history no matter its date,
@@ -807,7 +818,7 @@ async function upsertDescriptionRule(
   tx: Tx,
   ownerId: string,
   dataKey: Uint8Array,
-  input: { matchText: string; categoryId: string; name: string },
+  input: { operator: DescriptionOperator; value: string; categoryId: string; name: string },
 ): Promise<boolean> {
   // Condition values are encrypted, so finding "the rule for this text"
   // means decrypting the ruleset — which loadContext already does.
@@ -816,8 +827,8 @@ async function upsertDescriptionRule(
     (r) =>
       r.conditions.length === 1 &&
       r.conditions[0].conditionType === "description" &&
-      r.conditions[0].operator === "contains" &&
-      r.conditions[0].value === input.matchText,
+      r.conditions[0].operator === input.operator &&
+      r.conditions[0].value === input.value,
   );
 
   if (existing) {
@@ -844,8 +855,8 @@ async function upsertDescriptionRule(
     ownerId,
     ruleId,
     conditionType: "description",
-    operator: "contains",
-    valueCt: encText(dataKey, input.matchText, conditionId, "value_ct", 1),
+    operator: input.operator,
+    valueCt: encText(dataKey, input.value, conditionId, "value_ct", 1),
   });
   await tx.insert(ruleActions).values({
     ownerId,

@@ -150,7 +150,11 @@ Actual Budget's `getProbableCategory`, materialized as a rule. When a user sets 
 
 Writing a visible rule rather than hidden state is the point: the user can see *why* a transaction was categorized and delete the reason. The Rules tab is therefore not optional — it is what makes silent rule creation acceptable.
 
-The explicit path is the **"Also categorize future transactions matching …"** checkbox in the categorize dialog, which writes the same rule shape immediately. Both paths retarget an existing rule for the same text instead of duplicating it, and both set `effective_date` to today.
+The explicit path is the **"Create a rule"** section of the categorize dialog, which writes the same rule shape immediately. It is **on by default**, prefilled with `description contains <match text>`, and both the operator (`contains` / `starts with` / `is exactly`) and the text are editable before saving — the same vocabulary as the Rules tab, so a rule written here and a rule edited there read identically.
+
+Default-on is deliberate. Its predecessor was an off-by-default checkbox hard-wired to the entire match text, which made it doubly useless: nobody enabled it, and when they did it produced a rule that only ever fired on that exact payee string. A condition you can *see and widen before saving* is worth defaulting to; a fixed exact match is not. Editing the text down to the discriminating part (`שופרסל` rather than `שופרסל דיל רמת גן`) is the user's call in v1.0. *Proposing* that narrowing — picking the discriminating token by IDF and proving it safe against already-categorized history before offering it — is deliberately out of scope here and tracked separately.
+
+Both paths retarget an existing rule for the same *(operator, text)* pairing instead of duplicating it. Narrowing `contains X` to `is exactly X` therefore writes a second, more specific rule rather than rewriting the broad one, which someone else's transactions may still depend on; specificity scoring (§3) settles which one wins. Neither path sets `effective_date` — the engine only writes where `category_id` IS NULL, so a rule cannot rewrite history at any date, and dating it today would only stop it from filling in the blanks it was created to fill.
 
 ## 9. Rules-only mode
 
@@ -182,7 +186,7 @@ Three feeders, each there for a reason:
 
 ### Accept and reject
 
-**Accept is an ordinary categorization.** It routes through `setEntryCategory`: sets the category, **locks** the field, logs `source: 'user'`, and lets the learner fire if history supports it. A human clicking ✓ is a human decision, and it deserves the same protection from later rules as one they typed. It deliberately does *not* auto-write a rule — one accept is one data point, and the "Also categorize future matching…" checkbox already exists for users who want that.
+**Accept is an ordinary categorization.** It routes through `setEntryCategory`: sets the category, **locks** the field, logs `source: 'user'`, and lets the learner fire if history supports it. A human clicking ✓ is a human decision, and it deserves the same protection from later rules as one they typed. It deliberately does *not* auto-write a rule — one accept is one data point, and the dialog's "Create a rule" section (§8) is where someone who wants one goes, with the condition in front of them.
 
 **Reject is scoped to the match text, not the entry.** One ✗ clears a wrong guess from every transaction sharing that text, past and future, which is the only version that scales with a backlog. It suppresses *suggestions only*: a rule may still assign that category and the learner may still write one, which is what keeps the blast radius small. Rejections live in `category_rejections` — see §7 on why the key is encrypted, and ADR 0002 for why suggestions themselves are not stored.
 

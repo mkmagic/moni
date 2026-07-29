@@ -576,7 +576,7 @@ describe("learning from past corrections", () => {
     expect(rules[0].conditions[0].value).toBe("חנות מסתורית");
   });
 
-  it("the 'apply to matching' checkbox backfills sibling entries, including older ones", async () => {
+  it("the rule written from the dialog backfills sibling entries, including older ones", async () => {
     const fx = await freshFixture("cat-createrule");
     await scrape(fx, [
       txn({ description: "חנות בלתי מזוהה", date: "2026-06-01", processedDate: "2026-06-01" }),
@@ -591,7 +591,7 @@ describe("learning from past corrections", () => {
       fx.session,
       pending[0].id,
       await categoryIdByBuiltinKey(fx.userId, "food-restaurants"),
-      { createRule: { matchText: "חנות בלתי מזוהה" } },
+      { createRule: { operator: "contains", value: "חנות בלתי מזוהה" } },
     );
 
     const rules = await listRules(fx.session);
@@ -609,18 +609,65 @@ describe("learning from past corrections", () => {
       fx.session,
       entry.id,
       await categoryIdByBuiltinKey(fx.userId, "food-restaurants"),
-      { createRule: { matchText: "חנות בלתי מזוהה" } },
+      { createRule: { operator: "contains", value: "חנות בלתי מזוהה" } },
     );
     await setEntryCategory(
       fx.session,
       entry.id,
       await categoryIdByBuiltinKey(fx.userId, "entertainment-travel"),
-      { createRule: { matchText: "חנות בלתי מזוהה" } },
+      { createRule: { operator: "contains", value: "חנות בלתי מזוהה" } },
     );
 
     const rules = await listRules(fx.session);
     expect(rules).toHaveLength(1);
     expect(rules[0].categoryName).toBe("Travel & Vacation");
+  });
+
+  it("an edited rule value reaches siblings the full match text never would", async () => {
+    const fx = await freshFixture("cat-widened");
+    // Neither text is in the built-in table, so both arrive uncategorized and
+    // the assertion can only be satisfied by the rule under test.
+    await scrape(fx, [
+      txn({ description: "חנות בלתי מזוהה סניף א" }),
+      txn({ description: "חנות בלתי מזוהה אונליין", identifier: "b2" }),
+    ]);
+    const pending = await listEntries(fx.session, { uncategorized: true });
+    expect(pending).toHaveLength(2);
+    const target = pending.find((e) => e.description === "חנות בלתי מזוהה סניף א")!;
+
+    // The old checkbox could only send the whole match text, which matches
+    // exactly one of these two. Editing it down is the entire point.
+    await setEntryCategory(
+      fx.session,
+      target.id,
+      await categoryIdByBuiltinKey(fx.userId, "food-groceries"),
+      { createRule: { operator: "contains", value: "חנות בלתי מזוהה" } },
+    );
+
+    expect(await categoryNameFor(fx, "חנות בלתי מזוהה אונליין")).toBe("Groceries");
+  });
+
+  it("narrowing to 'is exactly' writes a second rule rather than rewriting the broad one", async () => {
+    const fx = await freshFixture("cat-operator");
+    await scrape(fx, [txn({ description: "חנות בלתי מזוהה" })]);
+    const [entry] = await listEntries(fx.session, { uncategorized: true });
+
+    await setEntryCategory(
+      fx.session,
+      entry.id,
+      await categoryIdByBuiltinKey(fx.userId, "food-restaurants"),
+      { createRule: { operator: "contains", value: "חנות" } },
+    );
+    await setEntryCategory(
+      fx.session,
+      entry.id,
+      await categoryIdByBuiltinKey(fx.userId, "entertainment-travel"),
+      { createRule: { operator: "equals", value: "חנות בלתי מזוהה" } },
+    );
+
+    const rules = await listRules(fx.session);
+    expect(rules).toHaveLength(2);
+    expect(rules.map((r) => r.conditions[0].operator).sort()).toEqual(["contains", "equals"]);
   });
 });
 
