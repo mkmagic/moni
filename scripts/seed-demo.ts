@@ -14,11 +14,12 @@
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import { Client } from "pg";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import Decimal from "decimal.js";
 import { withUser } from "@/db/client";
 import * as schema from "@/db/schema";
 import { encryptField, decryptField, wipe, type AadContext } from "@/lib/crypto";
+import { normalizeDescription } from "@/lib/categorization/normalize";
 import { multiply } from "@/lib/money";
 import { createUser } from "@/domain/registration";
 
@@ -26,6 +27,12 @@ import { createUser } from "@/domain/registration";
 // seed summary. In production, users choose their own; here it just lets the
 // login flow unwrap the seeded data key. See src/lib/auth/password.ts.
 const DEMO_PASSWORD = "moni-demo";
+
+// Written once and reused for both the entry description and the merchant's
+// match text, so the two can never drift apart.
+const SHUFERSAL_DESCRIPTION = "Shufersal grocery run";
+const NETFLIX_DESCRIPTION = "Netflix subscription";
+const NETFLIX_AMOUNT = "-49.90";
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -59,7 +66,7 @@ function round2(d: Decimal): string {
 async function wipeAll(owner: Client): Promise<void> {
   await owner.query(`
     TRUNCATE TABLE
-      entry_field_changelog, entry_transactions, entries, transfers, recurring_series,
+      entry_field_changelog, entry_transactions, entries, transfers,
       rule_actions, rule_conditions, rules, sync_staging, sync_runs, connections,
       account_balance_snapshots, credit_card_details, accounts, merchants, categories,
       fx_rates, users
@@ -176,7 +183,6 @@ interface SeedCounts {
   creditCardDetails: number;
   entries: number;
   entryTransactions: number;
-  recurringSeries: number;
   transfers: number;
   accountBalanceSnapshots: number;
 }
@@ -237,6 +243,10 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
     };
 
     // --- merchants -------------------------------------------------------
+    // `match_text_ct` is the merchant's identity (docs/adr/0005-*), so it is
+    // derived from the same description these merchants' entries carry
+    // below — seed a different string and the resolver would create a second
+    // merchant for the same payee on the next sync.
     const shufersalId = randomUUID();
     const netflixId = randomUUID();
     await tx.insert(schema.merchants).values([
@@ -244,16 +254,41 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
         id: shufersalId,
         ownerId: userId,
         nameCt: enc(dataKey, shufersalId, "name_ct", "Shufersal"),
+        matchTextCt: enc(
+          dataKey,
+          shufersalId,
+          "match_text_ct",
+          normalizeDescription(SHUFERSAL_DESCRIPTION),
+        ),
         source: "manual",
       },
       {
         id: netflixId,
         ownerId: userId,
         nameCt: enc(dataKey, netflixId, "name_ct", "Netflix"),
+        matchTextCt: enc(
+          dataKey,
+          netflixId,
+          "match_text_ct",
+          normalizeDescription(NETFLIX_DESCRIPTION),
+        ),
         source: "manual",
       },
     ]);
     counts.merchants += 2;
+
+    // The recurring view's only gate: without a flagged category it shows
+    // nothing at all, so the demo flags the two that make it worth looking at
+    // — one expense section and one income section (docs/adr/0006-*).
+    await tx
+      .update(schema.categories)
+      .set({ isRecurring: true })
+      .where(
+        and(
+          eq(schema.categories.ownerId, userId),
+          inArray(schema.categories.id, [categoryIds.entertainment, categoryIds.salary]),
+        ),
+      );
 
     // --- accounts -------------------------------------------------------
     const checkingId = randomUUID();
@@ -339,22 +374,6 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
       counts.accountBalanceSnapshots++;
     }
 
-    // --- recurring_series (Netflix subscription) --------------------------
-    const recurringSeriesId = randomUUID();
-    const netflixAmount = "-49.90";
-    await tx.insert(schema.recurringSeries).values({
-      id: recurringSeriesId,
-      ownerId: userId,
-      merchantId: netflixId,
-      categoryId: categoryIds.entertainment,
-      cadence: "monthly",
-      expectedAmountCt: enc(dataKey, recurringSeriesId, "expected_amount_ct", netflixAmount),
-      nextExpectedDate: addDays(TODAY, 7),
-      isSubscription: true,
-      status: "active",
-    });
-    counts.recurringSeries++;
-
     // --- entries + entry_transactions ------------------------------------
     interface EntryDef {
       date: string;
@@ -362,7 +381,6 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
       accountId: string;
       categoryId?: string;
       merchantId?: string;
-      recurringSeriesId?: string;
       enteredAmount: string;
       enteredCurrency: "ILS" | "USD";
       accountAmount: string;
@@ -422,7 +440,7 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
       ] as const) {
         entryDefs.push({
           date: addDays(`${month}-01`, offset),
-          description: "Shufersal grocery run",
+          description: SHUFERSAL_DESCRIPTION,
           accountId: creditCardId,
           categoryId: categoryIds.groceries,
           merchantId: shufersalId,
@@ -475,14 +493,13 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
       // Netflix — the recurring subscription entry for this month.
       entryDefs.push({
         date: `${month}-05`,
-        description: "Netflix subscription",
+        description: NETFLIX_DESCRIPTION,
         accountId: creditCardId,
         categoryId: categoryIds.entertainment,
         merchantId: netflixId,
-        recurringSeriesId,
-        enteredAmount: netflixAmount,
+        enteredAmount: NETFLIX_AMOUNT,
         enteredCurrency: "ILS",
-        accountAmount: netflixAmount,
+        accountAmount: NETFLIX_AMOUNT,
         accountCurrency: "ILS",
         fxRate: "1",
         fxStatus: "locked",
@@ -598,7 +615,6 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
         notesCt: def.notes ? enc(dataKey, id, "notes_ct", def.notes) : null,
         categoryId: def.categoryId ?? null,
         merchantId: def.merchantId ?? null,
-        recurringSeriesId: def.recurringSeriesId ?? null,
         status: "posted",
         excluded: def.excluded ?? false,
         enteredAmountCt: enc(dataKey, id, "entered_amount_ct", def.enteredAmount),
@@ -680,7 +696,6 @@ async function main() {
     creditCardDetails: 0,
     entries: 0,
     entryTransactions: 0,
-    recurringSeries: 0,
     transfers: 0,
     accountBalanceSnapshots: 0,
   };
@@ -714,7 +729,6 @@ async function main() {
     console.log(`credit_card_details: ${counts.creditCardDetails}`);
     console.log(`entries: ${counts.entries}`);
     console.log(`entry_transactions: ${counts.entryTransactions}`);
-    console.log(`recurring_series: ${counts.recurringSeries}`);
     console.log(`transfers: ${counts.transfers}`);
     console.log(`account_balance_snapshots: ${counts.accountBalanceSnapshots}`);
     console.log("\nDecrypt round-trip proof:");

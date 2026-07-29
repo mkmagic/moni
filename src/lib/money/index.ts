@@ -45,6 +45,34 @@ export function multiply(m: Money, factor: string | Decimal): Money {
   return { amount: toDecimal(m.amount).times(f).toString(), currency: m.currency };
 }
 
+/**
+ * Number of decimal places a money value is rounded to. ILS, USD and EUR all
+ * carry two; a zero-decimal currency (JPY) would need this per-currency, and
+ * nothing in Moni handles one yet.
+ */
+const MINOR_UNIT_DP = 2;
+
+/**
+ * Divides a Money value by a scalar — the recurring view's "average of the
+ * last 3" (docs/adr/0006-*). Unlike every other function here this one cannot
+ * be exact: 10 / 3 has no finite decimal form. It rounds to the minor unit,
+ * half away from zero, and that policy lives here rather than at each call
+ * site so two callers can never disagree about it.
+ */
+export function divide(m: Money, divisor: string | Decimal): Money {
+  const d = divisor instanceof Decimal ? divisor : new Decimal(divisor);
+  if (d.isZero()) {
+    throw new Error("Cannot divide Money by zero");
+  }
+  return {
+    amount: toDecimal(m.amount)
+      .dividedBy(d)
+      .toDecimalPlaces(MINOR_UNIT_DP, Decimal.ROUND_HALF_UP)
+      .toString(),
+    currency: m.currency,
+  };
+}
+
 /** True if the amount is exactly zero. */
 export function isZero(m: Money): boolean {
   return toDecimal(m.amount).isZero();

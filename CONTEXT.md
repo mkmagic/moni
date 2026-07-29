@@ -44,6 +44,12 @@ The normalized form of a transaction's description — Moni's single definition 
 no partial identity.
 _Avoid_: Normalized description, merchant key, payee string.
 
+**Merchant**:
+The payee behind a **match text**, given a row so a name and an icon have
+somewhere to live. One per user, per match text — a merchant is a match text
+that got promoted, not a separately-discovered thing.
+_Avoid_: Payee, vendor, biller, counterparty.
+
 **Suggestion**:
 A proposed category for a transaction no rule could place. Derived on demand, never
 authoritative, and never a category until a person accepts it — at which point it
@@ -56,6 +62,22 @@ A person's ruling that a category is wrong for a **match text**, not for one
 transaction. It suppresses that pairing from every future suggestion; it does not
 stop a rule from assigning the same category.
 _Avoid_: Thumbs-down, dismissal, veto, negative feedback.
+
+### Recurring
+
+**Recurring category**:
+A category the user has flagged as one whose spending repeats — subscriptions,
+utilities, rent, salary. The flag is the **only** thing that admits a merchant
+to the recurring view; Moni never decides on its own that something recurs. A
+flag on a parent covers its children.
+_Avoid_: Subscription category, fixed expense, standing category.
+
+**Cadence**:
+How often a merchant charges — monthly, bi-monthly, quarterly, yearly, or
+**irregular**. Read from the gaps between that merchant's transaction dates,
+never stored, and never guessed: a payee with unstable spacing is irregular and
+says so. The user may override it when the dates are not yet enough to tell.
+_Avoid_: Frequency, interval, period, schedule.
 
 ### Getting started
 

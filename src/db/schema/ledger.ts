@@ -15,7 +15,7 @@ import {
 import { bytea, timestamps } from "./shared";
 import { users } from "./identity";
 import { accounts } from "./accounts";
-import { categories, merchants, recurringSeries } from "./classification";
+import { categories, merchants } from "./classification";
 
 // `trade` is reserved for the deferred investments module; only
 // `transaction` is used in v1.0 (data-model.md §5).
@@ -49,7 +49,6 @@ export const entries = pgTable(
     notesCt: bytea("notes_ct"),
     categoryId: uuid("category_id"),
     merchantId: uuid("merchant_id"),
-    recurringSeriesId: uuid("recurring_series_id"),
     status: entryStatusEnum("status").notNull(),
     excluded: boolean("excluded").notNull().default(false),
     // entered leg — ground truth, verbatim from the source.
@@ -84,10 +83,6 @@ export const entries = pgTable(
     foreignKey({
       columns: [table.ownerId, table.merchantId],
       foreignColumns: [merchants.ownerId, merchants.id],
-    }),
-    foreignKey({
-      columns: [table.ownerId, table.recurringSeriesId],
-      foreignColumns: [recurringSeries.ownerId, recurringSeries.id],
     }),
     index("entries_owner_account_date_idx").on(table.ownerId, table.accountId, table.date),
     index("entries_owner_category_date_idx").on(table.ownerId, table.categoryId, table.date),

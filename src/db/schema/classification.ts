@@ -40,6 +40,10 @@ export const categories = pgTable(
     classification: categoryClassificationEnum("classification").notNull(),
     color: text("color"),
     icon: text("icon"),
+    // The one gate on the recurring view: Moni never decides on its own that
+    // spending repeats (docs/adr/0006-*). A flag on a parent covers its
+    // children, matching how a parent already filters entries.
+    isRecurring: boolean("is_recurring").notNull().default(false),
     // Stable identity for a category seeded from the shipped default set, so
     // a built-in rule still resolves to the right row after the user renames
     // it. Null for user-created categories.
@@ -56,6 +60,17 @@ export const categories = pgTable(
   ],
 );
 
+/**
+ * The payee behind a **match text**, given a row so a name, an icon and a
+ * cadence override have somewhere to live (docs/adr/0005-*).
+ *
+ * `match_text_ct` is the identity — one merchant per distinct match text. It
+ * is a normalized counterparty string, Tier-1 under
+ * security-design-principles.md §13, hence encrypted; and because ciphertext
+ * is randomized there is **no unique constraint to dedupe on**. The domain
+ * layer decrypts the set and dedupes in memory, exactly as it already does
+ * for `category_rejections.match_text_ct` (docs/adr/0002-*).
+ */
 export const merchants = pgTable(
   "merchants",
   {
@@ -64,9 +79,17 @@ export const merchants = pgTable(
       .notNull()
       .references(() => users.id),
     nameCt: bytea("name_ct").notNull(),
+    /** Tier-1. AAD-bound to this row's own id/column/version (encryption.md §3). */
+    matchTextCt: bytea("match_text_ct").notNull(),
+    /** Origin-local path only — never an external URL (docs/adr/0007-*). */
     logoUrl: text("logo_url"),
     websiteUrl: text("website_url"),
     source: text("source"),
+    /**
+     * A cadence the user set by hand, overriding what the dates imply. Tier-2:
+     * an enum string with no user content, so plaintext like `categories.name`.
+     */
+    cadenceOverride: text("cadence_override"),
     version: integer("version").notNull().default(1),
     ...timestamps,
   },
@@ -200,35 +223,10 @@ export const ruleActions = pgTable(
   ],
 );
 
-export const recurringSeries = pgTable(
-  "recurring_series",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    ownerId: uuid("owner_id")
-      .notNull()
-      .references(() => users.id),
-    merchantId: uuid("merchant_id"),
-    categoryId: uuid("category_id"),
-    cadence: text("cadence").notNull(),
-    expectedAmountCt: bytea("expected_amount_ct").notNull(),
-    nextExpectedDate: date("next_expected_date"),
-    isSubscription: boolean("is_subscription").notNull().default(false),
-    status: text("status").notNull(),
-    version: integer("version").notNull().default(1),
-    ...timestamps,
-  },
-  (table) => [
-    unique("recurring_series_owner_id_id_unique").on(table.ownerId, table.id),
-    foreignKey({
-      columns: [table.ownerId, table.merchantId],
-      foreignColumns: [merchants.ownerId, merchants.id],
-    }),
-    foreignKey({
-      columns: [table.ownerId, table.categoryId],
-      foreignColumns: [categories.ownerId, categories.id],
-    }),
-  ],
-);
+// `recurring_series` used to live here. It was detection state — cadence, a
+// single expected amount, a next-expected date — for a detector never built,
+// and the recurring view derives all of it on read instead
+// (docs/adr/0006-*).
 
 /** Pairs the two legs of an internal move; paired legs also carry `excluded = true`. */
 export const transfers = pgTable(

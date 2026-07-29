@@ -28,7 +28,6 @@ import {
   categoryRejections,
   entries,
   entryFieldChangelog,
-  recurringSeries,
   ruleActions,
   ruleConditions,
   rules,
@@ -955,6 +954,10 @@ export interface CategoryDetailView extends CategoryView {
    * deletes them, because a rule that assigns a category that no longer
    * exists cannot run. */
   ruleCount: number;
+  /** The user has said spending here repeats — the only gate on the
+   * recurring view (docs/adr/0006-*). A flag on a parent covers its
+   * children, so a child may show as recurring without its own flag set. */
+  isRecurring: boolean;
 }
 
 export interface CategoryGroupView extends CategoryDetailView {
@@ -995,6 +998,7 @@ export async function listCategoryTree(session: Session): Promise<CategoryGroupV
       builtin: r.builtinKey !== null,
       entryCount: entryCountBy.get(r.id) ?? 0,
       ruleCount: ruleCountBy.get(r.id) ?? 0,
+      isRecurring: r.isRecurring,
     });
 
     const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
@@ -1100,6 +1104,31 @@ export async function createCategory(session: Session, input: CategoryInput): Pr
  * editable here — that is exactly what `builtin_key` is for, since identity
  * lives in the key rather than the name and a rename survives an upgrade.
  */
+/**
+ * Flags (or unflags) a category as recurring — the one gate on the recurring
+ * view (docs/adr/0006-*).
+ *
+ * Its own function rather than a field on `CategoryInput` because it is a
+ * one-click toggle on a list row, and routing it through the edit dialog's
+ * full-body PATCH would make a checkbox rewrite the name, colour, icon and
+ * parent it never touched.
+ */
+export async function setCategoryRecurring(
+  session: Session,
+  categoryId: string,
+  isRecurring: boolean,
+): Promise<void> {
+  await withUser(session.userId, async (tx) => {
+    const [existing] = await tx
+      .select({ id: categories.id })
+      .from(categories)
+      .where(eq(categories.id, categoryId))
+      .limit(1);
+    if (!existing) throw new CategoryNotFoundError(categoryId);
+    await tx.update(categories).set({ isRecurring }).where(eq(categories.id, categoryId));
+  });
+}
+
 export async function updateCategory(
   session: Session,
   categoryId: string,
@@ -1184,10 +1213,6 @@ export async function deleteCategory(session: Session, categoryId: string): Prom
     }
 
     await tx.delete(categoryRejections).where(eq(categoryRejections.categoryId, categoryId));
-    await tx
-      .update(recurringSeries)
-      .set({ categoryId: null })
-      .where(eq(recurringSeries.categoryId, categoryId));
 
     const targeting = await tx
       .select({ ruleId: ruleActions.ruleId })

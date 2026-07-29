@@ -35,6 +35,7 @@ import {
 } from "@/lib/connectors";
 import { decText, encText } from "./fields";
 import { categorizeEntries } from "./categorization";
+import { resolveMerchants } from "./merchants";
 
 type Tx = Parameters<Parameters<typeof withUser>[1]>[0];
 
@@ -441,6 +442,8 @@ export interface PromoteScrapeResultSummary {
   balanceSnapshots: number;
   /** How many of this run's entries the categorization engine resolved. */
   categorized: number;
+  /** New payees this run put a `merchants` row behind (docs/adr/0005-*). */
+  merchantsCreated: number;
 }
 
 /**
@@ -469,6 +472,7 @@ export async function promoteScrapeResult(
       updatedPendingToPosted: 0,
       balanceSnapshots: 0,
       categorized: 0,
+      merchantsCreated: 0,
     };
 
     // Entries worth running the categorizer over: the ones just created,
@@ -527,6 +531,13 @@ export async function promoteScrapeResult(
     // (docs/design/categorization.md). Inside this same transaction, so a
     // rolled-back scrape leaves no categories behind either.
     summary.categorized = await categorizeEntries(tx, userId, dataKey, touchedEntryIds);
+
+    // Merchant resolution, for the same reason and in the same place: the
+    // catalog and the existing merchant set are decrypted once for the batch
+    // rather than once per row (docs/adr/0005-*). Inside this transaction
+    // too, so a rolled-back scrape leaves no merchants behind.
+    const merchantResult = await resolveMerchants(tx, userId, dataKey, touchedEntryIds);
+    summary.merchantsCreated = merchantResult.merchantsCreated;
 
     // Last statement in the transaction on purpose (docs plan §D) — a
     // throw anywhere above means this line never runs and the whole
