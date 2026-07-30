@@ -1,4 +1,5 @@
-// GET lists the passkeys enrolled against CK; POST completes an enrollment.
+// POST completes a passkey enrollment. (There is no GET: the settings page
+// lists passkeys server-side through the domain layer.)
 //
 // POST is the only place a `webauthn-prf` unlock method is ever written. It
 // insists on both halves of the ceremony pair issued by
@@ -41,25 +42,6 @@ const EnrollSchema = z.object({
   assertionResponse: AssertionResponseSchema,
   prfSecret: PrfSecretSchema,
 });
-
-export async function GET(req: NextRequest): Promise<NextResponse> {
-  const session = getSessionFromRequest(req);
-  if (!session) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
-  const methods = await listCredentialUnlockMethods(session.userId);
-  return NextResponse.json({
-    passkeys: methods.map((m) => ({
-      id: m.id,
-      label: m.ref.label,
-      createdAt: m.createdAt.toISOString(),
-      // Surfaced so a moved deployment can explain itself in the UI rather
-      // than just failing to unlock.
-      usable: m.ref.rpId === relyingParty().rpId,
-      rpId: m.ref.rpId,
-    })),
-  });
-}
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const session = getSessionFromRequest(req);

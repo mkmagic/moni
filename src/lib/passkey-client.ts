@@ -119,7 +119,13 @@ export async function enrollPasskey(label: string): Promise<PasskeyResult<Enroll
     return { ok: false, message: "This browser doesn't support passkeys." };
   }
 
-  const optionsRes = await postJson("/api/passkeys/options", {});
+  // Adding a passkey to an existing set needs the credential window open —
+  // the new one has to wrap the same CK. So the options call can 423: arm
+  // with a passkey already enrolled, then ask again. A first-ever enrollment
+  // never takes that branch, and pays one prompt pair instead of two.
+  const options = await sendUnlocked(() => postJson("/api/passkeys/options", {}));
+  if (!options.ok) return { ok: false, message: options.message };
+  const optionsRes = options.res;
   if (!optionsRes.ok) {
     return { ok: false, message: await errorMessage(optionsRes, "Could not start enrollment") };
   }
@@ -171,7 +177,15 @@ export async function enrollPasskey(label: string): Promise<PasskeyResult<Enroll
     assertionResponse: withoutPrf(assertionResponse),
     prfSecret,
   });
-  if (!res.ok) return { ok: false, message: await errorMessage(res, "Could not save the passkey") };
+  if (!res.ok) {
+    // The window can still lapse between the options call and this one; say
+    // so in words, because `credential_window_locked` is what the raw body
+    // would otherwise put on screen.
+    if (res.status === 423) {
+      return { ok: false, message: "The unlock window closed before the passkey was saved." };
+    }
+    return { ok: false, message: await errorMessage(res, "Could not save the passkey") };
+  }
   return { ok: true, value: (await res.json()) as EnrolledPasskey };
 }
 
@@ -243,14 +257,6 @@ export async function sendUnlocked(
   const armed = await armWithPasskey();
   if (!armed.ok) return { ok: false, message: armed.message };
   return { ok: true, res: await send() };
-}
-
-/** Lists the passkeys enrolled against CK. */
-export async function listPasskeys(): Promise<EnrolledPasskey[]> {
-  const res = await fetch("/api/passkeys");
-  if (!res.ok) return [];
-  const body = (await res.json()) as { passkeys: EnrolledPasskey[] };
-  return body.passkeys;
 }
 
 /** A cancelled ceremony (`NotAllowedError`) is the common case and not an

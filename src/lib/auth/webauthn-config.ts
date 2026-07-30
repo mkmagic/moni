@@ -43,11 +43,6 @@ export function rpId(): string {
   return relyingParty().rpId;
 }
 
-/** Full origin the browser will report, e.g. `https://moni.example.com`. */
-export function rpOrigin(): string {
-  return relyingParty().origin;
-}
-
 function requireRpId(): string {
   const value = process.env.MONI_WEBAUTHN_RP_ID?.trim();
   if (!value) {

@@ -10,6 +10,7 @@ import { generateAuthenticationOptions, generateRegistrationOptions } from "@sim
 import { getSessionFromRequest } from "@/domain/auth";
 import { listCredentialUnlockMethods } from "@/domain/credential-unlock";
 import { getProfile } from "@/domain/profile";
+import { getCredentialKey } from "@/lib/auth/cred-window";
 import { putPendingCeremony } from "@/lib/auth/webauthn-challenge";
 import { RP_NAME, rpId } from "@/lib/auth/webauthn-config";
 import type { AuthenticatorTransportFuture } from "@simplewebauthn/server";
@@ -26,6 +27,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   const existing = await listCredentialUnlockMethods(session.userId);
+
+  // An additional passkey has to wrap the CK the armed window is holding, so
+  // refuse before issuing challenges rather than after: POST /api/passkeys
+  // consumes them single-use, and a 423 there would strand the user with two
+  // spent biometric prompts and nothing to retry with.
+  if (existing.length > 0 && !getCredentialKey(session.id)) {
+    return NextResponse.json({ error: "credential_window_locked" }, { status: 423 });
+  }
+
   const rp = rpId();
 
   const registrationOptions = await generateRegistrationOptions({

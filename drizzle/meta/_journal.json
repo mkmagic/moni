@@ -92,6 +92,13 @@
       "when": 1785395269900,
       "tag": "0012_slim_malcolm_colcord",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1785395269901,
+      "tag": "0013_clear_password_wrapped_credential_key",
+      "breakpoints": true
     }
   ]
 }
