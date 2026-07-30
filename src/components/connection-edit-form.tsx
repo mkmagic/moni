@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getConnectorDefinition } from "@/lib/connectors";
+import { sendUnlocked } from "@/lib/passkey-client";
 import { cn } from "@/lib/utils";
 
 interface ConnectionEditFormProps {
@@ -41,7 +42,6 @@ export function ConnectionEditForm({
   const [name, setName] = useState(displayName ?? "");
   const [replacing, setReplacing] = useState(startReplacing);
   const [values, setValues] = useState<Record<string, string>>({});
-  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -51,25 +51,29 @@ export function ConnectionEditForm({
     setError(null);
 
     const body: Record<string, unknown> = { displayName: name.trim() === "" ? null : name.trim() };
-    if (replacing) {
-      body.credentials = values;
-      body.password = password;
-    }
+    if (replacing) body.credentials = values;
     const payload = JSON.stringify(body);
     setValues({});
-    setPassword("");
 
     try {
-      const res = await fetch(`/api/connections/${connectionId}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: payload,
-      });
-      if (res.ok) {
+      // Only the credential replacement needs the credential key; a rename
+      // never returns 423, so `sendUnlocked` costs nothing on that path.
+      const sent = await sendUnlocked(() =>
+        fetch(`/api/connections/${connectionId}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: payload,
+        }),
+      );
+      if (!sent.ok) {
+        setError(sent.message);
+        return;
+      }
+      if (sent.res.ok) {
         onSaved();
         return;
       }
-      const responseBody = (await res.json().catch(() => ({}))) as { error?: string };
+      const responseBody = (await sent.res.json().catch(() => ({}))) as { error?: string };
       setError(responseBody.error ?? "Could not save");
     } catch {
       setError("Could not reach the server");
@@ -131,23 +135,9 @@ export function ConnectionEditForm({
               />
             </div>
           ))}
-          <div className="flex flex-col gap-1.5">
-            <label
-              htmlFor={`${connectionId}-moni`}
-              className="text-xs font-medium text-muted-foreground"
-            >
-              Your Moni password
-            </label>
-            <Input
-              id={`${connectionId}-moni`}
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Confirms it's you before we re-encrypt"
-            />
-          </div>
+          <p className="text-xs text-muted-foreground">
+            {"Saving will ask for your passkey — it's what unlocks the stored login."}
+          </p>
         </div>
       )}
 

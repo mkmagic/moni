@@ -15,8 +15,7 @@ import {
   UnknownConnectorError,
 } from "@/domain/connections";
 import { createUser } from "@/domain/registration";
-import { unlockCredentialKey } from "@/domain/auth";
-import { cleanupOwners } from "./helpers";
+import { cleanupOwners, enrollTestCredentialKey } from "./helpers";
 
 const SIGNUP_TOKEN = process.env.MONI_SIGNUP_TOKEN;
 if (!SIGNUP_TOKEN) {
@@ -32,8 +31,7 @@ async function freshUser(label: string): Promise<TestUser> {
   const email = `${label}-${randomUUID()}@test.moni`;
   const password = Buffer.from("correct horse battery staple", "utf8");
   const { userId } = await createUser(email, password, SIGNUP_TOKEN!);
-  const credentialKey = await unlockCredentialKey(userId, password);
-  if (!credentialKey) throw new Error("test setup: failed to unlock credential key");
+  const credentialKey = await enrollTestCredentialKey(userId);
   return { userId, credentialKey };
 }
 

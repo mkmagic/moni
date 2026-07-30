@@ -9,7 +9,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createUser } from "@/domain/registration";
-import { authenticate, unlockCredentialKey } from "@/domain/auth";
+import { authenticate } from "@/domain/auth";
 import { getSession } from "@/lib/auth/session-store";
 import {
   createConnection,
@@ -18,7 +18,7 @@ import {
   updateConnectionCredentials,
 } from "@/domain/connections";
 import { getProfile, updateProfile } from "@/domain/profile";
-import { cleanupOwners, elevatedPool } from "./helpers";
+import { cleanupOwners, elevatedPool, enrollTestCredentialKey } from "./helpers";
 
 const SIGNUP_TOKEN = process.env.MONI_SIGNUP_TOKEN;
 if (!SIGNUP_TOKEN) {
@@ -31,8 +31,7 @@ async function freshUser(label: string): Promise<{ userId: string; credentialKey
   const email = `${label}-${randomUUID()}@test.moni`;
   const password = Buffer.from(PASSWORD, "utf8");
   const { userId } = await createUser(email, password, SIGNUP_TOKEN!);
-  const credentialKey = await unlockCredentialKey(userId, password);
-  if (!credentialKey) throw new Error("test setup: failed to unlock credential key");
+  const credentialKey = await enrollTestCredentialKey(userId);
   return { userId, credentialKey };
 }
 

@@ -17,7 +17,8 @@ import { Badge } from "@/components/ui/badge";
 import { ArmPrompt } from "@/components/arm-prompt";
 import { ConnectionEditForm } from "@/components/connection-edit-form";
 import { getConnectorDefinition } from "@/lib/connectors";
-import { armCredentialWindow, startSyncRun, waitForSyncRun } from "@/lib/sync-client";
+import { startSyncRun, waitForSyncRun } from "@/lib/sync-client";
+import { armWithPasskey } from "@/lib/passkey-client";
 import { useSyncAll } from "@/lib/use-sync-all";
 import { cn } from "@/lib/utils";
 
@@ -71,7 +72,7 @@ export function ConnectionsList({ initialConnections }: ConnectionsListProps) {
           ? { kind: "idle" }
           : { kind: "error", message: error ?? "Sync failed" },
       ),
-    onArmRejected: (id) => setRow(id, { kind: "error", message: "Wrong password" }),
+    onArmRejected: (id, message) => setRow(id, { kind: "error", message }),
     onChainFinished: () => router.refresh(),
   });
   const bulk = bulkSync.state;
@@ -103,9 +104,10 @@ export function ConnectionsList({ initialConnections }: ConnectionsListProps) {
     bulkSync.start(initialConnections.map((c) => c.id));
   }
 
-  async function onArmRow(id: string, password: string) {
-    if (!(await armCredentialWindow(password))) {
-      setRow(id, { kind: "error", message: "Wrong password" });
+  async function onArmRow(id: string) {
+    const armed = await armWithPasskey();
+    if (!armed.ok) {
+      setRow(id, { kind: "error", message: armed.message });
       return;
     }
     await onSyncRow(id);
@@ -126,7 +128,7 @@ export function ConnectionsList({ initialConnections }: ConnectionsListProps) {
             : `${initialConnections.length} connected`}
         </p>
         {bulk.kind === "locked" ? (
-          <ArmPrompt label="Unlock to continue" onArm={(p) => void bulkSync.arm(p)} />
+          <ArmPrompt label="Unlock to continue" onArm={() => bulkSync.arm()} />
         ) : (
           <Button
             type="button"
@@ -178,7 +180,7 @@ export function ConnectionsList({ initialConnections }: ConnectionsListProps) {
                     <Loader2 className="h-3.5 w-3.5 animate-spin" /> Syncing…
                   </span>
                 ) : state.kind === "arming" ? (
-                  <ArmPrompt label="Unlock" onArm={(p) => onArmRow(c.id, p)} />
+                  <ArmPrompt label="Unlock" onArm={() => onArmRow(c.id)} />
                 ) : (
                   <>
                     <Button

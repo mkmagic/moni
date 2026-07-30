@@ -17,20 +17,15 @@
 //
 // Credentials come from stdin, NEVER argv — argv is visible in `ps` output
 // and shell history, a real exposure for a bank password
-// (docs/security/threat-model.md §5). The Moni login password unlocks BOTH
-// the data key (DK, to authenticate as the user) and the credential key
-// (CK, to encrypt/decrypt `connections.credentials_ct`) — the two RAM
-// windows a real onboarding/sync flow opens (docs plan §B).
+// (docs/security/threat-model.md §5). The Moni login password unlocks the
+// data key (DK) only; the credential key (CK) is NOT reachable from it since
+// issue #7, so the `connections` row this needs must be created in the
+// browser beforehand.
 import "dotenv/config";
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { authenticate, unlockCredentialKey } from "@/domain/auth";
-import {
-  createConnection,
-  findConnectionByConnector,
-  getDecryptedCredentials,
-  type ConnectionView,
-} from "@/domain/connections";
+import { authenticate } from "@/domain/auth";
+import { findConnectionByConnector, type ConnectionView } from "@/domain/connections";
 import { startSyncRun } from "@/domain/sync-promotion";
 import { destroySession, getSession } from "@/lib/auth/session-store";
 import { wipe } from "@/lib/crypto";
@@ -151,74 +146,50 @@ async function main(): Promise<void> {
       const session = getSession(sessionId);
       if (!session) throw new Error("Session vanished immediately after authenticate()");
 
-      const credentialKey = await unlockCredentialKey(session.userId, password);
-      if (!credentialKey) throw new Error(`Could not unlock credential key for ${args.user}`);
-
-      try {
-        let connection: ConnectionView | null = await findConnectionByConnector(
-          session.userId,
-          connectorId,
+      // The connection must already exist, created in the browser with the
+      // credential window armed by a passkey. This script cannot create one:
+      // writing `credentials_ct` needs CK, and since issue #7 CK is reachable
+      // only through a WebAuthn assertion, which a CLI has no way to perform.
+      // Inventing a second unlock mechanism for this script's convenience
+      // would reopen exactly what #18 closed.
+      const connection: ConnectionView | null = await findConnectionByConnector(
+        session.userId,
+        connectorId,
+      );
+      if (!connection) {
+        throw new Error(
+          `No "${connectorId}" connection exists for ${args.user}. Create it in the app ` +
+            `first (Settings -> Add connection, unlocking with your passkey), then re-run.`,
         );
-        if (!connection) {
-          const created = await createConnection(
-            session.userId,
-            connectorId,
-            stdin.credentials,
-            credentialKey,
-            `${connectorId} (scrape:test)`,
-          );
-          connection = {
-            id: created.id,
-            connectorId,
-            displayName: null,
-            status: "active",
-            lastSyncAt: null,
-          };
-          console.log(`Created connection ${connection.id} for connector "${connectorId}".`);
-        } else {
-          console.log(
-            `Reusing existing connection ${connection.id} for connector "${connectorId}".`,
-          );
-        }
-
-        // Re-fetch through the domain layer rather than reusing the
-        // stdin-typed credentials directly — this is exactly the read path
-        // a real sync route takes (src/domain/connections.ts's
-        // getDecryptedCredentials), so this manual gate exercises it too.
-        const decrypted = await getDecryptedCredentials(
-          session.userId,
-          connection.id,
-          credentialKey,
-        );
-        if (!decrypted) throw new Error("Connection vanished immediately after creation/lookup");
-
-        const syncRunId = await startSyncRun(session.userId, connection.id);
-        console.log(`sync_runs ${syncRunId}: running`);
-
-        const payload: ChildStdinPayload = {
-          syncRunId,
-          userId: session.userId,
-          connectionId: connection.id,
-          connectorId,
-          startDate: args.startDate,
-          credentials: decrypted.credentials,
-        };
-
-        const result = await spawnWorker(session.dataKey, payload);
-        if (!result.ok) {
-          console.error(`sync_runs ${syncRunId}: failed — ${String(result.error)}`);
-          process.exitCode = 1;
-          return;
-        }
-
-        console.log(`sync_runs ${syncRunId}: succeeded`);
-        console.log(JSON.stringify(result.summary, null, 2));
-      } finally {
-        // This script's own unlocked copy — wiped here (Tier-0 hygiene,
-        // threat-model.md §5.5). Not the shared cred-window store, which a
-        // one-shot CLI script has no use for.
-        wipe(credentialKey);
       }
+      console.log(`Using connection ${connection.id} for connector "${connectorId}".`);
+
+      // The stdin-typed credentials, not the stored ciphertext — reading
+      // `credentials_ct` back would need CK. That read path
+      // (getDecryptedCredentials) is covered by tests/db/connections.test.ts;
+      // what this manual gate exists to prove is the spawn boundary against a
+      // real bank, and that is unaffected.
+      const syncRunId = await startSyncRun(session.userId, connection.id);
+      console.log(`sync_runs ${syncRunId}: running`);
+
+      const payload: ChildStdinPayload = {
+        syncRunId,
+        userId: session.userId,
+        connectionId: connection.id,
+        connectorId,
+        startDate: args.startDate,
+        credentials: stdin.credentials,
+      };
+
+      const result = await spawnWorker(session.dataKey, payload);
+      if (!result.ok) {
+        console.error(`sync_runs ${syncRunId}: failed — ${String(result.error)}`);
+        process.exitCode = 1;
+        return;
+      }
+
+      console.log(`sync_runs ${syncRunId}: succeeded`);
+      console.log(JSON.stringify(result.summary, null, 2));
     } finally {
       // NOT session.dataKey — destroySession() wipes that key itself (docs
       // plan §C's trap #2: never wipe a borrowed session data key

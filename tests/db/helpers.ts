@@ -4,12 +4,57 @@
 // routine. Nothing here is a production code path — see
 // docs/design/domain-layer.md §5 for why fixtures need a superuser
 // connection at all (moni_owner is also FORCE-RLS'd).
+import { randomBytes } from "node:crypto";
 import { Client, Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "@/db/schema";
+import {
+  UNLOCK_SECRET_LENGTH,
+  enrollCredentialUnlockMethod,
+  unlockCredentialKey,
+} from "@/domain/credential-unlock";
 import { TEST_APP_DATABASE_URL, TEST_SUPERUSER_DATABASE_URL } from "./setup-test-db";
 
 export { TEST_APP_DATABASE_URL, TEST_SUPERUSER_DATABASE_URL };
+
+/**
+ * Gives `userId` a credential key by enrolling a second factor with a random
+ * 32-byte unlock secret, and returns CK for the test to encrypt with.
+ *
+ * This is the PRODUCTION enrollment path (src/domain/credential-unlock.ts) —
+ * the only thing missing is the WebAuthn ceremony that would normally
+ * produce those bytes in a browser, which is a route-edge concern the domain
+ * layer deliberately knows nothing about (issue #7). There is no test-only
+ * branch in the domain layer that could leak into a deployment; a random
+ * secret here is indistinguishable from a real PRF output, because that is
+ * exactly what the seam was designed to accept.
+ *
+ * A user created by `createUser()` has NO credential key until this runs —
+ * the login password cannot mint or open one. Any test that touches bank
+ * credentials needs this call.
+ */
+export async function enrollTestCredentialKey(userId: string): Promise<Buffer> {
+  const secret = randomBytes(UNLOCK_SECRET_LENGTH);
+  const { methodId } = await enrollCredentialUnlockMethod(
+    userId,
+    secret,
+    {
+      credentialIdB64Url: randomBytes(16).toString("base64url"),
+      publicKeyB64Url: randomBytes(64).toString("base64url"),
+      counter: 0,
+      transports: ["internal"],
+      rpId: "localhost",
+      label: "Test passkey",
+    },
+    null,
+  );
+  // Read CK back through the real unlock path rather than keeping the copy
+  // enrollment returned — the fixture then also proves the row it just wrote
+  // is genuinely openable.
+  const credentialKey = await unlockCredentialKey(userId, methodId, secret);
+  if (!credentialKey) throw new Error("test setup: enrolled method did not unlock");
+  return credentialKey;
+}
 
 /**
  * Elevated (superuser) pool for moni_test. Used only for:
