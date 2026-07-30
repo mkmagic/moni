@@ -7,7 +7,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createUser } from "@/domain/registration";
-import { unlockCredentialKey } from "@/domain/auth";
 import { createConnection } from "@/domain/connections";
 import {
   getLatestSyncRunByConnection,
@@ -15,7 +14,7 @@ import {
   markSyncRunFailed,
   startSyncRun,
 } from "@/domain/sync-promotion";
-import { cleanupOwners, elevatedPool } from "./helpers";
+import { cleanupOwners, elevatedPool, enrollTestCredentialKey } from "./helpers";
 
 const SIGNUP_TOKEN = process.env.MONI_SIGNUP_TOKEN;
 if (!SIGNUP_TOKEN) {
@@ -31,8 +30,7 @@ async function freshFixture(label: string): Promise<Fixture> {
   const email = `${label}-${randomUUID()}@test.moni`;
   const password = Buffer.from("correct horse battery staple", "utf8");
   const { userId } = await createUser(email, password, SIGNUP_TOKEN!);
-  const credentialKey = await unlockCredentialKey(userId, password);
-  if (!credentialKey) throw new Error("test setup: failed to unlock credential key");
+  const credentialKey = await enrollTestCredentialKey(userId);
   const { id: connectionId } = await createConnection(
     userId,
     "leumi",

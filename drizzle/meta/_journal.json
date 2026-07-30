@@ -85,6 +85,13 @@
       "when": 1785351236893,
       "tag": "0011_recurring_view",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1785395269900,
+      "tag": "0012_slim_malcolm_colcord",
+      "breakpoints": true
     }
   ]
 }

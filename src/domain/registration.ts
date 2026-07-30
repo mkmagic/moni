@@ -1,10 +1,16 @@
 // Sign-up — the one function that mints a new user's key custody
 // (docs/security/threat-model.md §5, the plan's §A2 "Registration"). A
-// genuinely random data key (DK, Tier-1 reads) and credential key (CK,
-// Tier-0 bank-credential reads) are wrapped under ONE Argon2id(password) KEK
-// and stored on a single `user_unlock_methods` row, bound to *that row's*
-// id — never `users.id` — per the AAD row-binding rule
+// genuinely random data key (DK, Tier-1 reads) is wrapped under an
+// Argon2id(password) KEK and stored on a single `user_unlock_methods` row,
+// bound to *that row's* id — never `users.id` — per the AAD row-binding rule
 // (docs/design/encryption.md §3, src/lib/crypto/aad.ts).
+//
+// The credential key (CK, Tier-0 bank-credential reads) is deliberately NOT
+// minted here (issue #7). The login password must be structurally incapable
+// of reaching CK, so CK comes into existence only when the user enrolls a
+// passkey — see src/domain/credential-unlock.ts. Until then the account
+// simply cannot hold a bank credential, which is the correct state rather
+// than a gap.
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { withUser } from "@/db/client";
 import { users, userUnlockMethods } from "@/db/schema";
@@ -79,19 +85,12 @@ export async function createUser(
   const userId = randomUUID();
   const methodId = randomUUID();
   const dataKey = randomBytes(32); // REAL random — never the dev key provider.
-  const credentialKey = randomBytes(32);
   const salt = randomBytes(16);
 
   const kek = await deriveKekFromPassword(password, salt);
   try {
     const dataKeyAad: AadContext = { rowId: methodId, column: "wrapped_data_key", version: 1 };
-    const credentialKeyAad: AadContext = {
-      rowId: methodId,
-      column: "wrapped_credential_key",
-      version: 1,
-    };
     const wrappedDataKey = wrapWithKek(kek, dataKeyAad, dataKey);
-    const wrappedCredentialKey = wrapWithKek(kek, credentialKeyAad, credentialKey);
 
     try {
       await withUser(userId, async (tx) => {
@@ -101,7 +100,9 @@ export async function createUser(
           ownerId: userId,
           type: "password-argon2id",
           wrappedDataKey,
-          wrappedCredentialKey,
+          // NOT a placeholder — the password method must never wrap CK
+          // (issue #7 / #18). Only a passkey row carries a CK wrap.
+          wrappedCredentialKey: null,
           unlockRef: { saltB64: salt.toString("base64"), params: DEFAULT_ARGON2_PARAMS },
         });
         // The shipped category tree. Plaintext Tier-2 labels, so this needs
@@ -116,6 +117,5 @@ export async function createUser(
     return { userId, dataKey };
   } finally {
     wipe(kek);
-    wipe(credentialKey);
   }
 }

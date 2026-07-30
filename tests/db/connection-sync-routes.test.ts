@@ -19,10 +19,9 @@
 // and the 404 lookup — the parts that are genuinely testable without
 // touching a real bank.
 import { afterAll, describe, expect, it } from "vitest";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import { createUser } from "@/domain/registration";
-import { unlockCredentialKey } from "@/domain/auth";
 import { startSyncRun } from "@/domain/sync-promotion";
 import { createSession, destroySession } from "@/lib/auth/session-store";
 import {
@@ -36,9 +35,10 @@ import {
   POST as createConnectionRoute,
 } from "@/app/api/connections/route";
 import { POST as armRoute } from "@/app/api/connections/arm/route";
+import { POST as armOptionsRoute } from "@/app/api/connections/arm/options/route";
 import { POST as syncRoute } from "@/app/api/connections/[id]/sync/route";
 import { GET as syncRunStatusRoute } from "@/app/api/sync-runs/[id]/route";
-import { cleanupOwners } from "./helpers";
+import { cleanupOwners, enrollTestCredentialKey } from "./helpers";
 
 const SIGNUP_TOKEN = process.env.MONI_SIGNUP_TOKEN;
 if (!SIGNUP_TOKEN) {
@@ -60,14 +60,30 @@ async function freshSession(label: string): Promise<TestSession> {
   return { userId, sessionId };
 }
 
-/** Arms the credential window directly through the domain layer, bypassing
- * HTTP — used by tests that need an armed window as setup, not as the
- * thing under test. */
+/** Enrolls a second factor and arms the credential window directly through
+ * the domain layer, bypassing the WebAuthn ceremony — used by tests that
+ * need an armed window as setup, not as the thing under test. */
 async function armDirectly(session: TestSession): Promise<void> {
-  const password = Buffer.from(PASSWORD, "utf8");
-  const credentialKey = await unlockCredentialKey(session.userId, password);
-  if (!credentialKey) throw new Error("test setup: failed to unlock credential key");
+  const credentialKey = await enrollTestCredentialKey(session.userId);
   armCredentialWindow(session.sessionId, session.userId, credentialKey);
+}
+
+/** A structurally valid assertion body that will never verify — enough to
+ * get past Zod so the route's own gates (credential lookup, signature
+ * verification) are what decides the response. */
+function fakeAssertion(credentialIdB64Url: string) {
+  const b64 = randomBytes(32).toString("base64url");
+  return {
+    id: credentialIdB64Url,
+    rawId: credentialIdB64Url,
+    type: "public-key" as const,
+    clientExtensionResults: {},
+    response: {
+      clientDataJSON: b64,
+      authenticatorData: b64,
+      signature: b64,
+    },
+  };
 }
 
 function jsonRequest(
@@ -119,6 +135,7 @@ describe("POST/GET /api/connections", () => {
     expect(emptyRes.status).toBe(200);
     expect((await emptyRes.json()).connections).toEqual([]);
 
+    await armDirectly(session);
     const createRes = await createConnectionRoute(
       jsonRequest("http://localhost/api/connections", {
         method: "POST",
@@ -127,7 +144,6 @@ describe("POST/GET /api/connections", () => {
           connectorId: "leumi",
           credentials: { username: "dana", password: "hunter2" },
           displayName: "My Leumi",
-          password: PASSWORD,
         },
       }),
     );
@@ -147,8 +163,8 @@ describe("POST/GET /api/connections", () => {
     expect(JSON.stringify(connections)).not.toContain("hunter2");
   });
 
-  it("POST arms the credential window on success (first-connect arms inline)", async () => {
-    const session = await freshSession("route-armed");
+  it("POST returns 423 when the credential window is locked (CK is only reachable via a passkey)", async () => {
+    const session = await freshSession("route-locked");
     createdUserIds.push(session.userId);
     createdSessionIds.push(session.sessionId);
 
@@ -161,19 +177,48 @@ describe("POST/GET /api/connections", () => {
         body: {
           connectorId: "leumi",
           credentials: { username: "dana", password: "hunter2" },
+        },
+      }),
+    );
+    expect(res.status).toBe(423);
+    expect((await res.json()).error).toBe("credential_window_locked");
+  });
+
+  it("POST no longer accepts a Moni password as a way to reach CK (issue #7)", async () => {
+    const session = await freshSession("route-nopassword");
+    createdUserIds.push(session.userId);
+    createdSessionIds.push(session.sessionId);
+
+    // The exact body that used to work. The password is now inert: with no
+    // armed window this is a 423, and nothing is written.
+    const res = await createConnectionRoute(
+      jsonRequest("http://localhost/api/connections", {
+        method: "POST",
+        sessionId: session.sessionId,
+        body: {
+          connectorId: "leumi",
+          credentials: { username: "dana", password: "hunter2" },
           password: PASSWORD,
         },
       }),
     );
-    expect(res.status).toBe(201);
-    expect(getCredentialKey(session.sessionId)).not.toBeNull();
+    expect(res.status).toBe(423);
+    expect(getCredentialKey(session.sessionId)).toBeNull();
+
+    const listRes = await listConnectionsRoute(
+      jsonRequest("http://localhost/api/connections", {
+        method: "GET",
+        sessionId: session.sessionId,
+      }),
+    );
+    expect((await listRes.json()).connections).toEqual([]);
   });
 
   it("POST is unauthorized without a session cookie", async () => {
     const res = await createConnectionRoute(
       jsonRequest("http://localhost/api/connections", {
         method: "POST",
-        body: { connectorId: "leumi", credentials: {}, password: "x" },
+        body: { connectorId: "leumi", credentials: {} },
       }),
     );
     expect(res.status).toBe(401);
@@ -188,7 +233,7 @@ describe("POST/GET /api/connections", () => {
       jsonRequest("http://localhost/api/connections", {
         method: "POST",
         sessionId: session.sessionId,
-        body: { connectorId: "leumi" }, // missing credentials/password
+        body: { connectorId: "leumi" }, // missing credentials
       }),
     );
     expect(res.status).toBe(400);
@@ -203,7 +248,7 @@ describe("POST/GET /api/connections", () => {
       jsonRequest("http://localhost/api/connections", {
         method: "POST",
         sessionId: session.sessionId,
-        body: { connectorId: "not-a-real-bank", credentials: { x: "y" }, password: PASSWORD },
+        body: { connectorId: "not-a-real-bank", credentials: { x: "y" } },
       }),
     );
     expect(res.status).toBe(400);
@@ -213,39 +258,29 @@ describe("POST/GET /api/connections", () => {
     const session = await freshSession("route-badshape");
     createdUserIds.push(session.userId);
     createdSessionIds.push(session.sessionId);
+    await armDirectly(session);
 
     const res = await createConnectionRoute(
       jsonRequest("http://localhost/api/connections", {
         method: "POST",
         sessionId: session.sessionId,
         // leumi needs {username, password} — this only has username.
-        body: { connectorId: "leumi", credentials: { username: "dana" }, password: PASSWORD },
+        body: { connectorId: "leumi", credentials: { username: "dana" } },
       }),
     );
     expect(res.status).toBe(400);
   });
-
-  it("POST rejects the wrong Moni password (CK never unlocked, nothing written)", async () => {
-    const session = await freshSession("route-wrongpw");
-    createdUserIds.push(session.userId);
-    createdSessionIds.push(session.sessionId);
-
-    const res = await createConnectionRoute(
-      jsonRequest("http://localhost/api/connections", {
-        method: "POST",
-        sessionId: session.sessionId,
-        body: {
-          connectorId: "leumi",
-          credentials: { username: "dana", password: "hunter2" },
-          password: "definitely wrong",
-        },
-      }),
-    );
-    expect(res.status).toBe(401);
-    expect(getCredentialKey(session.sessionId)).toBeNull();
-  });
 });
 
+// The passkey arm flow (issue #7). The SUCCESS path needs a real
+// authenticator to produce a signed assertion and a PRF output, which is the
+// same class of thing as the real-bank scrape this file already declines to
+// fake — a stubbed authenticator would prove nothing about the ceremony. So
+// these stop at everything the routes do around the verification: auth, the
+// "nothing enrolled" gate, single-use challenges, and the credential lookup
+// and signature checks that must reject anything not produced by an enrolled
+// passkey. Enrollment itself is exercised through the production domain path
+// in tests/db/credential-unlock.test.ts.
 describe("POST /api/connections/arm", () => {
   const createdUserIds: string[] = [];
   const createdSessionIds: string[] = [];
@@ -257,20 +292,80 @@ describe("POST /api/connections/arm", () => {
     await cleanupOwners(createdUserIds);
   });
 
+  async function armSession(label: string): Promise<TestSession> {
+    const session = await freshSession(label);
+    createdUserIds.push(session.userId);
+    createdSessionIds.push(session.sessionId);
+    return session;
+  }
+
   it("is unauthorized without a session cookie", async () => {
     const res = await armRoute(
       jsonRequest("http://localhost/api/connections/arm", {
         method: "POST",
-        body: { password: "x" },
+        body: { assertionResponse: fakeAssertion("x"), prfSecret: "y" },
       }),
     );
     expect(res.status).toBe(401);
   });
 
-  it("rejects a malformed body", async () => {
-    const session = await freshSession("arm-badbody");
-    createdUserIds.push(session.userId);
-    createdSessionIds.push(session.sessionId);
+  it("options: 409 when no passkey is enrolled — the remediation is enrolment, not re-login", async () => {
+    const session = await armSession("arm-nopasskey");
+
+    const res = await armOptionsRoute(
+      jsonRequest("http://localhost/api/connections/arm/options", {
+        method: "POST",
+        sessionId: session.sessionId,
+      }),
+    );
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("no_passkey_enrolled");
+  });
+
+  it("options: issues a challenge that allows only the enrolled credential", async () => {
+    const session = await armSession("arm-options-ok");
+    const credentialKey = await enrollTestCredentialKey(session.userId);
+    credentialKey.fill(0);
+
+    const res = await armOptionsRoute(
+      jsonRequest("http://localhost/api/connections/arm/options", {
+        method: "POST",
+        sessionId: session.sessionId,
+      }),
+    );
+    expect(res.status).toBe(200);
+    const { authenticationOptions } = await res.json();
+    expect(authenticationOptions.challenge).toBeTruthy();
+    expect(authenticationOptions.allowCredentials).toHaveLength(1);
+    // A client claim of "the user was verified" is worthless; the server
+    // asks for UV and re-checks the flag on verify.
+    expect(authenticationOptions.userVerification).toBe("required");
+  });
+
+  it("rejects an arm with no challenge outstanding", async () => {
+    const session = await armSession("arm-nochallenge");
+    await enrollTestCredentialKey(session.userId);
+
+    const res = await armRoute(
+      jsonRequest("http://localhost/api/connections/arm", {
+        method: "POST",
+        sessionId: session.sessionId,
+        body: { assertionResponse: fakeAssertion("nope"), prfSecret: "z" },
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(getCredentialKey(session.sessionId)).toBeNull();
+  });
+
+  it("rejects a malformed body once a challenge is outstanding", async () => {
+    const session = await armSession("arm-badbody");
+    await enrollTestCredentialKey(session.userId);
+    await armOptionsRoute(
+      jsonRequest("http://localhost/api/connections/arm/options", {
+        method: "POST",
+        sessionId: session.sessionId,
+      }),
+    );
 
     const res = await armRoute(
       jsonRequest("http://localhost/api/connections/arm", {
@@ -282,37 +377,87 @@ describe("POST /api/connections/arm", () => {
     expect(res.status).toBe(400);
   });
 
-  it("rejects the wrong password", async () => {
-    const session = await freshSession("arm-wrongpw");
-    createdUserIds.push(session.userId);
-    createdSessionIds.push(session.sessionId);
+  it("rejects an assertion from a credential that isn't enrolled", async () => {
+    const session = await armSession("arm-unknown-cred");
+    await enrollTestCredentialKey(session.userId);
+    await armOptionsRoute(
+      jsonRequest("http://localhost/api/connections/arm/options", {
+        method: "POST",
+        sessionId: session.sessionId,
+      }),
+    );
 
     const res = await armRoute(
       jsonRequest("http://localhost/api/connections/arm", {
         method: "POST",
         sessionId: session.sessionId,
-        body: { password: "wrong" },
+        body: {
+          assertionResponse: fakeAssertion(randomBytes(16).toString("base64url")),
+          prfSecret: randomBytes(32).toString("base64url"),
+        },
       }),
     );
     expect(res.status).toBe(401);
     expect(getCredentialKey(session.sessionId)).toBeNull();
   });
 
-  it("arms the window on the correct password", async () => {
-    const session = await freshSession("arm-ok");
-    createdUserIds.push(session.userId);
-    createdSessionIds.push(session.sessionId);
+  it("rejects a forged assertion for an ENROLLED credential — the signature is actually checked", async () => {
+    const session = await armSession("arm-forged");
+    await enrollTestCredentialKey(session.userId);
+    const optionsRes = await armOptionsRoute(
+      jsonRequest("http://localhost/api/connections/arm/options", {
+        method: "POST",
+        sessionId: session.sessionId,
+      }),
+    );
+    const { authenticationOptions } = await optionsRes.json();
+    const enrolledId = authenticationOptions.allowCredentials[0].id;
 
     const res = await armRoute(
       jsonRequest("http://localhost/api/connections/arm", {
         method: "POST",
         sessionId: session.sessionId,
-        body: { password: PASSWORD },
+        body: {
+          assertionResponse: fakeAssertion(enrolledId),
+          prfSecret: randomBytes(32).toString("base64url"),
+        },
       }),
     );
-    expect(res.status).toBe(200);
-    expect((await res.json()).ok).toBe(true);
-    expect(getCredentialKey(session.sessionId)).not.toBeNull();
+    expect(res.status).toBe(401);
+    expect(getCredentialKey(session.sessionId)).toBeNull();
+  });
+
+  it("a challenge is single-use — replaying it after a failure is rejected", async () => {
+    const session = await armSession("arm-replay");
+    await enrollTestCredentialKey(session.userId);
+    await armOptionsRoute(
+      jsonRequest("http://localhost/api/connections/arm/options", {
+        method: "POST",
+        sessionId: session.sessionId,
+      }),
+    );
+
+    const body = {
+      assertionResponse: fakeAssertion(randomBytes(16).toString("base64url")),
+      prfSecret: randomBytes(32).toString("base64url"),
+    };
+    const first = await armRoute(
+      jsonRequest("http://localhost/api/connections/arm", {
+        method: "POST",
+        sessionId: session.sessionId,
+        body,
+      }),
+    );
+    expect(first.status).toBe(401);
+
+    const replay = await armRoute(
+      jsonRequest("http://localhost/api/connections/arm", {
+        method: "POST",
+        sessionId: session.sessionId,
+        body,
+      }),
+    );
+    expect(replay.status).toBe(400);
   });
 });
 
@@ -449,8 +594,8 @@ describe("GET /api/sync-runs/[id]", () => {
     await armDirectly(session);
 
     // Create a real connection first (sync_runs.connection_id is a
-    // composite FK to connections(owner_id, id)) via the arm route's same
-    // credential key, then startSyncRun directly — no HTTP spawn involved.
+    // composite FK to connections(owner_id, id)) using the window armed
+    // above, then startSyncRun directly — no HTTP spawn involved.
     const createRes = await createConnectionRoute(
       jsonRequest("http://localhost/api/connections", {
         method: "POST",
@@ -458,7 +603,6 @@ describe("GET /api/sync-runs/[id]", () => {
         body: {
           connectorId: "leumi",
           credentials: { username: "dana", password: "hunter2" },
-          password: PASSWORD,
         },
       }),
     );

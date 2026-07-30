@@ -2,34 +2,28 @@
 // credentials after a typo at connect time (previously only fixable with
 // manual SQL).
 //
-// Renaming touches plaintext only and needs no password. Replacing
-// credentials needs CK, so — exactly like POST /api/connections — the caller
-// supplies their Moni login password inline rather than going through a 423
-// dance in a settings form, and the same key then arms the credential window
-// so an immediate re-sync needs no second prompt.
+// Renaming touches plaintext only and needs no unlock. Replacing credentials
+// needs CK, which — since issue #7 — comes only from the armed credential
+// window: the login password no longer wraps CK on any row, so there is no
+// inline password to accept here any more. A locked window is a 423 and the
+// client unlocks with a passkey.
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getSessionFromRequest, unlockCredentialKey } from "@/domain/auth";
+import { getSessionFromRequest } from "@/domain/auth";
 import {
   InvalidCredentialsShapeError,
   renameConnection,
   updateConnectionCredentials,
 } from "@/domain/connections";
-import { armCredentialWindow } from "@/lib/auth/cred-window";
-import { wipe } from "@/lib/crypto";
+import { getCredentialKey } from "@/lib/auth/cred-window";
 
 const ParamsSchema = z.object({ id: z.uuid() });
 
 // Zod at the trust boundary (docs/design/conventions.md — Validation).
-// `credentials` and `password` travel together: neither is any use alone.
 const PatchSchema = z
   .object({
     displayName: z.string().max(120).nullable().optional(),
     credentials: z.record(z.string(), z.string()).optional(),
-    password: z.string().min(1).optional(),
-  })
-  .refine((v) => (v.credentials === undefined) === (v.password === undefined), {
-    message: "credentials and password must be supplied together",
   })
   .refine((v) => v.displayName !== undefined || v.credentials !== undefined, {
     message: "nothing to update",
@@ -67,39 +61,27 @@ export async function PATCH(
     return NextResponse.json({ ok: true });
   }
 
-  const credentials = parsed.data.credentials;
-  // Non-null: the schema's refine guarantees password accompanies credentials.
-  const password = Buffer.from(parsed.data.password!, "utf8");
-  try {
-    const credentialKey = await unlockCredentialKey(session.userId, password);
-    if (!credentialKey) {
-      return NextResponse.json({ error: "invalid password" }, { status: 401 });
-    }
+  // BORROWED from the cred-window store — never wiped here.
+  const credentialKey = getCredentialKey(session.id);
+  if (!credentialKey) {
+    return NextResponse.json({ error: "credential_window_locked" }, { status: 423 });
+  }
 
-    try {
-      const found = await updateConnectionCredentials(
-        session.userId,
-        connectionId,
-        credentials,
-        credentialKey,
-      );
-      if (!found) {
-        wipe(credentialKey);
-        return NextResponse.json({ error: "not found" }, { status: 404 });
-      }
-      // Ownership of credentialKey transfers to the window store here — this
-      // route must NOT wipe it past this point (same contract as POST).
-      armCredentialWindow(session.id, session.userId, credentialKey);
-      return NextResponse.json({ ok: true });
-    } catch (err) {
-      // Threw before the window was armed — this route still owns the key.
-      wipe(credentialKey);
-      if (err instanceof InvalidCredentialsShapeError) {
-        return NextResponse.json({ error: err.message }, { status: 400 });
-      }
-      throw err;
+  try {
+    const found = await updateConnectionCredentials(
+      session.userId,
+      connectionId,
+      parsed.data.credentials,
+      credentialKey,
+    );
+    if (!found) {
+      return NextResponse.json({ error: "not found" }, { status: 404 });
     }
-  } finally {
-    password.fill(0);
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    if (err instanceof InvalidCredentialsShapeError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    throw err;
   }
 }

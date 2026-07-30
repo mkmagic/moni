@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getConnectorDefinition, type ConnectorId } from "@/lib/connectors";
+import { sendUnlocked } from "@/lib/passkey-client";
 
 interface ConnectFormProps {
   connectorId: ConnectorId;
@@ -24,7 +25,6 @@ export function ConnectForm({ connectorId, onConnected, onBack }: ConnectFormPro
   const def = getConnectorDefinition(connectorId);
   const [values, setValues] = useState<Record<string, string>>({});
   const [displayName, setDisplayName] = useState("");
-  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -40,25 +40,32 @@ export function ConnectForm({ connectorId, onConnected, onBack }: ConnectFormPro
       connectorId,
       credentials: values,
       displayName: nickname ?? undefined,
-      password,
     });
-    // Credentials and password must not linger in this component's state
-    // any longer than the submit — clear before awaiting the response.
+    // Credentials must not linger in this component's state any longer than
+    // the submit — clear before awaiting the response.
     setValues({});
-    setPassword("");
 
     try {
-      const res = await fetch("/api/connections", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body,
-      });
-      if (res.status === 201) {
-        const responseBody = (await res.json()) as { id: string };
+      // Storing a bank login needs the credential key, so a locked window
+      // means one passkey prompt and an automatic retry — the user never
+      // sees a 423 or has to re-type what they just entered.
+      const sent = await sendUnlocked(() =>
+        fetch("/api/connections", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body,
+        }),
+      );
+      if (!sent.ok) {
+        setError(sent.message);
+        return;
+      }
+      if (sent.res.status === 201) {
+        const responseBody = (await sent.res.json()) as { id: string };
         onConnected(responseBody.id, nickname);
         return;
       }
-      const responseBody = (await res.json().catch(() => ({}))) as { error?: string };
+      const responseBody = (await sent.res.json().catch(() => ({}))) as { error?: string };
       setError(responseBody.error ?? "Could not connect");
     } catch {
       setError("Could not reach the server");
@@ -103,20 +110,6 @@ export function ConnectForm({ connectorId, onConnected, onBack }: ConnectFormPro
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
           placeholder={def.label}
-        />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="moniPassword" className="text-xs font-medium text-muted-foreground">
-          Your Moni password
-        </label>
-        <Input
-          id="moniPassword"
-          type="password"
-          autoComplete="current-password"
-          required
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="Confirms it's you before we store this"
         />
       </div>
       {error && <p className="text-sm text-negative">{error}</p>}

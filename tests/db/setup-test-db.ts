@@ -53,6 +53,7 @@ const MIGRATION_FILES = [
   "0009_category_rejections.sql",
   "0010_category_rejections_rls_and_roles.sql",
   "0011_recurring_view.sql",
+  "0012_slim_malcolm_colcord.sql",
 ];
 
 /** Bookkeeping for which of MIGRATION_FILES this database has already seen.

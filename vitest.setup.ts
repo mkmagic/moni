@@ -12,4 +12,12 @@ import { ensureTestDatabase, TEST_APP_DATABASE_URL } from "./tests/db/setup-test
 // `withUser()` call in the suite land on moni_test as the `moni_app` role.
 process.env.DATABASE_URL = TEST_APP_DATABASE_URL;
 
+// src/lib/auth/webauthn-config.ts throws at import if these are missing —
+// deliberately, so a real deployment can never mint passkeys against a
+// guessed RP ID. Route tests import that module transitively, so give the
+// suite the localhost defaults unless the developer's own .env already says
+// otherwise. Config only: no test here fakes an authenticator.
+process.env.MONI_WEBAUTHN_RP_ID ??= "localhost";
+process.env.MONI_WEBAUTHN_ORIGIN ??= "http://localhost:3000";
+
 await ensureTestDatabase();

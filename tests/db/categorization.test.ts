@@ -11,7 +11,6 @@ import { eq } from "drizzle-orm";
 import { withUser } from "@/db/client";
 import * as schema from "@/db/schema";
 import { createUser } from "@/domain/registration";
-import { unlockCredentialKey } from "@/domain/auth";
 import { createConnection } from "@/domain/connections";
 import { promoteScrapeResult, startSyncRun } from "@/domain/sync-promotion";
 import {
@@ -30,7 +29,7 @@ import { listEntries } from "@/domain/transactions";
 import { getOverview } from "@/domain/dashboard";
 import type { Session } from "@/lib/auth/session-store";
 import type { ScraperAccount, ScraperTransaction } from "@/lib/connectors";
-import { cleanupOwners } from "./helpers";
+import { cleanupOwners, enrollTestCredentialKey } from "./helpers";
 
 const SIGNUP_TOKEN = process.env.MONI_SIGNUP_TOKEN;
 if (!SIGNUP_TOKEN) {
@@ -40,6 +39,7 @@ if (!SIGNUP_TOKEN) {
 interface Fixture {
   userId: string;
   dataKey: Buffer;
+  credentialKey: Buffer;
   connectionId: string;
   session: Session;
 }
@@ -51,8 +51,7 @@ async function freshFixture(label: string): Promise<Fixture> {
   const password = Buffer.from("correct horse battery staple", "utf8");
   const { userId, dataKey } = await createUser(email, password, SIGNUP_TOKEN!);
   createdUserIds.push(userId);
-  const credentialKey = await unlockCredentialKey(userId, password);
-  if (!credentialKey) throw new Error("test setup: failed to unlock credential key");
+  const credentialKey = await enrollTestCredentialKey(userId);
   const { id: connectionId } = await createConnection(
     userId,
     "leumi",
@@ -61,7 +60,7 @@ async function freshFixture(label: string): Promise<Fixture> {
   );
   // Only the three fields the domain functions under test actually read.
   const session = { id: randomUUID(), userId, dataKey, baseCurrency: "ILS" } as Session;
-  return { userId, dataKey, connectionId, session };
+  return { userId, dataKey, credentialKey, connectionId, session };
 }
 
 function txn(overrides: Partial<ScraperTransaction> = {}): ScraperTransaction {
@@ -114,16 +113,11 @@ async function categoryIdByBuiltinKey(userId: string, builtinKey: string): Promi
 /** A second connection on the same user, from a card issuer rather than a
  * bank — so its accounts are classified `liability`. */
 async function cardScrape(fx: Fixture, txns: ScraperTransaction[]) {
-  const credentialKey = await unlockCredentialKey(
-    fx.userId,
-    Buffer.from("correct horse battery staple", "utf8"),
-  );
-  if (!credentialKey) throw new Error("test setup: failed to unlock credential key");
   const { id: connectionId } = await createConnection(
     fx.userId,
     "max",
     { username: "dana", password: "hunter2" },
-    credentialKey,
+    fx.credentialKey,
   );
   const syncRunId = await startSyncRun(fx.userId, connectionId);
   return promoteScrapeResult({

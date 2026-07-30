@@ -11,6 +11,7 @@ This document provides actionable guidelines for implementing encryption in Moni
 
 ## 2. Key Management (RAM-Only)
 - **Envelope Encryption:** Use a per-user data key to encrypt user data. This data key is itself wrapped by the user's unlock key (derived from their passkey or password).
+- **Two keys, not one (issue #7, requirement from #18).** The per-user **data key (DK)** covers Tier-1 fields and is wrapped by the login password's Argon2id KEK. The **credential key (CK)** covers Tier-0 bank credentials and is wrapped **only** by a WebAuthn-PRF passkey. The login password must never wrap CK on any row — that is what makes it structurally impossible for a phished password to reach a bank credential. Which keys a `user_unlock_methods` row opens is recorded by which of its two wrap columns is non-null. CK is minted lazily at the first passkey enrollment (`src/domain/credential-unlock.ts`), never at signup, and has **no recovery path** by design.
 - **No Disk Storage:** Plaintext keys must **never** be written to disk, database, swap, or logs. They live exclusively in bounded, in-memory sessions.
 - **Wipeable Memory (Crucial):** Handle all Tier-0 secrets (bank passwords, unwrapped keys, recovery codes, raw PRF outputs) strictly as **`Buffer` or `Uint8Array`**.
   - **Never use `String`** for Tier-0 secrets, as V8 strings are immutable and cannot be safely wiped.
