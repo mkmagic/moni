@@ -37,9 +37,9 @@ Rules:
 
 ## 4. FX sourcing & missing rates
 
-- **Rates come from an FX/market-data provider behind the generic provider interface** (shape adapted from Ghostfolio's market-data provider), fetched by the pg-boss worker as a background job and cached outside the request cycle. v1.0 ships one provider.
+- **Rates come from an FX/market-data provider behind the generic provider interface** (shape adapted from Ghostfolio's market-data provider). Moni fetches missing rates during a user-triggered operation and retains them in the shared local cache; 1.1 adds no scheduler or queue.
 - The rate for an entry is the provider's rate for `entered → reporting` **as of the transaction date**. Store the rate, its date, and its source alongside the entry.
-- **A missing rate never blocks ingest and is never faked.** entered and account amounts are ground truth and persist regardless. If no rate is available for the transaction date at ingest, `fxRate` is left null and the entry is flagged `fx_status = 'pending'`; its reporting value is simply unavailable (nothing is stored to backfill) until a background job locks the rate once it exists. Never substitute a silent `1:1`, never fall back to today's rate to "fill the gap." On-the-fly aggregation surfaces or excludes pending entries rather than silently under/over-counting.
+- **A missing rate is never faked.** For ledger flows, entered and account amounts are ground truth and persist regardless. If no rate is available for the transaction date at ingest, `fxRate` is left null and the entry is flagged `fx_status = 'pending'`; a later user-triggered operation may fill it once the rate exists. Never substitute a silent `1:1`, never fall back to today's rate to "fill the gap." On-the-fly aggregation surfaces or excludes pending entries rather than silently under/over-counting. A complete investment refresh has the stricter contract in [ADR 0008](../adr/0008-investments-use-weekly-account-state-snapshots.md): if a required valuation input is missing, the new snapshot is rejected atomically.
 
 ## 5. Base currency vs. display currency (stock vs. flow)
 

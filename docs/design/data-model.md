@@ -1,6 +1,9 @@
 # Moni — Data Model
 
-**Purpose:** The core schema — the unified ledger that puts expenses (and, later, investments) on one timeline — and how everything else hangs off it. This is the design the first Moni migrations and the domain layer are built from. It is a *design* document: it specifies tables, columns, and the rules that govern them, not migration SQL.
+**Purpose:** The core schema — the unified flow ledger, account-value snapshots, and
+the Moni 1.1 investment snapshot extension — and how everything else hangs off it.
+This is a *design* document: it specifies tables, columns, and the rules that govern
+them, not migration SQL.
 
 **Testing & seeding.** See `../../.agents/skills/db-schema/SKILL.md` for the table map, invariant checklist, and the migrate/seed/test workflow.
 
@@ -22,7 +25,7 @@ Five rules cut across every table below; each entity section assumes them rather
 ---
 ## 2. Conventions (apply to every table unless stated otherwise)
 - **Identity.** `uuid` primary keys, `gen_random_uuid()` default.
-- **Ownership / RLS.** `owner_id uuid not null` references `users(id)`. An RLS policy enforces `owner_id = current_setting('app.user_id')::uuid`; the app connects as a role that is *subject* to RLS. The domain layer sets `SET LOCAL app.user_id` per request/transaction. Global reference tables (`fx_rates`, and the deferred `securities`) are the only exceptions — no `owner_id`, readable by all, written only by system jobs.
+- **Ownership / RLS.** `owner_id uuid not null` references `users(id)`. An RLS policy enforces `owner_id = current_setting('app.user_id')::uuid`; the app connects as a role that is *subject* to RLS. The domain layer sets `SET LOCAL app.user_id` per request/transaction. Public market-reference tables such as `fx_rates` are the only exceptions — no `owner_id`, readable by all, and written only through the domain layer. Instruments are user-owned rather than global because a plaintext user→security relationship would disclose a holding.
 - **Composite tenant-FK backstop.** Every user-owned parent table carries a `UNIQUE (owner_id, id)` constraint. Every child foreign key is **composite and includes `owner_id`** — e.g. `entries (owner_id, account_id)` references `accounts (owner_id, id)`. This makes "User A's entry points at User B's account" a constraint violation at the database, independent of RLS. Applies to all parent→child links below.
 - **Encryption columns.** Tier-1 values are stored as `*_ct` (ciphertext) beside their plaintext structural neighbors. Every table that holds ciphertext carries `version int not null default 1`, bumped on every update; it is the `row_version` in the AEAD **AAD = `id ‖ column_name ‖ version`** (cross-ref `encryption.md` §3). The external-anchoring of the *expected* version against an active DB-write attacker is an open question (threat-model §7.4/§13), not resolved here.
 - **Timestamps.** `created_at`, `updated_at` on every table.
@@ -60,13 +63,20 @@ Why derive rather than store (a deliberate refinement of `money-and-currency.md`
 
 ---
 
-## 5. Entities (the concrete build list for v1.0)
+## 5. Entities (the v1.0 foundation plus Moni 1.1 investments)
 ### Identity & keys
 - **`users`** — `id`, `email`, `base_currency` (default `ILS`), and per-user key-custody material (wrapped data key, unlock/WebAuthn references, recovery-code hashes). The key hierarchy and custody columns are specified by `encryption.md` / `threat-model.md` §5 and not redefined here. Auth-adjacent tables (`sessions`, `api_keys`, WebAuthn credentials) exist but are owned by the domain-layer / MCP designs — named here, detailed there.
 
 ### Connectors & ingestion
-- **`connections`** — one per linked institution login. `owner_id`, `connector_id` (e.g. `israeli-bank-scrapers:leumi`), `credentials_ct` (**Tier-0**, wrapped by the user's unlock secret per the key hierarchy — *never* the data key, never plaintext at rest), `status`, `last_sync_at`.
-- **`sync_runs`** — one per scrape attempt. `owner_id`, `connection_id`, `status` (`pending`/`running`/`succeeded`/`failed`), `window_start`/`window_end`, `error`, timestamps. The atomic-failure contract lives here: a failed run never partial-writes balances or entries.
+- **`connections`** — one configured source at one institution. `owner_id`,
+  `connector_id` (for example `israeli-bank-scrapers:leumi`), mechanism-specific
+  authorization encrypted as Tier-0 when present, `status`, and `last_sync_at`.
+  User-mediated import connections have no institution credential.
+- **`sync_runs`** — one source retrieval attempt. `owner_id`, `connection_id`,
+  `status` (`pending`/`running`/`succeeded`/`failed`),
+  `window_start`/`window_end`, `error`, timestamps. The atomic-failure contract
+  lives here: a failed run never partial-writes balances, entries, or investment
+  snapshots.
 - **`sync_staging`** — the **raw ingestion buffer**. Holds exactly what the scraper returned, out of the canonical ledger, so pending↔posted churn never touches `entries` directly. Columns: `owner_id`, `sync_run_id`, `account_id` (nullable until mapped), `raw_payload_ct` (the scraper row verbatim, encrypted), `import_key`, `scraper_status` (`pending`/`completed`), `reconcile_state` (`new`/`matched`/`promoted`/`superseded`), `promoted_entry_id` (nullable FK to `entries`), timestamps.
   - **`import_key`** is built from **stable fields only** — provider `identifier` + account + original amount/currency + purchase/original date. It **excludes** description and posting date, which banks mutate when a charge moves pending → posted. This is what makes re-scrape idempotent without generating duplicates (see §6, tension 4).
   - A reconciler matches `pending` staging rows to their later `completed` form here, then promotes to `entries` through the domain layer.
@@ -92,15 +102,88 @@ Why derive rather than store (a deliberate refinement of `money-and-currency.md`
 - **`transfers`** — `owner_id`, `inflow_entry_id`, `outflow_entry_id`, `status`. Pairs the two legs of an internal move (between the user's own accounts) so it is not counted as income or expense; paired legs also carry `excluded = true`.
 
 ### Dashboard / graph helpers
-- **`account_balance_snapshots`** — the **sole home for absolute balances** (the stock series). `owner_id`, `account_id` (composite FK), `date`, `native_balance_ct`, `currency`, `source` (`scrape`/`manual`). This is where investment/savings "balance-only" accounts and any manual balance mark land — it replaces the dropped valuation subtype. Net-worth-over-time is these snapshots valued at the as-of-date/today rate (§4.4).
+- **`account_balance_snapshots`** — the **sole home for absolute balances** (the stock series). `owner_id`, `account_id` (composite FK), `date`, `native_balance_ct`, `currency`, and `source`. For an investment account, the amount is Moni's account valuation in its explicit valuation currency and a 1:1 `investment_snapshot_details` row supplies the richer observation state below. Net-worth-over-time reads this same seam for every account type.
 - **No `period_rollups` in v1.0.** Flow totals are computed on-the-fly: filter on plaintext structural columns → decrypt the narrowed set → aggregate with `decimal.js`. At family scale (~10⁴–10⁵ rows lifetime) this is milliseconds. A persisted rollup cache — maintained by a *single serialized worker off the ingest path*, never an inline read-modify-write — is documented as the scale-up path, added only if measured slow (see §6, tension 1).
 
-### Global reference (no owner, no user-RLS)
-- **`fx_rates`** — `from_currency`, `to_currency`, `date`, `rate` (plaintext `NUMERIC` — public data), `source`. Unique `(from_currency, to_currency, date, source)`. Populated by the pg-boss FX job. Cross-ref `money-and-currency.md` §4.
+### Investments (Moni 1.1)
 
-### Designed but NOT built in v1.0 (documented extension points)
-Column lists are given in this doc as the forward plan; no migration ships them in v1.0:
-- **`entry_trades`** (entry subtype: `security_id`, `qty`, `price`), **`securities`**, **`holdings`** (daily per-security snapshot) — the deferred investments module.
+Investment state is snapshot-based, not an activity or lot ledger. [ADR
+0008](../adr/0008-investments-use-weekly-account-state-snapshots.md) records why.
+
+- **`instruments`** — a user-owned canonical identity for an investable asset.
+  Structural fields are `owner_id`, `instrument_kind`
+  (`stock`/`etf`/`mutual_fund`/`generic`), and version/timestamps. Names, symbols,
+  exchange/venue, ISIN/CUSIP/FIGI, and other identifying labels are Tier-1
+  ciphertext. Instruments never live in a global reference table.
+- **`instrument_source_mappings`** — maps one canonical instrument to a
+  provider-qualified source identity. `owner_id`, `instrument_id` (composite FK),
+  provider and identifier kind are structural; provider identifiers and labels are
+  encrypted. Across providers, the domain layer auto-merges only equal durable
+  identifiers with no kind/currency conflict. A provider-native id matches only
+  inside that provider. Ticker/name similarity never merges records, and ambiguous
+  records stay separate.
+- **`investment_snapshot_details`** — 1:1 extension of an
+  `account_balance_snapshots` row for an investment account. It carries the account
+  and Sunday-based `week_start` needed for one-active-snapshot-per-account-per-week
+  uniqueness, the exact source as-of date/time and its precision, optional
+  `source_value_ct`/currency, valuation basis, freshness/completeness, source
+  connection/sync provenance, and version/timestamps. A later accepted observation
+  for the same source week atomically replaces the normalized snapshot; corrections
+  may replace a closed week too.
+- **`investment_snapshot_positions`** — one row per snapshot and canonical
+  instrument after source rows are aggregated. `owner_id`, snapshot/instrument
+  composite FKs, signed `quantity_ct`, explicit quantity unit, optional exact
+  source price/value ciphertext and currencies, and source valuation as-of
+  metadata. A position is state, not a trade or lot.
+- **`investment_snapshot_cash_balances`** — one signed exact `amount_ct` per
+  snapshot and currency. Cash is displayed beside positions but is not represented
+  as a synthetic instrument.
+- **`investment_source_payloads`** — accepted encrypted API responses and uploaded
+  files with owner/connection/sync provenance, real source period/as-of metadata,
+  encrypted filename where applicable, integrity metadata, and version/timestamps.
+  API sources retain only the latest accepted payload. User-mediated imports retain
+  every accepted file. Failed refreshes write no payload row and retain only a
+  sanitized `sync_runs.error`.
+
+Every quantity, price, value, and cash amount is a signed exact decimal string
+inside ciphertext and preserves source scale; arithmetic uses `decimal.js` and
+rounding occurs only for display. Instrument kind, quantity unit, currency, source,
+week/as-of fields, and valuation-quality enums remain plaintext structural
+metadata. Every investment table is user-owned, RLS-protected, versioned when it
+contains ciphertext, and uses composite owner foreign keys.
+
+The latest accepted snapshot is current state. At most one normalized snapshot per
+account per Sunday-through-Saturday week remains in history indefinitely, chosen by
+source as-of time rather than ingestion time. Repeated refreshes within a week and
+late corrections replace that week's normalized children in one transaction. A
+connection refresh spanning several accounts promotes all of them or none.
+
+Portfolio and account reads derive totals, holding/account/currency allocations, and
+weekly history through the domain layer. A missing account week may reuse its latest
+prior observation only in the read result and must mark the portfolio point
+mixed-age/stale; no synthetic snapshot or persisted portfolio rollup is written.
+Generic instruments contribute through clearly labeled broker source values and get
+no specialized analytics. A missing required identity, quantity, currency, as-of
+time, cash amount, or usable valuation input rejects the complete refresh.
+
+Historical reporting-currency conversion batch-reads the shared local `fx_rates`
+cache for each snapshot's actual date. Missing rates are fetched and cached during a
+user-triggered refresh; 1.1 has no scheduler, and snapshot rows do not duplicate or
+lock an FX rate. Current pricing and market/FX authority are decided by the provider
+policy tracked separately from this storage model.
+
+Disconnecting a connection preserves its accounts and snapshots. Closing or moving
+assets out of an account archives it only through explicit user action, excluding
+it from current portfolio reads while preserving history. Permanent deletion is a
+separate destructive operation.
+
+### Global reference (no owner, no user-RLS)
+- **`fx_rates`** — `from_currency`, `to_currency`, `date`, `rate` (plaintext `NUMERIC` — public data), `source`. Unique `(from_currency, to_currency, date, source)`. Missing rows are fetched on demand during user-triggered operations and shared across users. Cross-ref `money-and-currency.md` §4.
+
+### Designed but NOT built in Moni 1.1 (documented extension points)
+Column lists are given in this doc as the forward plan; no Moni 1.1 migration ships
+them:
+- **`entry_trades`**, acquisition/disposal lots, corporate actions, income/withholding evidence, and tax-FX records — future event/accounting extensions. Moni 1.1 investment snapshots deliberately do not pretend to provide this lineage.
 - **`installment_groups`** — normalized parent for installment slices, adopted once cross-slice grouping proves reliable.
 - **`account_field_changelog`** — the accounts-side analogue of `entry_field_changelog`.
 
