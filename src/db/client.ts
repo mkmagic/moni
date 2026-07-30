@@ -20,6 +20,14 @@ export const db = drizzle(pool, { schema });
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /**
+ * The scoped transaction `withUser()` hands its callback. Exported so a
+ * domain helper that runs *inside* someone else's `withUser` can name its
+ * parameter (e.g. `unwrapDataKey` in src/domain/auth.ts) instead of spelling
+ * out a nested `Parameters<…>` chain.
+ */
+export type UserTransaction = Transaction;
+
+/**
  * The single scoping primitive the domain/service layer is built on
  * (docs/security/security-design-principles.md §9). Every user-owned table
  * is RLS-protected with a policy keyed on `current_setting('app.user_id')`,

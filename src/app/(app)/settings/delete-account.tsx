@@ -47,11 +47,12 @@ export function DeleteAccount() {
         window.location.assign("/login");
         return;
       }
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      // Keyed on the status, not on the message text — a 401 here can only
+      // mean the password failed (the dialog is unreachable without a
+      // session), and matching the wire string would break silently the day
+      // the route rewords it.
       setError(
-        body.error === "invalid password"
-          ? "That password is not correct"
-          : "Could not delete your account",
+        res.status === 401 ? "That password is not correct" : "Could not delete your account",
       );
     } catch {
       setError("Could not reach the server");

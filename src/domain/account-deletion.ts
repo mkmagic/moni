@@ -27,7 +27,11 @@
 // fail the foreign key back to `users` and the child process dies with an
 // error nobody is left to read, which is the correct outcome — there is no
 // scheduler to cancel and inventing a cancellation protocol for it is out of
-// scope for #31.
+// scope for #31. Note the residual: until that child exits it still holds the
+// decrypted bank credentials it was scraping with in its OWN process memory,
+// which `endAllSessionsForUser()` cannot reach — it only wipes the web
+// process's RAM maps. Bounded by the scrape's own lifetime, and the fix is a
+// real job queue with cancellation, not something to bolt on here.
 import { eq } from "drizzle-orm";
 import { withUser } from "@/db/client";
 import {
@@ -55,7 +59,11 @@ import { endAllSessionsForUser, verifyPassword } from "@/domain/auth";
 export type DeleteAccountResult = "deleted" | "invalid-password";
 
 /**
- * Deletes `userId` and everything they own, in one transaction.
+ * Deletes `userId` and everything they own. The row removal is one atomic
+ * transaction; the password check ahead of it is a separate one, so a caller
+ * should read this as "verified, then deleted" rather than as a single unit.
+ * Nothing between the two can change the answer — only the account's own
+ * owner could re-key their password, and they are the caller.
  *
  * The password check lives inside this function rather than at the route, so
  * there is no way to reach the deletion without it — a live session cookie is

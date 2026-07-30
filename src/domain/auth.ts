@@ -28,7 +28,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import type { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";
-import { db, withUser } from "@/db/client";
+import { db, withUser, type UserTransaction } from "@/db/client";
 import { users, userUnlockMethods } from "@/db/schema";
 import { deriveKekFromPassword, unwrapWithKek, type Argon2Params } from "@/lib/auth/password";
 import { wipe, type AadContext } from "@/lib/crypto";
@@ -69,10 +69,7 @@ interface PasswordUnlockRef {
  * AEAD unwrap, one place where "is this the right password" is decided. The
  * returned key is Tier-0 and the caller owns wiping it.
  */
-async function unwrapDataKey(
-  tx: Parameters<Parameters<typeof withUser>[1]>[0],
-  password: Buffer,
-): Promise<Buffer | null> {
+async function unwrapDataKey(tx: UserTransaction, password: Buffer): Promise<Buffer | null> {
   const methodRows = await tx
     .select()
     .from(userUnlockMethods)
