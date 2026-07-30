@@ -1,0 +1,117 @@
+// Account deletion (issue #31) — the only operation in the app that removes
+// a user's data permanently, and the only one with no undo.
+//
+// TWO INDEPENDENT GUARDS KEEP THIS FROM TOUCHING ANOTHER USER'S ROWS, and
+// both are deliberate rather than redundant:
+//
+//   1. Every statement runs inside `withUser()`, so FORCE ROW LEVEL SECURITY
+//      already restricts it to `owner_id = current_setting('app.user_id')`.
+//      If `app.user_id` were somehow unset, the policies evaluate against
+//      NULL and the DELETEs match ZERO rows — fail closed, not fail open
+//      (drizzle/0001_rls_and_roles.sql §6).
+//   2. Every statement ALSO carries an explicit owner predicate. On its own
+//      that would violate the "never rely on a WHERE user_id = ? alone"
+//      invariant (CLAUDE.md), but as a second layer it means a bug in either
+//      guard alone still cannot widen the blast radius.
+//
+// The statements are spelled out one per table, in child-before-parent order,
+// rather than looped over a table list. A loop would read as one line but
+// hide the ordering that makes it correct, and this is the last function in
+// the codebase that should be clever. tests/db/account-deletion.test.ts
+// asserts the coverage is complete by reading the table list out of
+// `information_schema` — so a new owner-scoped table that nobody adds here
+// fails the suite instead of silently orphaning rows.
+//
+// NOT handled here, on purpose: a scrape running in the background
+// (scripts/scrape-worker.mts) whose writes land after the delete. Its inserts
+// fail the foreign key back to `users` and the child process dies with an
+// error nobody is left to read, which is the correct outcome — there is no
+// scheduler to cancel and inventing a cancellation protocol for it is out of
+// scope for #31.
+import { eq } from "drizzle-orm";
+import { withUser } from "@/db/client";
+import {
+  accountBalanceSnapshots,
+  accounts,
+  categories,
+  categoryRejections,
+  connections,
+  creditCardDetails,
+  entries,
+  entryFieldChangelog,
+  entryTransactions,
+  merchants,
+  ruleActions,
+  ruleConditions,
+  rules,
+  syncRuns,
+  syncStaging,
+  transfers,
+  users,
+  userUnlockMethods,
+} from "@/db/schema";
+import { endAllSessionsForUser, verifyPassword } from "@/domain/auth";
+
+export type DeleteAccountResult = "deleted" | "invalid-password";
+
+/**
+ * Deletes `userId` and everything they own, in one transaction.
+ *
+ * The password check lives inside this function rather than at the route, so
+ * there is no way to reach the deletion without it — a live session cookie is
+ * not sufficient authority to destroy an account. `password` is a Tier-0
+ * `Buffer` owned by the caller (the route wipes it).
+ *
+ * Returns `"invalid-password"` and changes nothing if the password does not
+ * verify. That is also the answer for an already-deleted user: their unlock
+ * method row is gone, so there is nothing left to verify against.
+ */
+export async function deleteAccount(
+  userId: string,
+  password: Buffer,
+): Promise<DeleteAccountResult> {
+  if (!(await verifyPassword(userId, password))) return "invalid-password";
+
+  await withUser(userId, async (tx) => {
+    // Leaves — nothing references these.
+    await tx.delete(categoryRejections).where(eq(categoryRejections.ownerId, userId));
+    await tx.delete(entryFieldChangelog).where(eq(entryFieldChangelog.ownerId, userId));
+    await tx.delete(entryTransactions).where(eq(entryTransactions.ownerId, userId));
+    await tx.delete(syncStaging).where(eq(syncStaging.ownerId, userId));
+    await tx.delete(transfers).where(eq(transfers.ownerId, userId));
+
+    // `entries` — now unreferenced by the five above.
+    await tx.delete(entries).where(eq(entries.ownerId, userId));
+
+    // Rules: conditions self-reference by `parent_id`, but a single DELETE
+    // over the whole set is fine — Postgres fires referential-integrity
+    // triggers at end of statement, not per row.
+    await tx.delete(ruleConditions).where(eq(ruleConditions.ownerId, userId));
+    await tx.delete(ruleActions).where(eq(ruleActions.ownerId, userId));
+    await tx.delete(rules).where(eq(rules.ownerId, userId));
+
+    // Accounts and their subtype/history tables.
+    await tx.delete(creditCardDetails).where(eq(creditCardDetails.ownerId, userId));
+    await tx.delete(accountBalanceSnapshots).where(eq(accountBalanceSnapshots.ownerId, userId));
+    await tx.delete(accounts).where(eq(accounts.ownerId, userId));
+
+    // Connections, now unreferenced by accounts and sync runs. This is what
+    // takes the encrypted bank credentials with it.
+    await tx.delete(syncRuns).where(eq(syncRuns.ownerId, userId));
+    await tx.delete(connections).where(eq(connections.ownerId, userId));
+
+    // Classification roots — `categories` also self-references by `parent_id`.
+    await tx.delete(merchants).where(eq(merchants.ownerId, userId));
+    await tx.delete(categories).where(eq(categories.ownerId, userId));
+
+    // Key custody, then the identity row itself.
+    await tx.delete(userUnlockMethods).where(eq(userUnlockMethods.ownerId, userId));
+    await tx.delete(users).where(eq(users.id, userId));
+  });
+
+  // Only after the rows are gone: any still-live session for this user holds
+  // an unwrapped data key in RAM that now decrypts nothing.
+  endAllSessionsForUser(userId);
+
+  return "deleted";
+}
