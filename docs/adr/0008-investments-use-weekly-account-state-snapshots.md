@@ -13,9 +13,10 @@ lots.
 - A per-user canonical instrument may unite broker records only when durable
   identifiers match without type or currency conflict. Tickers and names never
   establish identity; ambiguous records remain separate.
-- `account_balance_snapshots` remains the sole absolute-value and net-worth seam.
-  An investment-specific 1:1 detail row supplies snapshot metadata and owns the
-  position and cash children.
+- `account_balance_snapshots` remains the dated account-observation parent and
+  net-worth domain-service seam. An investment-specific 1:1 detail row supplies
+  snapshot metadata and owns the position and cash children; [ADR 0009](0009-investment-valuation-trusts-broker-observations-and-boi-fx.md)
+  explains why their canonical ILS value is derived rather than persisted.
 - A later accepted observation replaces the active normalized snapshot for the same
   account and week atomically. Repeated source rows for one instrument aggregate
   into one exact signed-decimal position.

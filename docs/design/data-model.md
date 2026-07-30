@@ -15,12 +15,14 @@ them, not migration SQL.
 ---
 
 ## 1. Overview
-Moni's ledger is a **pure flow ledger**: every row in `entries` is a *delta* — money moving (income, an expense, later a trade). **Absolute balances are never stored in the ledger**; they live in a separate `account_balance_snapshots` table. Keeping flows and snapshots physically apart is deliberate — mixing a "this is a −₪120 expense" delta and a "this account is worth ₪43,000 right now" absolute in one summable column is a corruption waiting to happen, and doubly so in an AI-native app where a model may write aggregation queries.
+Moni's ledger is a **pure flow ledger**: every row in `entries` is a *delta* — money moving (income, an expense, later a trade). **Absolute account state is never stored in the ledger**; it lives in the separate `account_balance_snapshots` aggregate and its subtype children. Keeping flows and snapshots physically apart is deliberate — mixing a "this is a −₪120 expense" delta and a "this account is worth ₪43,000 right now" absolute in one summable column is a corruption waiting to happen, and doubly so in an AI-native app where a model may write aggregation queries.
 Five rules cut across every table below; each entity section assumes them rather than repeating them:
 1. **Ownership + isolation.** Every user-owned table has an `owner_id` and is protected by Postgres Row-Level Security, **plus** a composite `(owner_id, id)` foreign-key backstop so cross-tenant linkage is impossible even if RLS is bypassed (§2).
 2. **Encryption split.** Tier-1 sensitive values (amounts, descriptions, counterparties, account numbers, notes, credentials) are stored encrypted as `*_ct` columns; structural columns (ids, owner_id`, currency codes, dates, `category_id`, account type`) stay plaintext so SQL can still filter and group (§2, cross-ref `encryption.md`).
 3. **Rate locked, reporting derived.** The FX *rate* for a flow is locked at its transaction date and stored; the *reporting amount* is **derived on read** (`entered × locked_rate`), not persisted (§4).
-4. **Flow vs. snapshot separation.** `entries` = deltas; `account_balance_snapshots` = absolutes. Never the same column (§1 above, §4).
+4. **Flow vs. snapshot separation.** `entries` = deltas;
+   `account_balance_snapshots` plus subtype children = absolute account state. Never
+   mix the two in one summable column (§1 above, §4).
 5. **Aggregate in the app tier.** You cannot `SUM`/`GROUP BY` ciphertext, so dashboards narrow on plaintext structural columns, decrypt the narrowed set, and aggregate in memory with `decimal.js`. **v1.0 persists no rollups** (§4, §6).
 ---
 ## 2. Conventions (apply to every table unless stated otherwise)
@@ -47,7 +49,7 @@ Where entered = account = reporting currency, both amount legs hold the same val
 `fx_rate` is the provider rate for `entered → reporting` **as of `fx_rate_date` (the transaction date)** — not ingest date, not "now". Stored plaintext because an FX rate is public market data; it is *not* Tier-1. `fx_source` records which provider/fixing it came from.
 
 ### 4.2 Missing rates → pending, never faked
-If no rate exists for the transaction date at ingest, `fx_status = 'pending'` and `fx_rate` is null. The entered/account legs still persist (they are ground truth). A background job backfills the rate later. Aggregations must **surface or exclude** pending entries — never silently treat a missing rate as `1:1` or as today's rate.
+If no rate exists for the transaction date at ingest, `fx_status = 'pending'` and `fx_rate` is null. The entered/account legs still persist (they are ground truth). A later user-triggered operation may fill the rate. Aggregations must **surface or exclude** pending entries — never silently treat a missing rate as `1:1` or as today's rate.
 
 ### 4.3 Reporting amount is derived on read, not stored
 There is **no `reporting_amount_ct`**. The reporting value is computed in the domain layer as `entered_amount × fx_rate`, at the moment of the decrypt pass that reads the entry anyway.
@@ -59,7 +61,11 @@ Why derive rather than store (a deliberate refinement of `money-and-currency.md`
 
 ### 4.4 Stock vs. flow (unchanged rule, restated for the schema)
 - **Flows** (income/expense/category totals over a period) = sum of each entry's `entered × its locked rate`. A period total must never move as rates move.
-- **Stocks** ("net worth now", "balance as of a date") come from `account_balance_snapshots`, each account's native balance valued at *today's* (or the as-of-date's) latest rate. Stocks *should* move with the market — that is correct valuation, not drift.
+- **Stocks** ("net worth now", "balance as of a date") come through the
+  `account_balance_snapshots` aggregate. Ordinary accounts value the stored native
+  balance at *today's* (or the as-of-date's) latest rate; investment accounts derive
+  value from their position/cash children and the applicable shared FX observations.
+  Stocks *should* move with the market — that is correct valuation, not drift.
 
 ---
 
@@ -82,14 +88,16 @@ Why derive rather than store (a deliberate refinement of `money-and-currency.md`
   - A reconciler matches `pending` staging rows to their later `completed` form here, then promotes to `entries` through the domain layer.
 
 ### Accounts
-- **`accounts`** — `owner_id`, `account_type` (`checking` | `savings` | `credit_card` | `investment` | `loan` | `other_asset` | `other_liability`; the enum is meant to grow), `classification` (`asset`/`liability`, derivable from type), `connection_id` (nullable — manual accounts are allowed), `name_ct`, `institution` (plaintext label), `account_number_last4_ct`, `currency` (plaintext), `current_balance_ct` (latest known native balance, cached from the most recent snapshot for cheap reads), `status` (`active`/`archived`), `locked_attributes`, `version`.
+- **`accounts`** — `owner_id`, `account_type` (`checking` | `savings` | `credit_card` | `investment` | `loan` | `other_asset` | `other_liability`; the enum is meant to grow), `classification` (`asset`/`liability`, derivable from type), `connection_id` (nullable — manual accounts are allowed), `name_ct`, `institution` (plaintext label), `account_number_last4_ct`, `currency` (plaintext), `current_balance_ct` (latest known native balance cached for non-investment accounts; null for investments whose current value is derived), `status` (`active`/`archived`), `locked_attributes`, `version`.
 - **`credit_card_details`** — `account_id` (PK = FK to `accounts`, composite with `owner_id`), `statement_close_day`, `payment_due_day`, `credit_limit_ct`. The only account-subtype extension table in v1.0. The same base-row-plus-`*_details` pattern is documented for future `loan_details` and `investment_details`; investment/savings accounts in v1.0 need no extra columns — they are a base `accounts` row whose balance is tracked via snapshots.
 
 ### The unified ledger (flows only)
 - **`entries`** (base) — `owner_id`, `account_id` (composite FK), `entry_type` (`transaction` in v1.0; `trade` reserved), `date` (plaintext, structural), `description_ct`, `notes_ct`, `category_id` (nullable FK), `merchant_id` (nullable FK), `status` (`posted`/`pending`), `excluded` (bool — kept out of totals, e.g. one leg of an internal transfer), the **currency legs** and **FX columns** from §4 (`entered_*`, `account_*`, `reporting_currency`, `fx_rate`, `fx_rate_date`, `fx_source`, `fx_status` — **no `reporting_amount_ct`**), `import_key` (mirrored from staging) + provider `external_id`, `source` (`scrape`/`manual`/`rule`/`model`), `locked_attributes`, `version`. Indexes: `(owner_id, account_id, date)`, `(owner_id, category_id, date)`.
 - **`entry_transactions`** — 1:1 subtype, `entry_id` (PK = FK, composite with `owner_id`). `kind` (`standard`/`transfer`/`fee`/`refund`) and installment metadata, denormalized per slice: `installment_number`, `total_installments`, `installment_total_amount_ct`, `installment_purchase_date`, plus a nullable `installment_group_id` correlation key that a background job fills once it confidently stitches a purchase's slices. (Denormalized because the Israeli scrapers emit each installment as an independent charge with no stable group id, and the metadata is an immutable, attribute-locked bank fact re-reported on every slice — so drift risk is low. See §6, tension 5.)
 
-> **No `entry_valuations`.** Asserted/scraped *absolute* balances live only in `account_balance_snapshots` (below). The ledger stays deltas-only.
+> **No `entry_valuations`.** Absolute account observations are rooted only in
+> `account_balance_snapshots` (below), with subtype children where required. The
+> ledger stays deltas-only.
 
 ### Classification, enrichment & automation
 - **`categories`** — `owner_id`, `name` (plaintext — an ordinary Tier-2 label like "Groceries"; not encrypted), `parent_id` (self-reference, **one nesting level**), `classification` (`income`/`expense`/`transfer`), `color`, `icon`.
@@ -102,7 +110,17 @@ Why derive rather than store (a deliberate refinement of `money-and-currency.md`
 - **`transfers`** — `owner_id`, `inflow_entry_id`, `outflow_entry_id`, `status`. Pairs the two legs of an internal move (between the user's own accounts) so it is not counted as income or expense; paired legs also carry `excluded = true`.
 
 ### Dashboard / graph helpers
-- **`account_balance_snapshots`** — the **sole home for absolute balances** (the stock series). `owner_id`, `account_id` (composite FK), `date`, `native_balance_ct`, `currency`, and `source`. For an investment account, the amount is Moni's account valuation in its explicit valuation currency and a 1:1 `investment_snapshot_details` row supplies the richer observation state below. Net-worth-over-time reads this same seam for every account type.
+- **`account_balance_snapshots`** — the single dated account-observation parent and
+  net-worth domain-service seam (the stock series). `owner_id`, `account_id`
+  (composite FK), `date`, nullable `native_balance_ct`, nullable `currency`, and
+  `source`. Ordinary account snapshots require the native balance and currency. An
+  investment snapshot leaves both null because its canonical ILS value is derived
+  from its encrypted position/cash children and shared FX; persisting that rollup
+  would require ciphertext rewrites whenever current FX or an official historical
+  correction changes. A 1:1 `investment_snapshot_details` row supplies the subtype
+  and richer observation state below. Every account type still enters net worth
+  through the same domain service and dated parent rather than a second dashboard
+  query path.
 - **No `period_rollups` in v1.0.** Flow totals are computed on-the-fly: filter on plaintext structural columns → decrypt the narrowed set → aggregate with `decimal.js`. At family scale (~10⁴–10⁵ rows lifetime) this is milliseconds. A persisted rollup cache — maintained by a *single serialized worker off the ingest path*, never an inline read-modify-write — is documented as the scale-up path, added only if measured slow (see §6, tension 1).
 
 ### Investments (Moni 1.1)
@@ -126,15 +144,19 @@ Investment state is snapshot-based, not an activity or lot ledger. [ADR
   `account_balance_snapshots` row for an investment account. It carries the account
   and Sunday-based `week_start` needed for one-active-snapshot-per-account-per-week
   uniqueness, the exact source as-of date/time and its precision, optional
-  `source_value_ct`/currency, valuation basis, freshness/completeness, source
-  connection/sync provenance, and version/timestamps. A later accepted observation
-  for the same source week atomically replaces the normalized snapshot; corrections
-  may replace a closed week too.
+  `source_value_ct`/currency, valuation basis, freshness/completeness and
+  reconciliation quality, source connection/sync provenance, and version/timestamps.
+  The broker account total remains separate evidence; the domain service derives
+  Moni's exact ILS sum from the position/cash children and shared FX. A later
+  accepted observation for the same source week atomically replaces the normalized
+  snapshot; corrections may replace a closed week too.
 - **`investment_snapshot_positions`** — one row per snapshot and canonical
   instrument after source rows are aggregated. `owner_id`, snapshot/instrument
   composite FKs, signed `quantity_ct`, explicit quantity unit, optional exact
   source price/value ciphertext and currencies, and source valuation as-of
-  metadata. A position is state, not a trade or lot.
+  metadata. A position uses the broker market value when present and otherwise
+  derives its value from exact quantity × broker price. A position is state, not a
+  trade or lot.
 - **`investment_snapshot_cash_balances`** — one signed exact `amount_ct` per
   snapshot and currency. Cash is displayed beside positions but is not represented
   as a synthetic instrument.
@@ -164,13 +186,26 @@ prior observation only in the read result and must mark the portfolio point
 mixed-age/stale; no synthetic snapshot or persisted portfolio rollup is written.
 Generic instruments contribute through clearly labeled broker source values and get
 no specialized analytics. A missing required identity, quantity, currency, as-of
-time, cash amount, or usable valuation input rejects the complete refresh.
+time, cash amount, or usable valuation input rejects the complete refresh. A broker
+account total cannot rescue a nonzero position that has neither a source market
+value nor a usable source price.
+
+Every source valuation keeps its real as-of time and precision. A position-specific
+valuation time wins; otherwise the position inherits the account source time, never
+the ingestion time. Any included component older than seven calendar days marks the
+account and consolidated current value stale without removing it from totals. A
+broker account total that differs from Moni's component sum after both are rounded
+to ILS display precision adds a non-blocking reconciliation-mismatch quality state.
 
 Historical reporting-currency conversion batch-reads the shared local `fx_rates`
 cache for each snapshot's actual date. Missing rates are fetched and cached during a
-user-triggered refresh; 1.1 has no scheduler, and snapshot rows do not duplicate or
-lock an FX rate. Current pricing and market/FX authority are decided by the provider
-policy tracked separately from this storage model.
+user-triggered refresh; reads make no external request, 1.1 has no scheduler, and
+snapshot rows do not duplicate or lock an FX rate. Current investment values use the
+newest accepted local BOI observation, while weekly values use the latest observation
+on or before the snapshot date. A BOI observation is unusable after seven calendar
+days; an unavailable required rate rejects the new connection refresh atomically.
+An official correction replaces the shared observation and may correct derived
+history.
 
 Disconnecting a connection preserves its accounts and snapshots. Closing or moving
 assets out of an account archives it only through explicit user action, excluding
@@ -178,7 +213,13 @@ it from current portfolio reads while preserving history. Permanent deletion is 
 separate destructive operation.
 
 ### Global reference (no owner, no user-RLS)
-- **`fx_rates`** — `from_currency`, `to_currency`, `date`, `rate` (plaintext `NUMERIC` — public data), `source`. Unique `(from_currency, to_currency, date, source)`. Missing rows are fetched on demand during user-triggered operations and shared across users. Cross-ref `money-and-currency.md` §4.
+- **`fx_rates`** — `from_currency`, `to_currency`, observation `date`, normalized
+  per-unit `rate` (plaintext `NUMERIC` — public data), source unit/provenance, and
+  fetch/update timestamps. Unique `(from_currency, to_currency, date, source)`.
+  Investment 1.1 stores BOI-published foreign→ILS observations, normalized from the
+  exact CSV decimal and `UNIT_MULT`; official corrections update the shared row.
+  Missing rows are fetched only during user-triggered operations and are shared
+  across users. Cross-ref `money-and-currency.md` §4.
 
 ### Designed but NOT built in Moni 1.1 (documented extension points)
 Column lists are given in this doc as the forward plan; no Moni 1.1 migration ships

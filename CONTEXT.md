@@ -126,9 +126,16 @@ time. It is retained as evidence and does not overwrite Moni's valuation.
 _Avoid_: Canonical value, calculated value.
 
 **Valuation**:
-The calculated monetary value of a position, account, or portfolio at a stated time,
-with explicit price, FX, freshness, and completeness inputs.
+The exact monetary value of a position from its broker observation, or of an account
+or portfolio from its valued positions and cash. It carries explicit as-of,
+currency, freshness, completeness, and valuation-basis context.
 _Avoid_: Source value, balance, performance.
+
+**Reconciliation mismatch**:
+A quality state where a broker's account source value and Moni's summed account
+valuation differ after both are rounded for ILS display. It does not replace or
+invalidate Moni's valuation.
+_Avoid_: Balance error, rejected snapshot.
 
 **Portfolio**:
 The consolidated calculated view of a user's investment accounts. A portfolio is
