@@ -1,0 +1,222 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { ChevronDown, ChevronRight } from "lucide-react";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Money } from "@/components/money";
+import { MerchantIcon } from "@/components/merchant-icon";
+import { RecurringPaymentsChart } from "@/components/recurring-payments-chart";
+import {
+  PAYMENT_WINDOWS,
+  RANGE_LABELS,
+  RECURRING_RANGES,
+  type PaymentWindow,
+  type RecurringRange,
+} from "@/lib/recurring/range";
+import { CADENCE_LABELS, SETTABLE_CADENCES } from "@/lib/recurring/cadence";
+import { cn } from "@/lib/utils";
+import type { RecurringGroup, RecurringRow } from "@/domain/recurring";
+
+interface Props {
+  income: RecurringGroup[];
+  expenses: RecurringGroup[];
+  range: RecurringRange;
+}
+
+export function RecurringList({ income, expenses, range }: Props) {
+  const router = useRouter();
+
+  function setRange(next: RecurringRange) {
+    // In the URL, not component state: the range survives a reload and the
+    // view stays deep-linkable, like the other route-based tabs.
+    const params = new URLSearchParams(window.location.search);
+    params.set("range", next);
+    router.push(`/transactions/recurring?${params.toString()}`);
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          {"Category totals cover the selected period. Each payment's own figures cover all time."}
+        </p>
+        <div className="flex gap-1">
+          {RECURRING_RANGES.map((key) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setRange(key)}
+              className={cn(
+                "rounded-[var(--radius)] border px-2.5 py-1 text-xs transition focus:outline-none focus:ring-2 focus:ring-ring",
+                key === range
+                  ? "border-primary/60 bg-primary/10 text-foreground"
+                  : "border-border bg-card text-muted-foreground hover:border-primary/50 hover:bg-muted",
+              )}
+            >
+              {RANGE_LABELS[key]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Income and expenses never share a total: "recurring income minus
+          recurring payments" is not a number anyone wants. */}
+      <Section title="Recurring payments" groups={expenses} tone="negative" />
+      <Section title="Recurring income" groups={income} tone="positive" />
+
+      {income.length === 0 && expenses.length === 0 && (
+        <Card className="px-5 pb-5 pt-6">
+          <p className="text-sm text-muted-foreground">
+            {
+              "Nothing here yet. Flag a category as recurring on the Categories tab — the repeat icon beside its name — and its payees show up here."
+            }
+          </p>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function Section({
+  title,
+  groups,
+  tone,
+}: {
+  title: string;
+  groups: RecurringGroup[];
+  tone: "positive" | "negative";
+}) {
+  if (groups.length === 0) return null;
+
+  return (
+    <section className="flex flex-col gap-3">
+      <h2 className="text-sm font-medium text-muted-foreground">{title}</h2>
+      {groups.map((group) => (
+        <Card key={group.categoryId} className="flex flex-col gap-3 px-5 pb-4 pt-6">
+          <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border pb-3">
+            <bdi className="font-medium text-foreground">{group.categoryName}</bdi>
+            <Money
+              value={group.total}
+              className={cn("text-sm", tone === "positive" ? "text-positive" : "text-negative")}
+            />
+          </div>
+          <div className="flex flex-col divide-y divide-border">
+            {group.rows.map((row) => (
+              <Row key={row.id} row={row} tone={tone} />
+            ))}
+          </div>
+        </Card>
+      ))}
+    </section>
+  );
+}
+
+function Row({ row, tone }: { row: RecurringRow; tone: "positive" | "negative" }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  // Not named `window` — that shadows the global one line away from a
+  // `window.location` read in this same file.
+  const [paymentWindow, setPaymentWindow] = useState<PaymentWindow>(6);
+  const [savingCadence, setSavingCadence] = useState(false);
+
+  const shown = paymentWindow === "all" ? row.payments : row.payments.slice(-paymentWindow);
+  const Chevron = open ? ChevronDown : ChevronRight;
+
+  async function setCadence(value: string) {
+    setSavingCadence(true);
+    await fetch("/api/merchants/cadence", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ matchText: row.matchText, cadence: value === "" ? null : value }),
+    });
+    setSavingCadence(false);
+    router.refresh();
+  }
+
+  return (
+    <div className="py-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-3 rounded-[var(--radius)] px-1 py-1 text-left transition hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring"
+      >
+        <Chevron className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <MerchantIcon name={row.merchantName} logoUrl={row.logoUrl} brandColor={row.brandColor} />
+        <div className="min-w-0 flex-1">
+          <span className="block truncate text-sm text-foreground">
+            <bdi>{row.merchantName}</bdi>
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {`${row.paymentCount} payment${row.paymentCount === 1 ? "" : "s"} ${row.firstSeenLabel}`}
+          </span>
+        </div>
+        <Badge>{CADENCE_LABELS[row.cadence]}</Badge>
+        {/* Fixed slot: without it a longer cadence badge shifts this row's
+            figures and the amounts stop lining up between rows. */}
+        <div className="flex w-32 shrink-0 flex-col items-end">
+          <Money
+            value={row.latest}
+            className={cn("text-sm", tone === "positive" ? "text-positive" : "text-negative")}
+          />
+          <span className="text-xs text-muted-foreground">
+            {"avg "}
+            <Money value={row.averageOfLast3} />
+          </span>
+        </div>
+      </button>
+
+      {open && (
+        <div className="mt-2 flex flex-col gap-2 rounded-[var(--radius)] bg-muted/40 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              {row.cadenceIsOverride ? "Cadence (set by you)" : "Cadence (read from the dates)"}
+              <select
+                value={row.cadenceIsOverride ? row.cadence : ""}
+                disabled={savingCadence}
+                onChange={(e) => setCadence(e.target.value)}
+                className="rounded-[var(--radius)] border border-input bg-card px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+              >
+                <option value="">{"Read from the dates"}</option>
+                {SETTABLE_CADENCES.map((c) => (
+                  <option key={c} value={c}>
+                    {CADENCE_LABELS[c]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {/* Counted in payments, not months: a yearly renewal shows years
+                and a monthly one shows months, so no graph is ever empty. */}
+            <div className="flex gap-1">
+              {[...PAYMENT_WINDOWS, "all" as const].map((w) => (
+                <button
+                  key={String(w)}
+                  type="button"
+                  onClick={() => setPaymentWindow(w)}
+                  className={cn(
+                    "rounded-[var(--radius)] border px-2 py-0.5 text-[11px] transition focus:outline-none focus:ring-2 focus:ring-ring",
+                    w === paymentWindow
+                      ? "border-primary/60 bg-primary/10 text-foreground"
+                      : "border-border text-muted-foreground hover:bg-muted",
+                  )}
+                >
+                  {w === "all" ? "All" : `Last ${w}`}
+                </button>
+              ))}
+            </div>
+          </div>
+          <RecurringPaymentsChart
+            payments={shown.map((p) => ({
+              dateLabel: p.dateLabel,
+              amount: p.amount.amount,
+              currency: p.amount.currency,
+            }))}
+            color={tone === "positive" ? "var(--color-positive)" : "var(--color-chart-3)"}
+          />
+        </div>
+      )}
+    </div>
+  );
+}

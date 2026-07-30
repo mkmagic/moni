@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Receipt, Filter, Tags } from "lucide-react";
+import { Receipt, Filter, Tags, Repeat } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const TABS = [
   { href: "/transactions", label: "Transactions", icon: Receipt },
+  { href: "/transactions/recurring", label: "Recurring", icon: Repeat },
   { href: "/transactions/categories", label: "Categories", icon: Tags },
   { href: "/transactions/rules", label: "Rules", icon: Filter },
 ] as const;

@@ -42,6 +42,39 @@ new feedback lands.
 
 ## Feedback log (newest first — append, don't overwrite)
 
+### 2026-07-29 (later) — the recurring tab (issue #15): icon toggles over Switches, and a disable comment that disabled nothing
+
+- **A per-row boolean is an icon toggle, not a `Switch`.** The recurring flag needed a control on every
+  category *and* every subcategory — the shipped set puts Salary under Income, so a group-level flag
+  would drag refunds and dividends in with it. `Switch` is amber "on", and a two-column grid of ~20
+  groups would have put dozens of amber tracks in one view. A `Repeat` icon that goes `text-primary`
+  when set is the same signal at a fraction of the weight, matching the category picker's
+  `text-primary` check. **The per-view accent rule scales with row count — check how many instances a
+  control will have before reaching for an amber primitive.**
+- **`// eslint-disable-next-line` with a wrapped description disables nothing.** The waiver for
+  `@next/next/no-img-element` in `merchant-icon.tsx` had its justification spilling onto a second
+  comment line, so "next line" pointed at the comment rather than the `<img>`. Lint still reported the
+  warning and it read as a phantom. Put the reason on the lines *above* and the bare disable directive
+  immediately before the element.
+- **Don't name a state variable `window`.** `const [window, setWindow]` in a row component sat a few
+  lines from a `window.location.search` read in the same file. Renamed to `paymentWindow`.
+- **A raw domain string is not a rendered money value.** The average rendered as `avg 51` because the
+  JSX interpolated `row.averageOfLast3.amount` directly instead of passing the `Money` value to
+  `<Money>`. The domain layer hands over exact decimal strings precisely so the edge formats them —
+  interpolating one into JSX silently skips the currency symbol and grouping.
+- **Verification fell back to curl.** The Chrome extension wasn't connected this session, so the visual
+  pass didn't happen. `curl` with a cookie jar from `POST /api/auth/login` still catches the class of
+  bug the gates miss — it renders the page server-side, so a client component importing a runtime value
+  from `@/domain/**` would 500 exactly as it would in the browser. It does **not** catch layout, bidi
+  or hover problems. `/transactions/recurring` and both new endpoints were exercised this way;
+  **the tab has never been looked at.**
+- **Fixture notes, again the same two.** `seed-demo.ts` still creates no `connections` rows, so
+  `requireOnboarded()` bounces `/transactions/*` → `/onboarding`; one throwaway row fixes it, and
+  `connections` has **no `label` column** — it is `display_name`. Also `npm run db:migrate` printed a
+  spinner and appeared to finish while having applied nothing; the seed then failed on the missing
+  column. Re-running it applied cleanly. **Check a migration landed by querying for the column, not by
+  reading the spinner.**
+
 ### 2026-07-29 — the transactions table (issue #14): sticky headers, and a client import that shipped Postgres
 
 - **A runtime value imported from `@/domain/**` into a `"use client"` component pulls `pg` into the

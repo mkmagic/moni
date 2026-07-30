@@ -2,13 +2,14 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Pencil, Trash2, Search } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, Repeat } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { CategoryIconTile } from "@/components/category-icon";
 import { CategoryForm } from "@/components/category-form";
+import { cn } from "@/lib/utils";
 import type { CategoryDetailView, CategoryGroupView } from "@/domain/categorization";
 
 interface CategoriesManagerProps {
@@ -97,6 +98,7 @@ export function CategoriesManager({ groups }: CategoriesManagerProps) {
                       beside it (.claude/skills/ui-developer). */}
                   <bdi className="font-medium text-foreground">{group.name}</bdi>
                   <Badge>{group.classification}</Badge>
+                  <RecurringToggle category={group} inheritedFrom={null} />
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {`${group.totalChildren} subcategor${group.totalChildren === 1 ? "y" : "ies"}`}
@@ -135,6 +137,14 @@ export function CategoriesManager({ groups }: CategoriesManagerProps) {
                   <span className="min-w-0 flex-1 truncate text-sm text-foreground">
                     <bdi>{child.name}</bdi>
                   </span>
+                  {/* Salary is a *child* of Income in the shipped set, so the
+                      flag has to be reachable per subcategory — flagging the
+                      whole Income group would drag refunds and dividends into
+                      the recurring view with it. */}
+                  <RecurringToggle
+                    category={child}
+                    inheritedFrom={group.isRecurring ? group.name : null}
+                  />
                   <span className="tabular-nums text-xs text-muted-foreground">
                     {child.entryCount}
                   </span>
@@ -217,6 +227,65 @@ export function CategoriesManager({ groups }: CategoriesManagerProps) {
         </Dialog>
       )}
     </div>
+  );
+}
+
+/**
+ * The recurring flag, as an icon toggle rather than a Switch.
+ *
+ * A Switch is amber "on", and this list renders one control per category
+ * across a two-column grid — dozens of amber tracks in one view, which is
+ * exactly the overload the per-view accent rule exists to stop. An icon that
+ * goes `text-primary` when set is the same signal at one-tenth the weight,
+ * matching the category picker's `text-primary` check.
+ */
+function RecurringToggle({
+  category,
+  inheritedFrom,
+}: {
+  category: CategoryDetailView;
+  /** Name of the parent whose flag already covers this one, if any. */
+  inheritedFrom: string | null;
+}) {
+  const router = useRouter();
+  const [pending, setPending] = useState(false);
+  const covered = inheritedFrom !== null;
+  const on = category.isRecurring || covered;
+
+  async function toggle() {
+    setPending(true);
+    await fetch(`/api/categories/${category.id}/recurring`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isRecurring: !category.isRecurring }),
+    });
+    setPending(false);
+    router.refresh();
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      disabled={pending || covered}
+      aria-pressed={on}
+      title={
+        covered
+          ? `Already recurring — ${inheritedFrom} is flagged, and a parent covers its subcategories`
+          : on
+            ? "Recurring — shown in the Recurring tab. Click to unflag."
+            : "Flag as recurring to show this category in the Recurring tab"
+      }
+      aria-label={`${on ? "Unflag" : "Flag"} ${category.name} as recurring`}
+      className={cn(
+        "shrink-0 rounded-[var(--radius)] p-1 transition focus:outline-none focus:ring-2 focus:ring-ring disabled:pointer-events-none",
+        on ? "text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+        covered && "opacity-50",
+        pending && "opacity-50",
+      )}
+    >
+      <Repeat className="h-3.5 w-3.5" />
+    </button>
   );
 }
 
