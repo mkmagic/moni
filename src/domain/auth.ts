@@ -45,6 +45,32 @@ import { clearPendingCeremony } from "@/lib/auth/webauthn-challenge";
 export const SESSION_COOKIE = "moni_session";
 
 /**
+ * The attributes EVERY write of the session cookie must use.
+ *
+ * This is a correctness requirement, not tidiness. Clearing a cookie only
+ * works when the attributes match the ones it was set with — otherwise the
+ * browser treats the clear as a different cookie and the original survives,
+ * silently, with no error and nothing for a test to catch. Four routes write
+ * this cookie (signup and login set it; logout and account deletion clear
+ * it), so the attributes were copied four times and any one of them could
+ * drift and break logout at the other three.
+ *
+ * `maxAge` is deliberately NOT here: it is the one attribute that legitimately
+ * differs between setting (`SESSION_TTL_SECONDS`) and clearing (`0`), and the
+ * browser does not compare it when matching a cookie to overwrite.
+ *
+ * Exported as a plain object rather than a `setSessionCookie(res)` helper on
+ * purpose — a helper would need `NextResponse`, and an HTTP response type has
+ * no business in the domain layer.
+ */
+export const SESSION_COOKIE_ATTRS = {
+  httpOnly: true,
+  sameSite: "lax",
+  secure: true, // Moni is HTTPS-only (src/proxy.ts); never conditional on the build mode.
+  path: "/",
+} as const;
+
+/**
  * How stale the previous login must be before an `autoSyncOnLogin` user is
  * offered a sync. Matches the 8h session TTL, so in practice the offer
  * appears when you come back to a session that had fully expired.

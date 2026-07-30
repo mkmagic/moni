@@ -31,6 +31,14 @@ export interface Session {
 /** Bounded unlock window: one login lasts at most this long. */
 const TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
 
+/**
+ * The same window in seconds, for the session cookie's `maxAge`. Derived
+ * rather than written out again at the routes, so the cookie can never
+ * outlive the RAM session it points at — a longer cookie just means the
+ * browser keeps presenting an id this store has already dropped.
+ */
+export const SESSION_TTL_SECONDS = TTL_MS / 1000;
+
 // Survive Next.js dev HMR (module re-evaluation) so an edit doesn't strand
 // live sessions with un-wiped keys. Single Map per server process.
 const globalStore = globalThis as unknown as { __moniSessions?: Map<string, Session> };
