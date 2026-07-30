@@ -156,6 +156,30 @@ describe("session cookie attributes agree across every route that writes them", 
     expect(maxAgeOf(deleted)).toBe(0);
   });
 
+  it("the session lifetime has exactly one origin in the source", async () => {
+    // The cookie's maxAge, the RAM store's expiry and the sync-reminder gap
+    // all have to agree, and they used to agree only by three copies of
+    // `8 * 60 * 60 [* 1000]` plus comments claiming they matched. Grep the
+    // source rather than the values: identical numbers would pass a value
+    // comparison while still being three independent literals, which is the
+    // thing being prevented.
+    const { readFile } = await import("node:fs/promises");
+    const files = ["src/lib/auth/session-store.ts", "src/domain/auth.ts"];
+    const hits: string[] = [];
+    for (const f of files) {
+      const src = await readFile(new URL(`../../${f}`, import.meta.url), "utf8");
+      for (const line of src.split("\n")) {
+        const code = line.trim();
+        // Skip comment lines — prose is allowed to mention the number.
+        if (code.startsWith("*") || code.startsWith("//") || code.startsWith("/*")) continue;
+        if (/\b8 \* 60 \* 60\b/.test(code)) hits.push(`${f}: ${code}`);
+      }
+    }
+    expect(hits, "the 8h literal should appear exactly once, in session-store").toHaveLength(1);
+    expect(hits[0]).toContain("session-store.ts");
+    expect(hits[0]).toContain("SESSION_TTL_MS");
+  });
+
   it("logout still ends the session it was handed", async () => {
     // Guards the `next/headers` -> `NextRequest` swap in the logout route:
     // it must still read the id it is clearing, not just blank the cookie.
