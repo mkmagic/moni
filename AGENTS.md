@@ -74,7 +74,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 `npm run typecheck && npm run lint && npm run format:check && npm run test` — all four, before reporting work done.
 - **`lint` is `eslint .`, never `next lint`.** 
 - Read the gate's *exit code*, not just its last line. A tool that never ran is not a tool that passed.
-- `format:check` has **no** known-acceptable failures — any failure is real. (`tsconfig.json`, which `next dev` *and* `next build` both rewrite, is prettier-ignored now, as is `graphify-out/`.)
+- `format:check` has **no** known-acceptable failures — any failure is real. (`tsconfig.json`, which `next dev` *and* `next build` both rewrite, is prettier-ignored now.)
 - The same four gates run in CI (`.github/workflows/ci.yml`), plus `npm run build`. `npm test` needs a live Postgres for *every* test, `tests/unit/**` included — `vitest.setup.ts` bootstraps `moni_test` unconditionally.
 ### 6\. Keep the skills honest
 Skills are the project's memory. **If a skill turns out to be out-of-date or misleading more than once in a session, don't just work around it — tell the owner exactly what you'd change and cite the evidence from this session that proved it wrong.** A skill that quietly misleads costs every future session, and you are the only one positioned to notice.
@@ -82,17 +82,6 @@ Skills are the project's memory. **If a skill turns out to be out-of-date or mis
 ----
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
-
-## Repository Tools
-## graphify
-This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
-Rules:
-- **For broad exploration** — "where does X live", "what calls Y", "how do these relate" — prefer `graphify query "<question>"` over grep when graphify-out/graph.json exists. Also `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- **Not for targeted reads.** When you already know the file just open it. 
-- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
-- Read graphify-out/GRAPH_REPORT.md only for broad architecture review.
-- After modifying **code** (`src/**`, `scripts/**`, `tests/**`, config files), run `graphify update .` to keep the graph current — AST-only, no LLM, no token cost.
-- After modifying **only docs** (`*.md`, `docs/**`, `vision.md`, `.agents/skills/**`), do **not** run `graphify update .` unprompted. Doc changes trigger semantic re-extraction, which dispatches LLM subagents and costs real tokens (~240k for this corpus). Ask the owner first.
 
 ## Agent skills
 

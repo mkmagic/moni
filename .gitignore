@@ -43,8 +43,6 @@ repos_eval/
 # Scraper sandbox (skill playground — israeli-scraper SKILL.md)
 deps/node_modules/
 
-# Generated knowledge graph — rebuilt by `graphify update .`, not source
-graphify-out/
 
 # Claude Code machine-local settings (absolute paths, per-developer hooks)
 .claude/settings.local.json
