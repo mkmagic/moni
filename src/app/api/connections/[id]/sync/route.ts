@@ -17,6 +17,7 @@ import { computeSyncStartDate, markSyncRunFailed, startSyncRun } from "@/domain/
 import { getCredentialKey } from "@/lib/auth/cred-window";
 import { BACKFILL_MAX_MONTHS, isBackfillStartAllowed, todayIso } from "@/lib/backfill-window";
 import { encodeChildStdinFrame, isConnectorId, type ChildStdinPayload } from "@/lib/connectors";
+import { redactSecrets } from "@/lib/redact-secrets";
 
 const ParamsSchema = z.object({ id: z.uuid() });
 
@@ -151,15 +152,6 @@ function spawnScrapeWorker(
   const workerPath = path.join(process.cwd(), "scripts", "scrape-worker.mts");
   const child = spawn(tsxBin, [workerPath], { stdio: ["pipe", "ignore", "pipe"] });
 
-  // Exactly the values we just handed the child, longest first so a value
-  // that contains a shorter one is replaced whole. These are the same
-  // unwipeable JS strings already in `payload` (the documented scraper-API
-  // residual, threat-model §5.5) — holding them for the child's bounded
-  // lifetime adds no exposure the payload didn't already have.
-  const secrets = Object.values(payload.credentials)
-    .filter((v) => v.length > 0)
-    .sort((a, b) => b.length - a.length);
-
   let stderr = "";
   child.stderr?.on("data", (chunk: Buffer) => {
     if (stderr.length >= MAX_STDERR_CHARS) return;
@@ -171,8 +163,7 @@ function spawnScrapeWorker(
     const captured = stderr;
     stderr = "";
     if (!captured.trim()) return;
-    let safe = captured;
-    for (const secret of secrets) safe = safe.split(secret).join("[redacted]");
+    const safe = redactSecrets(captured, Object.values(payload.credentials));
     console.error(`scrape-worker[${syncRunId}] stderr:\n${safe}`);
   };
 
