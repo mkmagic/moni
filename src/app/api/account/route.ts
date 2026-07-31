@@ -10,7 +10,7 @@
 // by a future second caller.
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getSessionFromRequest, SESSION_COOKIE } from "@/domain/auth";
+import { getSessionFromRequest, SESSION_COOKIE, SESSION_COOKIE_ATTRS } from "@/domain/auth";
 import { deleteAccount } from "@/domain/account-deletion";
 
 // Zod at the trust boundary (docs/design/conventions.md — Validation).
@@ -48,12 +48,6 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
   // the cookie too, with the same attributes it was set with — otherwise the
   // browser keeps a cookie pointing at a session that no longer exists.
   const res = NextResponse.json({ ok: true });
-  res.cookies.set(SESSION_COOKIE, "", {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: true,
-    path: "/",
-    maxAge: 0,
-  });
+  res.cookies.set(SESSION_COOKIE, "", { ...SESSION_COOKIE_ATTRS, maxAge: 0 });
   return res;
 }

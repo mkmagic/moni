@@ -37,6 +37,7 @@ import {
   destroySession,
   getSession,
   sessionIdsForUser,
+  SESSION_TTL_MS,
   type Session,
 } from "@/lib/auth/session-store";
 import { destroyCredentialWindow } from "@/lib/auth/cred-window";
@@ -45,11 +46,41 @@ import { clearPendingCeremony } from "@/lib/auth/webauthn-challenge";
 export const SESSION_COOKIE = "moni_session";
 
 /**
- * How stale the previous login must be before an `autoSyncOnLogin` user is
- * offered a sync. Matches the 8h session TTL, so in practice the offer
- * appears when you come back to a session that had fully expired.
+ * The attributes EVERY write of the session cookie must use.
+ *
+ * This is a correctness requirement, not tidiness. Clearing a cookie only
+ * works when the attributes match the ones it was set with — otherwise the
+ * browser treats the clear as a different cookie and the original survives,
+ * silently, with no error and nothing for a test to catch. Four routes write
+ * this cookie (signup and login set it; logout and account deletion clear
+ * it), so the attributes were copied four times and any one of them could
+ * drift and break logout at the other three.
+ *
+ * `maxAge` is deliberately NOT here: it is the one attribute that legitimately
+ * differs between setting (`SESSION_TTL_SECONDS`) and clearing (`0`), and the
+ * browser does not compare it when matching a cookie to overwrite.
+ *
+ * Exported as a plain object rather than a `setSessionCookie(res)` helper on
+ * purpose — a helper would need `NextResponse`, and an HTTP response type has
+ * no business in the domain layer.
  */
-const SYNC_PROMPT_GAP_MS = 8 * 60 * 60 * 1000;
+export const SESSION_COOKIE_ATTRS = {
+  httpOnly: true,
+  sameSite: "lax",
+  secure: true, // Moni is HTTPS-only (src/proxy.ts); never conditional on the build mode.
+  path: "/",
+} as const;
+
+/**
+ * How stale the previous login must be before an `autoSyncOnLogin` user is
+ * offered a sync. Defined AS one session lifetime — the offer should appear
+ * when you come back to a session that had fully expired, so it derives from
+ * the store's TTL instead of restating it. This used to be its own
+ * `8 * 60 * 60 * 1000` with a comment claiming it matched; a comment is not
+ * an enforcement, and shortening the session TTL would have started showing
+ * the prompt to people whose session was still alive.
+ */
+const SYNC_PROMPT_GAP_MS = SESSION_TTL_MS;
 
 /** Shape of `user_unlock_methods.unlock_ref` for the password-argon2id method. */
 interface PasswordUnlockRef {

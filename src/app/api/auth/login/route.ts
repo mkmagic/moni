@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { authenticate, SESSION_COOKIE } from "@/domain/auth";
+import { authenticate, SESSION_COOKIE, SESSION_COOKIE_ATTRS } from "@/domain/auth";
+import { SESSION_TTL_SECONDS } from "@/lib/auth/session-store";
 
 // Zod at the trust boundary (docs/design/conventions.md — Validation).
 const LoginSchema = z.object({
@@ -27,11 +28,8 @@ export async function POST(req: Request): Promise<NextResponse> {
     }
     const res = NextResponse.json({ ok: true });
     res.cookies.set(SESSION_COOKIE, sessionId, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: true, // Moni is HTTPS-only (src/proxy.ts); never conditional on the build mode.
-      path: "/",
-      maxAge: 8 * 60 * 60,
+      ...SESSION_COOKIE_ATTRS,
+      maxAge: SESSION_TTL_SECONDS,
     });
     return res;
   } finally {
