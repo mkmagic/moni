@@ -160,12 +160,19 @@ Investment state is snapshot-based, not an activity or lot ledger. [ADR
 - **`investment_snapshot_cash_balances`** — one signed exact `amount_ct` per
   snapshot and currency. Cash is displayed beside positions but is not represented
   as a synthetic instrument.
-- **`investment_source_payloads`** — accepted encrypted API responses and uploaded
-  files with owner/connection/sync provenance, real source period/as-of metadata,
-  encrypted filename where applicable, integrity metadata, and version/timestamps.
-  API sources retain only the latest accepted payload. User-mediated imports retain
-  every accepted file. Failed refreshes write no payload row and retain only a
-  sanitized `sync_runs.error`.
+- **`investment_source_evidence`** — structural audit and idempotency evidence for
+  an accepted normalized refresh: owner/connection/sync/account provenance, real
+  source period/as-of metadata, validation version, row counts, quality, and a keyed
+  normalized fingerprint. It contains no raw response, uploaded file, filename,
+  path, or financial field value. Raw XML/CSV exists only in the short-lived worker;
+  failed refreshes write no evidence row and retain only a sanitized
+  `sync_runs.error`.
+- **`investment_market_quotes`** — the latest accepted user-owned quote for an
+  instrument/provider mapping: `owner_id`, `instrument_id`, provider, encrypted
+  provider symbol and exact `price_ct`, plaintext currency/source date/fetched-at,
+  quality, and version/timestamps. Quote rows are RLS-protected because their
+  instrument relationship reveals a user's holdings. Weekly quote history is not
+  retained in 1.1.
 
 Every quantity, price, value, and cash amount is a signed exact decimal string
 inside ciphertext and preserves source scale; arithmetic uses `decimal.js` and
@@ -177,8 +184,28 @@ contains ciphertext, and uses composite owner foreign keys.
 The latest accepted snapshot is current state. At most one normalized snapshot per
 account per Sunday-through-Saturday week remains in history indefinitely, chosen by
 source as-of time rather than ingestion time. Repeated refreshes within a week and
-late corrections replace that week's normalized children in one transaction. A
-connection refresh spanning several accounts promotes all of them or none.
+late corrections replace that week's normalized children in one transaction. The
+normalized keyed fingerprint makes an exact repeat a no-op. A newer source time
+wins; for changed content at the same source time, the later accepted import is a
+correction; an older source time is rejected as `stale_source`.
+
+Every sync declares its exact account coverage before promotion. An IBKR Flex query
+covers every account configured into that query; a Schwab Positions CSV covers only
+its previously bound account. Every covered account promotes in one transaction or
+none does, while accounts outside the declaration remain untouched. A previously
+known covered account disappearing from the source fails the refresh. A covered
+account may become an accepted zero state only when the source explicitly supplies
+its stable identity, authoritative as-of, complete position and cash sections, and
+an exact zero broker total. Blank input, zero discovered accounts, or omission never
+means closure; archival is explicit.
+
+IBKR may discover an account by its stable broker account identifier. A Schwab CSV
+connection binds its first accepted masked account reference and user-confirmed
+valuation currency; later mismatches reject the file, and another Schwab account
+requires another connection. Aliases and display names never establish account
+identity. Repeated position rows aggregate only when source identity, asset kind,
+quantity unit, currency, valuation basis, and source time agree; repeated compatible
+cash rows aggregate by currency. A conflict rejects the complete declared coverage.
 
 Portfolio and account reads derive totals, holding/account/currency allocations, and
 weekly history through the domain layer. A missing account week may reuse its latest
@@ -189,6 +216,14 @@ no specialized analytics. A missing required identity, quantity, currency, as-of
 time, cash amount, or usable valuation input rejects the complete refresh. A broker
 account total cannot rescue a nonzero position that has neither a source market
 value nor a usable source price.
+
+For the current estimate, active USD ETFs and common stocks on NYSE or Nasdaq may
+use the latest usable Tiingo EOD close with the last accepted exact quantity;
+last-known cash remains at its source amount. Quote refresh is a separate
+best-effort operation and cannot accept, reject, or mutate a broker/import snapshot.
+A missing, unresolved, more-than-seven-day-old, or post-split quote falls back to the
+position's broker-observed value and makes the returned basis/freshness explicit.
+Historical weekly values always use source-date broker observations.
 
 Every source valuation keeps its real as-of time and precision. A position-specific
 valuation time wins; otherwise the position inherits the account source time, never
@@ -210,7 +245,8 @@ history.
 Disconnecting a connection preserves its accounts and snapshots. Closing or moving
 assets out of an account archives it only through explicit user action, excluding
 it from current portfolio reads while preserving history. Permanent deletion is a
-separate destructive operation.
+separate destructive operation. Disconnect is disabled while that connection has a
+running sync; 1.1 exposes no user cancellation action.
 
 ### Global reference (no owner, no user-RLS)
 - **`fx_rates`** — `from_currency`, `to_currency`, observation `date`, normalized

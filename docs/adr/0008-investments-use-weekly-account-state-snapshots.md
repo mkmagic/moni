@@ -18,8 +18,9 @@ lots.
   snapshot metadata and owns the position and cash children; [ADR 0009](0009-investment-valuation-trusts-broker-observations-and-boi-fx.md)
   explains why their canonical ILS value is derived rather than persisted.
 - A later accepted observation replaces the active normalized snapshot for the same
-  account and week atomically. Repeated source rows for one instrument aggregate
-  into one exact signed-decimal position.
+  account and week atomically. Repeated source rows aggregate only when their
+  identity, asset kind, quantity unit, currency, valuation basis, and source time
+  are compatible; otherwise the covered refresh fails.
 - Broker source values remain separate from Moni valuations. Unsupported instruments
   participate through clearly labeled broker values but receive no specialized
   analytics.
@@ -29,9 +30,10 @@ lots.
 - Historical display converts through shared local FX history populated on demand by
   user-triggered refreshes. FX rates are not copied onto investment snapshots, and
   1.1 adds no scheduler.
-- API connections retain only their latest accepted raw payload; every accepted
-  user-uploaded source file is retained. Failed refreshes retain sanitized error
-  metadata only.
+- Raw API responses and uploaded files are parsed in the short-lived worker and are
+  never retained. Accepted refreshes keep encrypted normalized source assertions,
+  structural provenance, and a keyed normalized fingerprint; failed refreshes keep
+  sanitized error metadata only.
 - Closing an account archives it through explicit user action and preserves history.
   Disconnect and permanent deletion remain separate operations.
 - Trades, lots, returns, corporate actions, tax calculations, and user identity

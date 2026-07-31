@@ -144,3 +144,108 @@ The sync route sets `running` itself right after deciding to spawn (before the c
 ## 7. What's deferred, explicitly
 
 pg-boss and any scheduled/unattended sync (v1.0 is user-triggered only — every sync starts from a browser click) · connectors beyond the registry, especially `oneZero`/anything needing OTP · a manual review queue before promotion (v1.0 auto-promotes) · worker network egress filtering (the child has unrestricted outbound today — an accepted gap, not an oversight) · a cron-based orphaned-run sweeper (the lazy on-read check in §3/§6 is the whole mechanism) · Chrome/Docker production packaging · a concurrency guard on the sync route (two simultaneous syncs for one connection currently spawn two children — data-safe because promotion is idempotent, but wasteful).
+
+---
+
+## 8. Investment sync contract (Moni 1.1)
+
+Investment connectors reuse the `sync_runs` polling lifecycle and the short-lived
+worker boundary, but normalize account state rather than ledger activity. IBKR Flex
+XML and a Schwab Positions CSV must produce one source-neutral envelope before the
+domain layer sees them:
+
+```ts
+interface InvestmentSyncEnvelope {
+  source: "ibkr_flex" | "schwab_positions_csv";
+  coverage: {
+    kind: "configured_query_accounts" | "bound_single_account";
+    accountRefs: string[];
+  };
+  sourceAsOf: { value: string; precision: "date" | "timestamp" };
+  accounts: Array<{
+    sourceAccountRef: string;
+    baseCurrency: string;
+    positions: Array<{
+      sourceSecurityId: string;
+      symbol?: string;
+      assetKind: "stock" | "etf" | "mutual_fund" | "generic";
+      quantity: string;
+      quantityUnit: string;
+      currency: string;
+      sourcePrice?: string;
+      sourceValue?: string;
+      sourceAsOf?: string;
+    }>;
+    cash: Array<{ currency: string; amount: string }>;
+    brokerTotal: { amount: string; currency: string; asOf: string };
+  }>;
+}
+```
+
+Every decimal remains text at the source boundary and becomes encrypted before its
+first write. Provider identifiers and account references are sensitive too. The
+worker retains neither raw XML/CSV nor the uploaded file; it returns normalized
+values, structural provenance, and a keyed normalized fingerprint. Logs and error
+metadata contain codes and counts, never credentials, URLs, account identifiers,
+symbols, quantities, prices, or raw rows.
+
+### 8.1 Coverage, identity, and completeness
+
+- IBKR coverage is every account configured into the Flex query. The stable IBKR
+  account identifier may discover an account. Every covered account promotes or
+  none does.
+- A Schwab connection is bound by its first accepted file to one masked account
+  reference and user-confirmed valuation currency. A later mismatch fails; another
+  account needs another connection. Aliases and display names are never identity.
+- Accounts outside declared coverage are untouched. A previously known covered
+  account missing from the response fails the sync; the connector cannot reinterpret
+  an incomplete response as narrower successful coverage.
+- Zero holdings are accepted only when the identified account has an authoritative
+  as-of, complete position and cash sections, and an exact zero broker total. Blank
+  input, no discovered accounts, or omission preserves the prior snapshot and fails.
+  Closure and archival are explicit user actions.
+- Repeated source rows aggregate only when identity, asset kind, quantity unit,
+  currency, valuation basis, and source time are compatible. Compatible cash rows
+  aggregate by currency. Any conflict rejects the whole declared coverage.
+
+### 8.2 Promotion, ordering, and failure
+
+The route creates a `running` row before spawning. The worker fetches or reads,
+validates, and normalizes the entire declared coverage in memory. Only after every
+account passes does one domain-service call promote all covered snapshots inside one
+`withUser()` transaction, under RLS, and mark the run `succeeded`. The outer catch
+records a safe failure in a separate guarded transaction after rollback.
+
+The keyed normalized fingerprint makes an identical repeat a no-op. Within the same
+source week, a newer source time replaces the active observation; changed content at
+the same source time is a correction and the later accepted import wins; an older
+source time fails as `stale_source`. Ingestion time is only the correction tie-break.
+The worker may retry bounded transient network failures before promotion. Auth,
+schema, identity, completeness, and reconciliation-input failures are not retried
+automatically; the user can start a new run.
+
+The UI polls the existing `running`/`succeeded`/`failed` states. A browser closing
+does not cancel the worker. Timeouts, worker exit, server shutdown, and the existing
+lazy orphan repair fail safely. Moni 1.1 has no cancel control; disconnect is disabled
+while the connection has a running sync. Disconnect removes future source access but
+preserves accounts and snapshots, archive explicitly removes an account from current
+views, and permanent deletion remains a separate destructive action.
+
+### 8.3 Market estimates are not source promotion
+
+A user-triggered current-value refresh may separately ask Tiingo for the latest EOD
+close of each supported active USD ETF or common stock on NYSE or Nasdaq. This
+best-effort worker receives the instance-wide market-data token but no broker
+credential or source file. It parses exact CSV decimals and records explicit quote
+currency and source date. It never changes sync coverage or the acceptance of an
+IBKR/Schwab snapshot.
+
+The current estimate uses last accepted quantity × latest usable close plus
+last-known cash. A missing, unresolved, more-than-seven-day-old, or post-split quote
+falls back to broker-observed value with explicit basis and staleness. Weekly history
+always uses the source-date snapshot. Reads make no external request and there is no
+scheduler; one user action may refresh the local quotes at most once per day.
+
+The current deployment is single-user and uses one instance token. Before that token
+can serve more than one user, the deployment must have written provider permission
+for the shared use. This licensing gate does not alter database user isolation.

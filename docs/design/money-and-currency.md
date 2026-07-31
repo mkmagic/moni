@@ -48,6 +48,15 @@ sets the narrower investment policy:
 
 - The Bank of Israel is the sole FX authority. Consolidated investment and
   net-worth values are ILS-only; native holding and cash values remain visible.
+- Source-date valuation uses the broker value, or exact quantity × broker price,
+  plus source cash. The current estimate may instead use exact last accepted
+  quantity × latest usable Tiingo EOD close for supported active USD ETFs and common
+  stocks on NYSE or Nasdaq, plus last-known cash. Both retain their own dates and
+  valuation basis.
+- Tiingo closes are parsed from CSV decimal text without a JavaScript number. A
+  missing, unresolved, more-than-seven-day-old, or unsafe post-corporate-action
+  quote falls back to the broker-observed value and makes the result visibly stale.
+  Quote failure never rejects an otherwise valid broker or statement snapshot.
 - Fetch bounded date ranges from BOI's unauthenticated
   `https://edge.boi.gov.il/FusionEdgeServer/sdmx/v2/data/dataflow/BOI.STATISTICS/EXR/1.0/`
   endpoint with `format=csv`; do not use the convenient current-rate JSON response,
@@ -82,7 +91,7 @@ Which rate a total uses depends on whether it is a **stock** or a **flow**:
 | Total | Kind | Rate to use |
 |---|---|---|
 | Income / expenses / category spend over a period | **flow** | Each transaction at **its own transaction-date rate**, then summed. A period total must not move as rates move. |
-| "Net worth / balances **right now**" | **stock** | An ordinary account's current native balance at today's latest rate; an investment account's latest positions and cash at the newest locally cached BOI rate. This *should* move with the market — that is correct valuation, not drift. |
+| "Net worth / balances **right now**" | **stock** | An ordinary account's current native balance at today's latest rate; an investment account's last accepted quantities × newest usable local Tiingo closes for supported instruments, plus last-known cash, converted at the newest locally cached BOI rate. Unsupported or unusable quotes fall back to broker values with explicit freshness. This *should* move with the market — that is correct valuation, not drift. |
 | "Net worth **as of** a past date" | **stock** | An ordinary account's native balance at that date, or an investment snapshot's component values, converted with the rate **on that date**. |
 
 So a flow total is a sum of historically-locked amounts; a current-balance total is a live conversion off the latest rate. Never value flows at today's rate, and never value "current net worth" at historical per-transaction rates.

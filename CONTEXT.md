@@ -115,6 +115,12 @@ its positions, cash balances, source value, and valuation quality. The latest
 snapshot is current state; at most one snapshot per week remains in history.
 _Avoid_: Portfolio snapshot, lot history, activity ledger.
 
+**Sync coverage**:
+The exact set of investment accounts for which one sync asserts a complete source
+state. Every account in the set succeeds together; accounts outside it are
+untouched.
+_Avoid_: Discovered accounts, partial success, best-effort scope.
+
 **Archived investment account**:
 An investment account excluded from the current portfolio after it closes or its
 assets move elsewhere, while its snapshots remain part of history.
@@ -125,11 +131,23 @@ A financial institution's monetary assertion for a position or account at a stat
 time. It is retained as evidence and does not overwrite Moni's valuation.
 _Avoid_: Canonical value, calculated value.
 
+**Market quote**:
+A public-provider observation of one instrument's unit price at an explicit date
+and currency. It may update a current estimate but is not broker source evidence.
+_Avoid_: Source value, live price, canonical price.
+
 **Valuation**:
-The exact monetary value of a position from its broker observation, or of an account
-or portfolio from its valued positions and cash. It carries explicit as-of,
-currency, freshness, completeness, and valuation-basis context.
+The exact monetary value of a position, account, or portfolio under a named basis.
+It carries explicit as-of, currency, freshness, and completeness context and never
+hides whether it uses broker evidence or a newer market quote.
 _Avoid_: Source value, balance, performance.
+
+**Current investment estimate**:
+A mixed-age valuation using the latest accepted quantities, the latest usable
+market quotes for supported instruments, and last-known cash. Unsupported or
+unusable quotes fall back to broker-observed values and make the basis and staleness
+visible.
+_Avoid_: Live balance, broker value, guaranteed current value.
 
 **Reconciliation mismatch**:
 A quality state where a broker's account source value and Moni's summed account
