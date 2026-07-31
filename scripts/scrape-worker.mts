@@ -27,6 +27,7 @@ import {
 } from "@/lib/connectors";
 import { markSyncRunFailed, promoteScrapeResult } from "@/domain/sync-promotion";
 import { wipe } from "@/lib/crypto";
+import { redactSecrets } from "@/lib/redact-secrets";
 
 async function readAllStdin(): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -99,7 +100,12 @@ async function run(dataKey: Buffer, payload: ChildStdinPayload): Promise<void> {
 
   if (!parsed.success) {
     const detail = [parsed.errorType, parsed.errorMessage].filter(Boolean).join(": ");
-    throw new Error(`Scrape failed${detail ? `: ${detail}` : ""}`);
+    throw new Error(
+      redactSecrets(
+        `Scrape failed${detail ? `: ${detail}` : ""}`,
+        Object.values(payload.credentials),
+      ),
+    );
   }
 
   const summary = await promoteScrapeResult({
@@ -125,18 +131,21 @@ async function main(): Promise<void> {
     process.exitCode = 0;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    const safeMessage = payload
+      ? redactSecrets(message, Object.values(payload.credentials))
+      : message;
     if (payload) {
       // Deliberately its OWN transaction, separate from whatever run() ->
       // promoteScrapeResult() attempted and already rolled back (docs plan
       // §D: "the failed write happens in a separate transaction from the
       // outer catch").
-      await markSyncRunFailed(payload.userId, payload.syncRunId, message).catch((markErr) => {
+      await markSyncRunFailed(payload.userId, payload.syncRunId, safeMessage).catch((markErr) => {
         console.error("scrape-worker: failed to record sync_runs failure:", markErr);
       });
-      printResult({ ok: false, syncRunId: payload.syncRunId, error: message });
+      printResult({ ok: false, syncRunId: payload.syncRunId, error: safeMessage });
     } else {
       // Reading/decoding stdin itself failed — no syncRunId to mark failed.
-      console.error("scrape-worker: fatal error before a payload could be read:", message);
+      console.error("scrape-worker: fatal error before a payload could be read:", safeMessage);
     }
     process.exitCode = 1;
   } finally {
