@@ -20,6 +20,7 @@
     "seed:demo": "tsx scripts/seed-demo.ts",
     "categories:sync": "tsx scripts/sync-categories.ts",
     "poc:ibkr-flex": "tsx scripts/prototypes/ibkr-flex/index.ts",
+    "poc:schwab-csv": "tsx scripts/prototypes/schwab-csv/index.ts",
     "poc:schwab-trader": "tsx scripts/prototypes/schwab-trader/index.ts",
     "scrape:test": "tsx scripts/scrape-test.ts",
     "suggestions:eval": "tsx scripts/eval-suggestions.ts",
