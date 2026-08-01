@@ -27,5 +27,9 @@ export { computeImportKey, type ImportKeyInput } from "./import-key";
 export {
   encodeChildStdinFrame,
   decodeChildStdinFrame,
+  encodeBinaryChildFrame,
+  decodeBinaryChildFrame,
+  MAX_CHILD_STDIN_BYTES,
   type ChildStdinPayload,
 } from "./child-stdin-framing";
+export { readChildStdin } from "./read-child-stdin";
