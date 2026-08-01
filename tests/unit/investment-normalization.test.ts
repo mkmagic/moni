@@ -12,6 +12,7 @@ import {
 const fixture = (name: string) =>
   readFileSync(join(process.cwd(), "tests/fixtures/investments", name), "utf8");
 const XML = fixture("ibkr-flex.xml");
+const PROVIDER_XML = fixture("ibkr-flex-provider.xml");
 const CSV = fixture("schwab-positions.csv");
 
 describe("investment source normalization", () => {
@@ -54,6 +55,54 @@ describe("investment source normalization", () => {
     const account = normalizeIbkrFlexXml(xml).accounts[0];
     expect(account.positions[0].quantity).toBe("2.00000000000000000002");
     expect(account.cash[0].amount).toBe("0.03");
+  });
+
+  it("reads POC-proven IBKR record tags without assuming provider wrapper names", () => {
+    const providerVariant = XML.replace(
+      /<EquitySummaryInBase>([\s\S]*?)<\/EquitySummaryInBase>/,
+      "<NAVSummaryInBase>$1</NAVSummaryInBase>",
+    );
+
+    expect(normalizeIbkrFlexXml(providerVariant).accounts[0].brokerTotal.amount).toBe(
+      "123.01000000000000000124",
+    );
+  });
+
+  it("normalizes a Flex report in the provider's own default shape", () => {
+    const envelope = normalizeIbkrFlexXml(PROVIDER_XML);
+    const account = envelope.accounts[0];
+
+    // yyyyMMdd is the Flex default; ISO-8601 output is only an optional query setting.
+    expect(envelope.sourceAsOf).toEqual({ value: "2026-07-31", precision: "date" });
+    // Lot rows restate the SUMMARY row rather than adding to it.
+    expect(account.positions).toHaveLength(1);
+    expect(account.positions[0]).toMatchObject({
+      quantity: "10",
+      assetKind: "etf",
+      sourceAsOf: "2026-07-31",
+    });
+    // BASE_SUMMARY restates the per-currency rows converted to the base currency.
+    expect(account.cash).toEqual([
+      { currency: "USD", amount: "100" },
+      { currency: "EUR", amount: "30" },
+    ]);
+    // A multi-day period reports NAV per date; the closing row is the snapshot.
+    expect(account.brokerTotal).toEqual({
+      amount: "2135",
+      currency: "USD",
+      asOf: "2026-07-31",
+    });
+  });
+
+  it("rejects a NAV date that disagrees with itself", () => {
+    expect(() =>
+      normalizeIbkrFlexXml(
+        PROVIDER_XML.replace(
+          'reportDate="20260730" total="2100"',
+          'reportDate="20260731" total="2100"',
+        ),
+      ),
+    ).toThrow("identity_conflict");
   });
 
   it("rejects conflicting duplicates, omission, and nonzero implicit closure", () => {

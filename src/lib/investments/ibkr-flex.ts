@@ -29,6 +29,8 @@ const positionSchema = z.object({
   positionValue: z.string().optional(),
   markPrice: z.string().optional(),
   assetCategory: z.string().optional(),
+  subCategory: z.string().optional(),
+  levelOfDetail: z.string().optional(),
   symbol: z.string().optional(),
   description: z.string().optional(),
   exchange: z.string().optional(),
@@ -57,17 +59,83 @@ function rows(value: unknown): Attributes[] {
   });
 }
 
-function list(root: Record<string, unknown>, parent: string, child: string): Attributes[] {
-  const section = root[parent];
-  if (!section || typeof section !== "object") return [];
-  return rows((section as Record<string, unknown>)[child]);
+/** Collects the record tags proven by the live POC without trusting optional wrapper names. */
+function records(root: Record<string, unknown>, tag: string): Attributes[] {
+  const found: Attributes[] = [];
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    for (const [key, child] of Object.entries(value)) {
+      if (key === tag) {
+        const candidates = Array.isArray(child) ? child : [child];
+        for (const candidate of candidates) {
+          if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+          const attributes = Object.fromEntries(
+            Object.entries(candidate).filter(([, item]) => typeof item === "string"),
+          );
+          if (Object.keys(attributes).length > 0) found.push(checked(attributesSchema, attributes));
+        }
+      }
+      visit(child);
+    }
+  };
+  visit(root);
+  return found;
 }
 
-function kind(value: string | undefined): "stock" | "etf" | "mutual_fund" | "generic" {
-  const normalized = value?.trim().toLowerCase();
-  if (normalized === "stock") return "stock";
+const DIAGNOSTIC_TAGS = [
+  "FlexStatement",
+  "AccountInformation",
+  "OpenPosition",
+  "CashReportCurrency",
+  "EquitySummaryByReportDateInBase",
+] as const;
+
+/**
+ * Opt-in failure report (MONI_IBKR_DIAGNOSTIC=1) describing the provider's actual
+ * structure: row counts, attribute names, and value *shapes* — never values.
+ */
+function reportStructure(source: string, failure: string): void {
+  const shape = (value: string) =>
+    value.replace(/\d/g, "9").replace(/[A-Z]/g, "A").replace(/[a-z]/g, "a").slice(0, 40);
+  const lines = [`ibkr-flex diagnostic: ${failure}`];
+  for (const tag of DIAGNOSTIC_TAGS) {
+    const rows = [...source.matchAll(new RegExp(`<${tag}(\\s[^<>]*?)?/?>`, "g"))];
+    const shapes = new Map<string, Set<string>>();
+    for (const row of rows)
+      for (const attribute of (row[1] ?? "").matchAll(/([A-Za-z_:][\w:.-]*)\s*=\s*"([^"]*)"/g)) {
+        const seen = shapes.get(attribute[1]) ?? new Set<string>();
+        seen.add(shape(attribute[2]));
+        shapes.set(attribute[1], seen);
+      }
+    lines.push(`  ${tag}: ${rows.length} row(s)`);
+    for (const [name, seen] of shapes)
+      lines.push(`    ${name}=${[...seen].slice(0, 3).join(" | ")}`);
+  }
+  process.stderr.write(`${lines.join("\n")}\n`);
+}
+
+/** IBKR's default Flex date format is yyyyMMdd; ISO-8601 is only an optional query setting. */
+function flexDate(value: string): string {
+  const text = value.trim().split(";")[0];
+  const compact = /^(\d{4})(\d{2})(\d{2})$/.exec(text);
+  return compact ? `${compact[1]}-${compact[2]}-${compact[3]}` : text;
+}
+
+function kind(
+  category: string | undefined,
+  subCategory: string | undefined,
+): "stock" | "etf" | "mutual_fund" | "generic" {
+  // IBKR reports asset classes as codes (STK, FUND) and only distinguishes ETFs
+  // in subCategory; the long-form names cover the direct-export variants.
+  const normalized = category?.trim().toLowerCase();
+  if (subCategory?.trim().toUpperCase() === "ETF") return "etf";
+  if (normalized === "stk" || normalized === "stock") return "stock";
   if (normalized === "etf") return "etf";
-  if (normalized === "mutual fund") return "mutual_fund";
+  if (normalized === "fund" || normalized === "mutual fund") return "mutual_fund";
   return "generic";
 }
 
@@ -90,11 +158,13 @@ export function normalizeIbkrFlexXml(source: string): InvestmentSyncEnvelope {
     const statements = (root as Record<string, unknown>).FlexStatement;
     const statement = rows(statements);
     if (statement.length !== 1) throw new InvestmentNormalizationError("incomplete_coverage");
-    const sourceAsOf = asOf(checked(z.object({ toDate: nonblankSchema }), statement[0]).toDate);
+    const sourceAsOf = asOf(
+      flexDate(checked(z.object({ toDate: nonblankSchema }), statement[0]).toDate),
+    );
     if (!statements || Array.isArray(statements) || typeof statements !== "object")
       throw new InvestmentNormalizationError("unsupported_source_shape");
     const report = statements as Record<string, unknown>;
-    const accountRows = list(report, "AccountInformation", "AccountInformation").map((row) =>
+    const accountRows = records(report, "AccountInformation").map((row) =>
       checked(accountSchema, row),
     );
     requireLimit(accountRows.length, MAX_ACCOUNTS);
@@ -102,14 +172,19 @@ export function normalizeIbkrFlexXml(source: string): InvestmentSyncEnvelope {
     const accountIds = new Set(accountRows.map((row) => row.accountId));
     if (accountIds.size !== accountRows.length)
       throw new InvestmentNormalizationError("identity_conflict");
-    const positionRows = list(report, "OpenPositions", "OpenPosition").map((row) =>
+    const openPositions = records(report, "OpenPosition").map((row) =>
       checked(positionSchema, row),
     );
-    const cashRows = list(report, "CashReport", "CashReportCurrency").map((row) =>
-      checked(cashSchema, row),
-    );
-    const totalRows = list(report, "EquitySummaryInBase", "EquitySummaryByReportDateInBase").map(
-      (row) => checked(totalSchema, row),
+    // A query configured for lot detail repeats every holding; the SUMMARY rows
+    // are the non-overlapping view of the same positions.
+    const summaries = openPositions.filter((row) => row.levelOfDetail?.toUpperCase() === "SUMMARY");
+    const positionRows = summaries.length ? summaries : openPositions;
+    // BASE_SUMMARY rows restate the other rows converted to the base currency.
+    const cashRows = records(report, "CashReportCurrency")
+      .filter((row) => row.currency !== "BASE_SUMMARY")
+      .map((row) => checked(cashSchema, row));
+    const totalRows = records(report, "EquitySummaryByReportDateInBase").map((row) =>
+      checked(totalSchema, row),
     );
     requireLimit(positionRows.length, MAX_POSITION_ROWS);
     requireLimit(cashRows.length, MAX_CASH_ROWS);
@@ -131,7 +206,7 @@ export function normalizeIbkrFlexXml(source: string): InvestmentSyncEnvelope {
         symbol: row.symbol?.trim() || undefined,
         name: row.description?.trim() || undefined,
         exchange: row.exchange?.trim() || undefined,
-        assetKind: kind(row.assetCategory),
+        assetKind: kind(row.assetCategory, row.subCategory),
         quantity,
         quantityUnit: "shares",
         currency: row.currency,
@@ -139,7 +214,7 @@ export function normalizeIbkrFlexXml(source: string): InvestmentSyncEnvelope {
         sourcePriceCurrency: price === undefined ? undefined : row.currency,
         sourceValue: value,
         sourceValueCurrency: value === undefined ? undefined : row.currency,
-        sourceAsOf: row.reportDate,
+        sourceAsOf: flexDate(row.reportDate),
       };
       const entries = positionsByAccount.get(row.accountId) ?? [];
       const duplicate = entries.find((item) => item.sourceSecurityId === entry.sourceSecurityId);
@@ -168,10 +243,17 @@ export function normalizeIbkrFlexXml(source: string): InvestmentSyncEnvelope {
       cashByAccount.set(row.accountId, accountCash);
     }
     const totals = new Map<string, { amount: string; asOf: string }>();
+    // A multi-day query period yields one NAV row per report date; the closing
+    // row is the snapshot, and a repeated date must agree with itself.
     for (const row of totalRows) {
-      if (!accountIds.has(row.accountId) || totals.has(row.accountId))
+      if (!accountIds.has(row.accountId))
         throw new InvestmentNormalizationError("incomplete_coverage");
-      totals.set(row.accountId, { amount: decimalText(row.total), asOf: row.reportDate });
+      const entry = { amount: decimalText(row.total), asOf: flexDate(row.reportDate) };
+      const current = totals.get(row.accountId);
+      if (current && current.asOf > entry.asOf) continue;
+      if (current && current.asOf === entry.asOf && current.amount !== entry.amount)
+        throw new InvestmentNormalizationError("identity_conflict");
+      totals.set(row.accountId, entry);
     }
     const accounts = accountRows.map((account) => {
       const total = totals.get(account.accountId);
@@ -200,6 +282,8 @@ export function normalizeIbkrFlexXml(source: string): InvestmentSyncEnvelope {
       accounts,
     };
   } catch (error) {
-    throw code(error);
+    const failure = code(error);
+    if (process.env.MONI_IBKR_DIAGNOSTIC === "1") reportStructure(source, failure.code);
+    throw failure;
   }
 }
