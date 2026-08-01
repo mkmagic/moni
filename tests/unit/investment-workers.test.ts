@@ -37,30 +37,33 @@ describe("investment worker seams", () => {
     const token = Buffer.from("token");
     const query = Buffer.from("query");
     const report = "<FlexQueryResponse/>";
+    const wait = vi.fn().mockResolvedValue(undefined);
     const fetcher = vi
       .fn()
       .mockRejectedValueOnce(new TypeError("ECONNRESET"))
       .mockResolvedValueOnce(
         new Response(
-          "<FlexStatementResponse><Status>Success</Status><ReferenceCode>reference</ReferenceCode><Url>https://gdcdyn.interactivebrokers.com/AccountManagement/FlexWebService/GetStatement</Url></FlexStatementResponse>",
+          "<FlexStatementResponse><Status>Success</Status><ReferenceCode>1234567890</ReferenceCode></FlexStatementResponse>",
         ),
       )
       .mockResolvedValueOnce(new Response(report));
-    const body = await fetchIbkrFlexXml(token, query, fetcher);
+    const body = await fetchIbkrFlexXml(token, query, fetcher, wait);
     expect(body.toString("utf8")).toBe(report);
     expect(fetcher).toHaveBeenCalledTimes(3);
     const sendUrl = new URL(fetcher.mock.calls[1][0]);
     expect(sendUrl.origin + sendUrl.pathname).toBe(`${IBKR_FLEX_URL}/SendRequest`);
     expect(sendUrl.searchParams.get("v")).toBe("3");
     const statementUrl = new URL(fetcher.mock.calls[2][0]);
-    expect(statementUrl.origin + statementUrl.pathname).toBe(
-      "https://gdcdyn.interactivebrokers.com/AccountManagement/FlexWebService/GetStatement",
-    );
-    expect(statementUrl.searchParams.get("q")).toBe("reference");
+    expect(statementUrl.origin + statementUrl.pathname).toBe(`${IBKR_FLEX_URL}/GetStatement`);
+    expect(statementUrl.searchParams.get("q")).toBe("1234567890");
     expect(fetcher.mock.calls[0][1]).toMatchObject({
       redirect: "error",
-      headers: { "User-Agent": "Moni/0.1" },
+      headers: {
+        Accept: "application/xml, text/xml, text/plain",
+        "User-Agent": "Moni-IBKR-Flex-POC/0.1",
+      },
     });
+    expect(wait).toHaveBeenCalledWith(20_000);
     expect([...token, ...query]).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     body.fill(0);
   });
@@ -79,7 +82,7 @@ describe("investment worker seams", () => {
       .fn()
       .mockResolvedValueOnce(
         new Response(
-          "<FlexStatementResponse><Status>Success</Status><ReferenceCode>reference</ReferenceCode><Url>https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/GetStatement</Url></FlexStatementResponse>",
+          "<FlexStatementResponse><Status>Success</Status><ReferenceCode>1234567890</ReferenceCode></FlexStatementResponse>",
         ),
       )
       .mockResolvedValueOnce(
@@ -92,8 +95,7 @@ describe("investment worker seams", () => {
     const body = await fetchIbkrFlexXml(Buffer.from("token"), Buffer.from("query"), fetcher, wait);
 
     expect(body.toString("utf8")).toBe("<FlexQueryResponse/>");
-    expect(wait).toHaveBeenCalledOnce();
-    expect(wait).toHaveBeenCalledWith(1_000);
+    expect(wait.mock.calls).toEqual([[20_000], [5_000]]);
     body.fill(0);
   });
 
