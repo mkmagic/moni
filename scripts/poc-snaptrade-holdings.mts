@@ -83,7 +83,9 @@ function main(): void {
   });
 }
 
-async function run(snaptrade: Snaptrade): Promise<void> {
+type SnaptradeClient = Snaptrade<ReturnType<typeof SnaptradeAuth.personalApiKey>>;
+
+async function run(snaptrade: SnaptradeClient): Promise<void> {
   const accountsResponse = await snaptrade.accountInformation.listUserAccounts();
   const accounts = parseJsonPreservingNumbers(accountsResponse.data as unknown as string);
   if (!Array.isArray(accounts)) {

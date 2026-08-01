@@ -4,7 +4,11 @@ import {
   replaceTiingoQuoteForUser,
 } from "@/domain/investment-valuation";
 import { readChildStdin } from "@/lib/connectors";
-import { fetchTiingoEodQuote, runTiingoQuoteWorkerFrame } from "@/lib/investments";
+import {
+  fetchTiingoEodQuote,
+  refreshTiingoQuotes,
+  runTiingoQuoteWorkerFrame,
+} from "@/lib/investments";
 
 async function main(): Promise<void> {
   const frame = await readChildStdin(process.stdin);
