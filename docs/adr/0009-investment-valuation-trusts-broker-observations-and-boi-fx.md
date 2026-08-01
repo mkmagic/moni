@@ -3,11 +3,24 @@
 Moni 1.1 preserves a source-date valuation from each accepted broker or statement
 snapshot and may also calculate a newer current estimate. Source-date positions use
 the broker-reported market value when present and otherwise exact quantity × the
-broker-reported price. For supported active USD ETFs and common stocks on NYSE or
-Nasdaq, the current estimate uses the last accepted quantity × the latest usable
+broker-reported price. For supported active USD ETFs and common stocks on the major
+US venues, the current estimate uses the last accepted quantity × the latest usable
 Tiingo end-of-day close, plus last-known cash. Other instruments, missing or stale
 quotes, and unsafe post-corporate-action observations fall back to the broker value
 and remain visibly stale. Bank of Israel observations convert both bases to ILS.
+
+## Supported venues
+
+The estimate is limited to instruments whose provider-reported venue is NYSE or
+Nasdaq. "NYSE" here means the NYSE group as an issuer venue, not the NYSE order
+book alone: NYSE Arca and Cboe BZX are included, because most US-listed ETFs are
+listed there and a literal reading would leave the ETF case matching almost
+nothing. Providers that report ISO 10383 MIC codes translate them at the adapter
+boundary (`XNYS`, `XNAS`, `ARCX`, `BATS`), and an unrecognized venue passes through
+untranslated so it stays ineligible rather than being guessed at. The venue is read
+from the instrument's per-provider source mapping, which is refreshed when the
+provider reports different descriptive metadata; a mapping written before a
+translation existed must not pin an instrument to the wrong venue forever.
 
 ## Consequences
 
@@ -15,7 +28,14 @@ and remain visibly stale. Bank of Israel observations convert both bases to ILS.
   the complete connection refresh. A broker account total cannot conceal an
   unvalued component.
 - A broker account total that differs from Moni's component sum after ILS display
-  rounding produces a non-blocking reconciliation-mismatch quality state.
+  rounding produces a non-blocking reconciliation-mismatch quality state. Where a
+  position's value was derived as quantity × price rather than reported directly,
+  the comparison allows what the reported price's own rounding can conceal —
+  quantity × half of the price's last reported digit, plus the same allowance on
+  the broker total. That allowance is zero whenever every position carried a
+  reported market value, so a directly-valued source is still compared exactly. It
+  is bounded by the provider's stated precision and cannot absorb a missing
+  holding.
 - Reconciliation compares the broker total with the source-date component
   valuation. A newer market estimate never creates or clears a reconciliation
   mismatch.
@@ -33,6 +53,13 @@ and remain visibly stale. Bank of Israel observations convert both bases to ILS.
   source date. A quote older than seven calendar days is unusable. Quote refresh is
   best-effort and separate from atomic broker/import promotion: quote failure never
   rejects a valid source snapshot.
+- An estimate never replaces broker evidence that is already newer than the quote:
+  a close is usable only when the broker observation is no more than one day past
+  the close's date. A source reporting an intraday timestamp is therefore
+  ineligible until that day's close is published, which is the intended outcome —
+  substituting a previous-day close for a same-day broker price would make the
+  valuation worse. Sources reporting a plain date sit at midnight and clear this
+  boundary a day earlier than sources reporting a timestamp.
 - A non-1 split factor dated after the accepted quantity makes that quote unusable
   until a new broker or statement snapshot establishes a post-action quantity. Moni
   1.1 does not synthesize corporate-action adjustments.
@@ -57,8 +84,14 @@ and remain visibly stale. Bank of Israel observations convert both bases to ILS.
   short-lived market-data worker that receives no broker credentials. It is enabled
   only when `MONI_TIINGO_MULTI_USER_AUTHORIZED=true` explicitly attests that the
   deployment has provider permission for shared multi-user use; otherwise refresh is
-  a local no-op and broker fallback applies.
+  a local no-op and broker fallback applies. Both that flag and the token are
+  required together, including for a single-user deployment.
 - The token is supplied in the Authorization header. Its mutable byte copy is wiped,
   while the HTTP client's unavoidable immutable header string is confined to the
   worker lifetime and never logged. There is no scheduler: refresh is
   user-triggered, at most once per day for a given current-estimate action.
+- The quote worker reports how many instruments it attempted and how many quotes it
+  replaced, and nothing else, on the one channel the request path reads. Callers can
+  distinguish an unconfigured refresh, a refresh with no eligible holdings, and a
+  refresh that wrote quotes; a fallback to broker values is not by itself evidence
+  that the estimate path failed.
