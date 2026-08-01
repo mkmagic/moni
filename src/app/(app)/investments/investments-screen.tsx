@@ -250,9 +250,16 @@ export function InvestmentsScreen({
     const quotes = await fetch("/api/investments/quotes/refresh", { method: "POST" }).catch(
       () => null,
     );
-    const refreshed = quotes?.ok
-      ? " Quote refresh completed best-effort."
-      : " Quote refresh was unavailable; broker values remain included.";
+    // A configured-but-absent Tiingo token answers 200 with refreshed:false, so
+    // response.ok alone reported success for a refresh that never ran.
+    const quoteBody = quotes?.ok
+      ? await quotes.json().catch(() => null as { refreshed?: boolean } | null)
+      : null;
+    const refreshed = !quotes?.ok
+      ? " Quote refresh was unavailable; broker values remain included."
+      : quoteBody?.refreshed
+        ? " Quote refresh completed best-effort."
+        : " Quote estimates are not configured; broker values remain included.";
     setNotice(
       `${files.length ? `${files.join(", ")} need a statement file.` : ""}${failures.join(" ")}${refreshed}`.trim(),
     );
