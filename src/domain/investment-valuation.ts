@@ -37,6 +37,67 @@ export interface InvestmentValuation {
   metadata: ValuationMetadata;
 }
 
+/** Shared internal quote-or-broker decision; it is deliberately pure and has no I/O. */
+export function selectCurrentComponent(input: {
+  estimateNow: boolean;
+  now: Date;
+  kind: string | undefined;
+  positionCurrency: string;
+  mappingCurrency: string | undefined;
+  exchange: string | null;
+  quantity: string;
+  brokerValue: string;
+  brokerCurrency: string;
+  brokerDate: Date;
+  quote?: {
+    price: string;
+    currency: string;
+    sourceDate: string;
+    qualityState: string;
+    splitState: string;
+  };
+}): {
+  value: string;
+  currency: string;
+  date: Date;
+  basis: "broker_source" | "tiingo_estimate";
+  quoteDate: string | null;
+  fallback: boolean;
+} {
+  const quote = input.quote;
+  const quoteDate = quote ? new Date(`${quote.sourceDate}T00:00:00Z`) : null;
+  const eligible =
+    input.estimateNow &&
+    (input.kind === "stock" || input.kind === "etf") &&
+    input.positionCurrency === "USD" &&
+    input.mappingCurrency === "USD" &&
+    (input.exchange === "NYSE" || input.exchange === "NASDAQ") &&
+    quote?.currency === "USD" &&
+    quote.qualityState === "accepted" &&
+    (quote.splitState === "safe" ||
+      (quote.splitState === "post_split" && quoteDate! <= input.brokerDate)) &&
+    quoteDate &&
+    withinSevenDays(quote.sourceDate, input.now) &&
+    input.brokerDate.getTime() <= quoteDate.getTime() + DAY;
+  if (eligible && quote && quoteDate)
+    return {
+      value: new Decimal(input.quantity).mul(quote.price).toFixed(),
+      currency: "USD",
+      date: quoteDate,
+      basis: "tiingo_estimate",
+      quoteDate: quote.sourceDate,
+      fallback: false,
+    };
+  return {
+    value: input.brokerValue,
+    currency: input.brokerCurrency,
+    date: input.brokerDate,
+    basis: "broker_source",
+    quoteDate: null,
+    fallback: input.estimateNow,
+  };
+}
+
 type Tx = UserTransaction;
 const DAY = 86_400_000;
 
@@ -180,54 +241,52 @@ export async function valueInvestmentSnapshot(
       position.sourceValueCurrency ?? position.sourcePriceCurrency ?? position.currency;
     let value =
       sourceValue ?? (sourcePrice ? new Decimal(quantity).mul(sourcePrice).toFixed() : "0");
-    let currency = sourceCurrency;
-    let usedTiingo = false;
-    if (options.estimateNow) {
-      const quote = quoteByInstrument.get(position.instrumentId);
-      const mapping = mappingsByInstrument.get(position.instrumentId);
-      const instrument = instrumentsById.get(position.instrumentId);
-      const exchange = mapping?.exchangeCt
-        ? decText(
-            dataKey,
-            mapping.exchangeCt,
-            mapping.id,
-            "exchange_ct",
-            mapping.version,
-          )?.toUpperCase()
-        : null;
-      const eligible =
-        instrument &&
-        (instrument.kind === "stock" || instrument.kind === "etf") &&
-        position.currency === "USD" &&
-        mapping?.currency === "USD" &&
-        (exchange === "NYSE" || exchange === "NASDAQ") &&
-        quote?.currency === "USD" &&
-        quote.qualityState === "accepted" &&
-        (quote.splitState === "safe" ||
-          (quote.splitState === "post_split" &&
-            dateAtMidnight(quote.sourceDate).getTime() <= sourceDate.getTime())) &&
-        withinSevenDays(quote.sourceDate, now) &&
-        sourceDate.getTime() <= dateAtMidnight(quote.sourceDate).getTime() + DAY;
-      if (eligible && quote) {
-        value = new Decimal(quantity)
-          .mul(decText(dataKey, quote.priceCt, quote.id, "price_ct", quote.version)!)
-          .toFixed();
-        currency = "USD";
-        quoteDates.push(quote.sourceDate);
-        usedTiingo = true;
-        anyTiingo = true;
-      } else {
-        fallback += 1;
-        qualities.add("quote_fallback");
-      }
+    const quote = quoteByInstrument.get(position.instrumentId);
+    const mapping = mappingsByInstrument.get(position.instrumentId);
+    const instrument = instrumentsById.get(position.instrumentId);
+    const exchange = mapping?.exchangeCt
+      ? (decText(
+          dataKey,
+          mapping.exchangeCt,
+          mapping.id,
+          "exchange_ct",
+          mapping.version,
+        )?.toUpperCase() ?? null)
+      : null;
+    const selected = selectCurrentComponent({
+      estimateNow: !!options.estimateNow,
+      now,
+      kind: instrument?.kind,
+      positionCurrency: position.currency,
+      mappingCurrency: mapping?.currency,
+      exchange,
+      quantity,
+      brokerValue: value,
+      brokerCurrency: sourceCurrency,
+      brokerDate: sourceDate,
+      quote: quote
+        ? {
+            price: decText(dataKey, quote.priceCt, quote.id, "price_ct", quote.version)!,
+            currency: quote.currency,
+            sourceDate: quote.sourceDate,
+            qualityState: quote.qualityState,
+            splitState: quote.splitState,
+          }
+        : undefined,
+    });
+    value = selected.value;
+    const currency = selected.currency;
+    const usedTiingo = selected.basis === "tiingo_estimate";
+    if (usedTiingo) {
+      quoteDates.push(selected.quoteDate!);
+      anyTiingo = true;
+    } else if (selected.fallback) {
+      fallback += 1;
+      qualities.add("quote_fallback");
     }
     if (!usedTiingo) anyBroker = true;
     nativeByCurrency.set(currency, (nativeByCurrency.get(currency) ?? new Decimal(0)).plus(value));
-    const rate = await fx(
-      tx,
-      currency,
-      usedTiingo ? dateAtMidnight(quoteDates.at(-1)!) : sourceDate,
-    );
+    const rate = await fx(tx, currency, selected.date);
     if (!rate) {
       incompleteFx += 1;
       qualities.add("incomplete_fx");
