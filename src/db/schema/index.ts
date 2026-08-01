@@ -8,3 +8,4 @@ export * from "./ledger";
 export * from "./classification";
 export * from "./dashboard";
 export * from "./reference";
+export * from "./investments";

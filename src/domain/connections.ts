@@ -43,6 +43,13 @@ export class InvalidCredentialsShapeError extends Error {
   }
 }
 
+/** Thrown when credentials are requested for an import-only connection. */
+export class ConnectionCredentialsUnavailableError extends Error {
+  constructor() {
+    super("This connection does not store credentials");
+  }
+}
+
 function assertValidCredentialsShape(
   connectorId: ConnectorId,
   credentials: Record<string, string>,
@@ -137,6 +144,7 @@ export async function createConnection(
       connectorId,
       displayName: displayName ?? null,
       credentialsCt,
+      mode: "credentialed_fetch",
       status: "active",
     });
     return { id };
@@ -188,12 +196,17 @@ export async function updateConnectionCredentials(
 ): Promise<boolean> {
   return withUser(userId, async (tx) => {
     const rows = await tx
-      .select({ connectorId: connections.connectorId, version: connections.version })
+      .select({
+        connectorId: connections.connectorId,
+        mode: connections.mode,
+        version: connections.version,
+      })
       .from(connections)
       .where(eq(connections.id, connectionId))
       .limit(1);
     const row = rows[0];
     if (!row) return false;
+    if (row.mode !== "credentialed_fetch") throw new ConnectionCredentialsUnavailableError();
 
     const connectorId = row.connectorId;
     if (!isConnectorId(connectorId)) throw new UnknownConnectorError(connectorId);
@@ -233,6 +246,9 @@ export async function getDecryptedCredentials(
       .limit(1);
     const row = rows[0];
     if (!row) return null;
+    if (row.mode !== "credentialed_fetch" || !row.credentialsCt) {
+      throw new ConnectionCredentialsUnavailableError();
+    }
 
     const plaintext = decryptField(credentialKey, Buffer.from(row.credentialsCt), {
       rowId: row.id,

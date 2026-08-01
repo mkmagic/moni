@@ -1,21 +1,23 @@
 // src/domain/connections.ts (task 10) — `credentials_ct` round-trips under
 // the credential key (CK, never the data key), and cross-tenant reads
 // return nothing (RLS backstop, domain-layer.md §5).
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { withUser } from "@/db/client";
 import * as schema from "@/db/schema";
 import {
   createConnection,
+  ConnectionCredentialsUnavailableError,
   findConnectionByConnector,
   getDecryptedCredentials,
   InvalidCredentialsShapeError,
   listConnections,
   UnknownConnectorError,
+  updateConnectionCredentials,
 } from "@/domain/connections";
 import { createUser } from "@/domain/registration";
-import { cleanupOwners, enrollTestCredentialKey } from "./helpers";
+import { cleanupOwners, elevatedDb, enrollTestCredentialKey } from "./helpers";
 
 const SIGNUP_TOKEN = process.env.MONI_SIGNUP_TOKEN;
 if (!SIGNUP_TOKEN) {
@@ -75,7 +77,7 @@ describe("domain/connections", () => {
 
     await withUser(user.userId, async (tx) => {
       const rows = await tx.select().from(schema.connections).where(eq(schema.connections.id, id));
-      const stored = Buffer.from(rows[0].credentialsCt).toString("latin1");
+      const stored = Buffer.from(rows[0].credentialsCt!).toString("latin1");
       expect(stored.includes("opaque-marker")).toBe(false);
       expect(stored.includes("hunter2")).toBe(false);
     });
@@ -134,5 +136,46 @@ describe("domain/connections", () => {
 
     const bList = await listConnections(b.userId);
     expect(bList.map((c) => c.id)).not.toContain(id);
+  });
+});
+
+describe("connection credential modes", () => {
+  let userId: string;
+
+  beforeAll(async () => {
+    const [user] = await elevatedDb
+      .insert(schema.users)
+      .values({ email: `connection-mode-${randomUUID()}@test.moni` })
+      .returning({ id: schema.users.id });
+    userId = user.id;
+  });
+
+  afterAll(async () => {
+    await cleanupOwners([userId]);
+  });
+
+  it("rejects credential updates and reads for an import-mode connection", async () => {
+    const [connection] = await elevatedDb
+      .insert(schema.connections)
+      .values({
+        ownerId: userId,
+        connectorId: "leumi",
+        mode: "user_mediated_import",
+        credentialsCt: null,
+        status: "active",
+      })
+      .returning({ id: schema.connections.id });
+
+    await expect(
+      updateConnectionCredentials(
+        userId,
+        connection.id,
+        { username: "user", password: "secret" },
+        Buffer.alloc(32),
+      ),
+    ).rejects.toBeInstanceOf(ConnectionCredentialsUnavailableError);
+    await expect(
+      getDecryptedCredentials(userId, connection.id, Buffer.alloc(32)),
+    ).rejects.toBeInstanceOf(ConnectionCredentialsUnavailableError);
   });
 });

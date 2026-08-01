@@ -5,6 +5,7 @@ import {
   text,
   integer,
   jsonb,
+  timestamp,
   foreignKey,
   unique,
 } from "drizzle-orm/pg-core";
@@ -47,6 +48,7 @@ export const accounts = pgTable(
     // (data-model.md §5) — the snapshot table remains the source of truth.
     currentBalanceCt: bytea("current_balance_ct"),
     status: accountStatusEnum("status").notNull().default("active"),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
     lockedAttributes: jsonb("locked_attributes"),
     version: integer("version").notNull().default(1),
     ...timestamps,
