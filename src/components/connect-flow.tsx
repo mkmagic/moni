@@ -29,6 +29,8 @@ interface ConnectFlowProps {
   allowAddAnother?: boolean;
   /** Optional copy above the institution picker. */
   pickIntro?: ReactNode;
+  /** Credentialed sources need a passkey; import-only sources do not. */
+  credentialedEnabled?: boolean;
 }
 
 /** The connection under way, carried through every post-connect step. */
@@ -62,6 +64,7 @@ export function ConnectFlow({
   doneLabel,
   allowAddAnother = false,
   pickIntro,
+  credentialedEnabled = true,
 }: ConnectFlowProps) {
   const [step, setStep] = useState<Step>({ kind: "pick" });
   /** `null` means "connect but fetch nothing" — see BackfillWindowPicker. */
@@ -74,7 +77,8 @@ export function ConnectFlow({
    * starting a scrape at all — the connection is complete either way. */
   function afterConnected(target: Target) {
     setAddedCount((n) => n + 1);
-    if (startDate === null) {
+    const definition = getConnectorDefinition(target.connectorId);
+    if (definition?.mode === "user_mediated_import" || startDate === null) {
       setStep({ kind: "skipped", target });
       return;
     }
@@ -128,7 +132,10 @@ export function ConnectFlow({
     return (
       <div className="flex flex-col gap-5">
         {pickIntro}
-        <InstitutionPicker onSelect={(connectorId) => setStep({ kind: "connect", connectorId })} />
+        <InstitutionPicker
+          onSelect={(connectorId) => setStep({ kind: "connect", connectorId })}
+          credentialedEnabled={credentialedEnabled}
+        />
         {/* Only once something is connected — before that, leaving is what the
             zero-connections redirect already prevents. */}
         {addedCount > 0 && (
@@ -141,17 +148,25 @@ export function ConnectFlow({
   }
 
   if (step.kind === "connect") {
+    const definition = getConnectorDefinition(step.connectorId);
+    const isImport = definition?.mode === "user_mediated_import";
     return (
       <div className="flex flex-col gap-5">
         <div>
-          <h2 className="text-base font-semibold text-foreground">Enter your login</h2>
+          <h2 className="text-base font-semibold text-foreground">
+            {isImport ? "Set up statement import" : "Enter your login"}
+          </h2>
           <p className="text-sm text-muted-foreground">
-            {startDate === null
-              ? "We'll link the account without fetching anything yet."
-              : "We'll fetch your transactions as soon as it's connected."}
+            {isImport
+              ? "Create the connection now, then import a Schwab Positions CSV from Investments."
+              : startDate === null
+                ? "We'll link the account without fetching anything yet."
+                : "We'll fetch your transactions as soon as it's connected."}
           </p>
         </div>
-        <BackfillWindowPicker today={today} value={startDate} onChange={setStartDate} />
+        {!isImport && (
+          <BackfillWindowPicker today={today} value={startDate} onChange={setStartDate} />
+        )}
         <div className="border-t border-border pt-5">
           <ConnectForm
             connectorId={step.connectorId}
@@ -225,11 +240,13 @@ export function ConnectFlow({
         }
         title={skipped ? "Connected" : "All set"}
         body={
-          skipped
-            ? "We haven't fetched anything yet — sync it from the dashboard whenever you're ready."
-            : addedCount > 1
-              ? `${addedCount} accounts connected.`
-              : "Your account is connected and up to date."
+          step.target.connectorId === "schwab_positions_csv"
+            ? "Statement connection created. Import a Schwab Positions CSV from Investments when you're ready."
+            : skipped
+              ? "We haven't fetched anything yet — sync it from the dashboard whenever you're ready."
+              : addedCount > 1
+                ? `${addedCount} accounts connected.`
+                : "Your account is connected and up to date."
         }
       >
         {allowAddAnother && (

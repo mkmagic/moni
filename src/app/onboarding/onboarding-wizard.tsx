@@ -19,12 +19,21 @@ import { enrollPasskey } from "@/lib/passkey-client";
  * account" is simply not an available action before it. */
 export function OnboardingWizard({ today, hasPasskey }: { today: string; hasPasskey: boolean }) {
   const router = useRouter();
+  const [passkeyReady, setPasskeyReady] = useState(hasPasskey);
   const [phase, setPhase] = useState<"passkey" | "connect" | "reminder">(
     hasPasskey ? "connect" : "passkey",
   );
 
   if (phase === "passkey") {
-    return <PasskeyStep onDone={() => setPhase("connect")} />;
+    return (
+      <PasskeyStep
+        onDone={() => {
+          setPasskeyReady(true);
+          setPhase("connect");
+        }}
+        onSchwab={() => setPhase("connect")}
+      />
+    );
   }
 
   if (phase === "connect") {
@@ -34,6 +43,7 @@ export function OnboardingWizard({ today, hasPasskey }: { today: string; hasPass
           <ConnectFlow
             today={today}
             allowAddAnother
+            credentialedEnabled={passkeyReady}
             doneLabel="Continue"
             onDone={() => setPhase("reminder")}
             pickIntro={
@@ -62,7 +72,7 @@ export function OnboardingWizard({ today, hasPasskey }: { today: string; hasPass
  * to know. Their transactions and balances are unaffected either way — those
  * are unlocked by the login password.
  */
-function PasskeyStep({ onDone }: { onDone: () => void }) {
+function PasskeyStep({ onDone, onSchwab }: { onDone: () => void; onSchwab: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -112,6 +122,15 @@ function PasskeyStep({ onDone }: { onDone: () => void }) {
             <KeyRound className="h-3.5 w-3.5" />
           )}
           {busy ? "Waiting for your device…" : "Create passkey"}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={onSchwab}
+          disabled={busy}
+          className="self-start"
+        >
+          Import a Schwab statement without a passkey
         </Button>
       </div>
     </Card>

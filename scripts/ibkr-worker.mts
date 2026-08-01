@@ -4,15 +4,18 @@ import { join } from "node:path";
 import { decodeBinaryChildFrame, encodeBinaryChildFrame, readChildStdin } from "@/lib/connectors";
 import { completeSourceRefresh, fetchIbkrFlexXml, normalizeIbkrPayload } from "@/lib/investments";
 import { promoteInvestmentSnapshot } from "@/domain/investment-promotion";
+import { missingBoiFxPairs } from "@/domain/fx-rates";
 import { wipe } from "@/lib/crypto";
 
 async function cacheBoi(required: Array<{ currency: string; date: string }>): Promise<void> {
+  const missing = await missingBoiFxPairs(required);
+  if (missing.length === 0) return;
   const child = spawn(
     join(process.cwd(), "node_modules/.bin/tsx"),
     [join(process.cwd(), "scripts/boi-worker.mts")],
     { stdio: ["pipe", "ignore", "ignore"] },
   );
-  child.stdin.write(encodeBinaryChildFrame({ required }, []));
+  child.stdin.write(encodeBinaryChildFrame({ required: missing }, []));
   child.stdin.end();
   await new Promise<void>((resolve, reject) =>
     child

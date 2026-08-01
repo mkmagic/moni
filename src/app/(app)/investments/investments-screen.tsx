@@ -263,7 +263,37 @@ export function InvestmentsScreen({
     }
     setBusy(false);
   }
-  if (!hasData) return <EmptyState onImport={() => setImportOpen(true)} />;
+  async function finishImport(message: string) {
+    setImportOpen(false);
+    setNotice(message);
+    setError(null);
+    try {
+      const dates = rangeDates(range);
+      const [nextOverview, nextHistory] = await Promise.all([
+        json<PortfolioOverview>("/api/investments/overview"),
+        json<PortfolioHistory>(
+          `/api/investments/history?start=${dates.start}&end=${dates.end}&groupBy=${groupBy}`,
+        ),
+      ]);
+      setOverview(nextOverview);
+      setHistory(nextHistory);
+      await loadRows();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not reload investments");
+    }
+  }
+  if (!hasData)
+    return (
+      <>
+        <EmptyState onImport={() => setImportOpen(true)} />
+        <ImportDialog
+          open={importOpen}
+          onClose={() => setImportOpen(false)}
+          connections={connections.filter((item) => item.mode === "user_mediated_import")}
+          onDone={(message) => void finishImport(message)}
+        />
+      </>
+    );
   return (
     <div className="flex flex-col gap-6">
       <header>
@@ -331,6 +361,7 @@ export function InvestmentsScreen({
               const connection = connections.find((item) => item.id === view.id);
               if (connection) void refreshConnection(connection);
             }}
+            onImport={() => setImportOpen(true)}
           />
         ))}
       </section>
@@ -351,10 +382,7 @@ export function InvestmentsScreen({
         open={importOpen}
         onClose={() => setImportOpen(false)}
         connections={connections.filter((item) => item.mode === "user_mediated_import")}
-        onDone={(message) => {
-          setImportOpen(false);
-          setNotice(message);
-        }}
+        onDone={(message) => void finishImport(message)}
       />
     </div>
   );
@@ -398,7 +426,7 @@ function EmptyState({ onImport }: { onImport: () => void }) {
       </div>
       <div className="flex gap-3">
         <a
-          href="/settings/connections"
+          href="/settings/connections/connect"
           className="inline-flex h-9 items-center rounded-[var(--radius)] bg-primary px-3 text-sm font-medium text-primary-foreground"
         >
           Connect brokerage
@@ -492,6 +520,7 @@ function ConnectionCard({
   selected,
   onExpand,
   onRefresh,
+  onImport,
 }: {
   view: PortfolioOverview["connections"][number];
   connection?: ConnectionView;
@@ -500,6 +529,7 @@ function ConnectionCard({
   selected: string | null;
   onExpand: () => void;
   onRefresh: () => void;
+  onImport: () => void;
 }) {
   const broker = connection?.connectorId === "ibkr_flex" ? "interactivebrokers" : "schwab";
   const label = connection?.connectorId === "ibkr_flex" ? "Interactive Brokers" : "Charles Schwab";
@@ -517,6 +547,7 @@ function ConnectionCard({
             alt=""
             width={36}
             height={36}
+            unoptimized
             className="rounded-[var(--radius)] border border-border"
           />
           <div>
@@ -538,7 +569,11 @@ function ConnectionCard({
             <p className="tabular-nums font-medium">{money(view.ilsValue)}</p>
             <Freshness value={view.freshness} />
           </div>
-          <Button variant="outline" className="h-8 px-3 text-xs" onClick={onRefresh}>
+          <Button
+            variant="outline"
+            className="h-8 px-3 text-xs"
+            onClick={view.mode === "credentialed_fetch" ? onRefresh : onImport}
+          >
             {view.mode === "credentialed_fetch" ? "Refresh" : "Import file"}
           </Button>
         </div>
@@ -874,11 +909,11 @@ function ImportDialog({
     }
     const body = (await response.json()) as { syncRunId: string };
     const done = await waitForSyncRun(body.syncRunId);
-    onDone(
-      done.status === "succeeded"
-        ? "Statement imported."
-        : `${done.error ?? "Import failed"}. Last accepted snapshot remains included.`,
-    );
+    if (done.status !== "succeeded") {
+      setError(`${done.error ?? "Import failed"}. Last accepted snapshot remains included.`);
+      return;
+    }
+    onDone("Statement imported.");
   }
   return (
     <Dialog

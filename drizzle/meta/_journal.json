@@ -120,6 +120,13 @@
       "when": 1785567961124,
       "tag": "0016_fx_rates_boi_writer",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1785588190860,
+      "tag": "0017_enum-ownership-repair",
+      "breakpoints": true
     }
   ]
 }

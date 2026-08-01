@@ -54,4 +54,17 @@ describe("migrations: structural facts about moni_test", () => {
     );
     expect(rows.map((r) => r.rolname)).toEqual(["moni_app", "moni_owner"]);
   });
+
+  it("makes moni_owner the owner of every application enum", async () => {
+    const { rows } = await elevatedPool.query<{ typname: string; owner: string }>(
+      `select t.typname, r.rolname as owner
+       from pg_type t
+       join pg_namespace n on n.oid = t.typnamespace
+       join pg_roles r on r.oid = t.typowner
+       where n.nspname = 'public' and t.typtype = 'e'
+       order by t.typname`,
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.filter((row) => row.owner !== "moni_owner")).toEqual([]);
+  });
 });

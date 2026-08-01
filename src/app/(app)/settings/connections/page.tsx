@@ -60,7 +60,7 @@ export default async function ConnectionsSettingsPage() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-4">
-        <p className="text-sm text-muted-foreground">Linked bank and credit card logins</p>
+        <p className="text-sm text-muted-foreground">Linked banks, cards, and brokerages</p>
         <Link href="/settings/connections/connect">
           <Button variant="outline">Add connection</Button>
         </Link>

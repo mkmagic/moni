@@ -267,6 +267,29 @@ CREATE CONSTRAINT TRIGGER "instrument_source_mappings_quote_provider_check"
   DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW EXECUTE FUNCTION moni_validate_investment_quote_provider();
 
+-- A fresh bootstrap can apply 0014 as the Docker superuser before the
+-- operator switches DATABASE_URL_MIGRATE to moni_owner. Transfer the enum
+-- objects too, otherwise later ALTER TYPE migrations would fail even though
+-- all of the tables have the intended owner.
+ALTER TYPE "connection_mode" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "broker_valuation_basis" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "instrument_kind" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "investment_provider" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "investment_source" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "investment_quote_quality_state" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "investment_quote_split_state" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "investment_reconciliation_state" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "source_as_of_precision" OWNER TO moni_owner;
+--> statement-breakpoint
+
 ALTER TABLE "instruments" OWNER TO moni_owner;
 --> statement-breakpoint
 ALTER TABLE "instrument_source_mappings" OWNER TO moni_owner;

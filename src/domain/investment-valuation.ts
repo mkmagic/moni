@@ -192,18 +192,16 @@ export async function valueInvestmentSnapshot(
     .where(eq(investmentSnapshotDetails.id, snapshotId))
     .limit(1);
   if (!detail) throw new Error("investment snapshot not found");
-  const [positions, cash, quoteRows, mappingRows] = await Promise.all([
-    tx
-      .select()
-      .from(investmentSnapshotPositions)
-      .where(eq(investmentSnapshotPositions.snapshotId, detail.id)),
-    tx
-      .select()
-      .from(investmentSnapshotCashBalances)
-      .where(eq(investmentSnapshotCashBalances.snapshotId, detail.id)),
-    tx.select().from(investmentMarketQuotes),
-    tx.select().from(instrumentSourceMappings),
-  ]);
+  const positions = await tx
+    .select()
+    .from(investmentSnapshotPositions)
+    .where(eq(investmentSnapshotPositions.snapshotId, detail.id));
+  const cash = await tx
+    .select()
+    .from(investmentSnapshotCashBalances)
+    .where(eq(investmentSnapshotCashBalances.snapshotId, detail.id));
+  const quoteRows = await tx.select().from(investmentMarketQuotes);
+  const mappingRows = await tx.select().from(instrumentSourceMappings);
   const quoteByInstrument = new Map(
     quoteRows.filter((row) => row.provider === "tiingo").map((row) => [row.instrumentId, row]),
   );
@@ -361,10 +359,8 @@ export async function valueInvestmentNetWorth(
 ): Promise<InvestmentNetWorth> {
   const now = options.now ?? new Date();
   const cutoff = options.cutoff;
-  const [accountRows, detailRows] = await Promise.all([
-    tx.select().from(accounts),
-    tx.select().from(investmentSnapshotDetails),
-  ]);
+  const accountRows = await tx.select().from(accounts);
+  const detailRows = await tx.select().from(investmentSnapshotDetails);
   const selected: Array<{ id: string; carried: boolean }> = [];
   for (const account of accountRows) {
     if (account.accountType !== "investment") continue;
@@ -382,26 +378,28 @@ export async function valueInvestmentNetWorth(
         carried: !!cutoff && detail.weekStart < israelWeekStart(cutoff),
       });
   }
-  const values = await Promise.all(
-    selected.map(async ({ id, carried }) => {
-      const value = await valueInvestmentSnapshot(tx, dataKey, id, {
-        now,
-        estimateNow: !cutoff,
-      });
-      if (!carried) return value;
-      return {
-        ...value,
-        metadata: {
-          ...value.metadata,
-          freshness: "stale" as const,
-          affectedComponentCount: value.metadata.affectedComponentCount + 1,
-          qualityFlags: [
-            ...new Set([...value.metadata.qualityFlags, "carried_forward" as const]),
-          ].sort(),
-        },
-      };
-    }),
-  );
+  const values: InvestmentValuation[] = [];
+  for (const { id, carried } of selected) {
+    const value = await valueInvestmentSnapshot(tx, dataKey, id, {
+      now,
+      estimateNow: !cutoff,
+    });
+    values.push(
+      carried
+        ? {
+            ...value,
+            metadata: {
+              ...value.metadata,
+              freshness: "stale" as const,
+              affectedComponentCount: value.metadata.affectedComponentCount + 1,
+              qualityFlags: [
+                ...new Set([...value.metadata.qualityFlags, "carried_forward" as const]),
+              ].sort(),
+            },
+          }
+        : value,
+    );
+  }
   const flags = new Set<ValuationQualityFlag>();
   values.forEach((value) => value.metadata.qualityFlags.forEach((flag) => flags.add(flag)));
   const dates = (
@@ -448,13 +446,11 @@ export async function listTiingoQuoteTargets(
   tx: Tx,
   dataKey: Uint8Array,
 ): Promise<TiingoQuoteTarget[]> {
-  const [details, accountRows, positions, mappingRows, instrumentRows] = await Promise.all([
-    tx.select().from(investmentSnapshotDetails),
-    tx.select().from(accounts),
-    tx.select().from(investmentSnapshotPositions),
-    tx.select().from(instrumentSourceMappings),
-    tx.select().from(instruments),
-  ]);
+  const details = await tx.select().from(investmentSnapshotDetails);
+  const accountRows = await tx.select().from(accounts);
+  const positions = await tx.select().from(investmentSnapshotPositions);
+  const mappingRows = await tx.select().from(instrumentSourceMappings);
+  const instrumentRows = await tx.select().from(instruments);
   const active = new Set(
     accountRows
       .filter((row) => row.archivedAt === null && row.status === "active")

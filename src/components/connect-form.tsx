@@ -22,13 +22,11 @@ interface ConnectFormProps {
  * never outlive the submit: cleared from state the moment the request is
  * fired, never logged, never in a URL. */
 export function ConnectForm({ connectorId, onConnected, onBack }: ConnectFormProps) {
-  const def = getConnectorDefinition(connectorId);
+  const def = getConnectorDefinition(connectorId)!;
   const [values, setValues] = useState<Record<string, string>>({});
   const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-
-  if (!def) return null;
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -38,7 +36,7 @@ export function ConnectForm({ connectorId, onConnected, onBack }: ConnectFormPro
     const nickname = displayName.trim() || null;
     const body = JSON.stringify({
       connectorId,
-      credentials: values,
+      ...(def.mode === "credentialed_fetch" ? { credentials: values } : {}),
       displayName: nickname ?? undefined,
     });
     // Credentials must not linger in this component's state any longer than
@@ -46,29 +44,31 @@ export function ConnectForm({ connectorId, onConnected, onBack }: ConnectFormPro
     setValues({});
 
     try {
-      // Storing a bank login needs the credential key, so a locked window
-      // means one passkey prompt and an automatic retry — the user never
-      // sees a 423 or has to re-type what they just entered.
-      const sent = await sendUnlocked(() =>
+      const request = () =>
         fetch("/api/connections", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body,
-        }),
-      );
-      if (!sent.ok) {
-        setError(sent.message);
-        return;
-      }
-      if (sent.res.status === 201) {
-        const responseBody = (await sent.res.json()) as { id: string };
+        });
+      // Credentialed sources require the passkey-unlocked CK. Schwab import
+      // stores no credentials, so creating it must not prompt for or require
+      // that key.
+      const response =
+        def.mode === "credentialed_fetch"
+          ? await sendUnlocked(request).then((sent) => {
+              if (!sent.ok) throw new Error(sent.message);
+              return sent.res;
+            })
+          : await request();
+      if (response.status === 201) {
+        const responseBody = (await response.json()) as { id: string };
         onConnected(responseBody.id, nickname);
         return;
       }
-      const responseBody = (await sent.res.json().catch(() => ({}))) as { error?: string };
+      const responseBody = (await response.json().catch(() => ({}))) as { error?: string };
       setError(responseBody.error ?? "Could not connect");
-    } catch {
-      setError("Could not reach the server");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not reach the server");
     } finally {
       setLoading(false);
     }
@@ -82,7 +82,9 @@ export function ConnectForm({ connectorId, onConnected, onBack }: ConnectFormPro
           between an expression and immediately-following text on the same
           line ("Bank Hapoalimlogin."). One expression sidesteps it. */}
       <p className="text-sm text-muted-foreground">
-        {`Enter your ${def.label} login. Your credentials are encrypted before they're stored.`}
+        {def.mode === "credentialed_fetch"
+          ? `Enter your ${def.label} login. Your credentials are encrypted before they're stored.`
+          : "Create a statement connection. Schwab credentials and uploaded files are never stored."}
       </p>
       {def.loginFields.map((field) => (
         <div key={field.key} className="flex flex-col gap-1.5">
@@ -120,7 +122,11 @@ export function ConnectForm({ connectorId, onConnected, onBack }: ConnectFormPro
           </Button>
         )}
         <Button type="submit" disabled={loading} className="flex-1">
-          {loading ? "Connecting…" : `Connect ${def.label}`}
+          {loading
+            ? "Connecting…"
+            : def.mode === "credentialed_fetch"
+              ? `Connect ${def.label}`
+              : "Create Schwab connection"}
         </Button>
       </div>
     </form>

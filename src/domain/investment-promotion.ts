@@ -262,7 +262,8 @@ async function ilsRate(tx: Tx, currency: string, asOf: Date): Promise<Decimal> {
   if (
     !row ||
     row.source !== "boi" ||
-    (asOf.getTime() - Date.parse(`${row.date}T00:00:00Z`)) / 86_400_000 > 7
+    (Date.parse(`${isoDate(asOf)}T00:00:00Z`) - Date.parse(`${row.date}T00:00:00Z`)) / 86_400_000 >
+      7
   )
     fail("missing_fx");
   return new Decimal(row.rate);
@@ -337,14 +338,15 @@ async function promote(
   const week = weekStart(calendarDate);
   const ids = new Set(envelope.accounts.map((a) => a.sourceAccountRef));
   if (envelope.coverage.accountRefs.some((id) => !ids.has(id))) fail("incomplete_coverage");
-  const resolved = await Promise.all(
-    envelope.accounts.map((account) =>
-      resolveAccount(tx, userId, dataKey, connectionId, envelope.source, account),
-    ),
-  );
-  const existing = await Promise.all(
-    resolved.map((accountId) =>
-      tx
+  const resolved: string[] = [];
+  for (const account of envelope.accounts)
+    resolved.push(
+      await resolveAccount(tx, userId, dataKey, connectionId, envelope.source, account),
+    );
+  const existing: Array<(typeof investmentSnapshotDetails.$inferSelect)[]> = [];
+  for (const accountId of resolved)
+    existing.push(
+      await tx
         .select()
         .from(investmentSnapshotDetails)
         .where(
@@ -354,8 +356,7 @@ async function promote(
           ),
         )
         .limit(1),
-    ),
-  );
+    );
   let unchanged = true;
   for (let index = 0; index < existing.length; index++) {
     const detail = existing[index][0];

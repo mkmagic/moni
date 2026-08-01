@@ -58,6 +58,7 @@ const MIGRATION_FILES = [
   "0014_grey_logan.sql",
   "0015_investment-rls-and-lifecycle.sql",
   "0016_fx_rates_boi_writer.sql",
+  "0017_enum-ownership-repair.sql",
 ];
 
 /** Bookkeeping for which of MIGRATION_FILES this database has already seen.

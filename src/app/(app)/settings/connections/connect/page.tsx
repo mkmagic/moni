@@ -19,8 +19,8 @@ export default async function ConnectPage() {
         </Link>
         <h2 className="text-lg font-semibold text-foreground">Add a connection</h2>
         <p className="text-sm text-muted-foreground">
-          Link another bank or credit card. Your credentials are encrypted before they&apos;re
-          stored.
+          Link a bank, card, or brokerage. Login credentials are encrypted before storage; Schwab
+          statement connections store no credentials or files.
         </p>
       </div>
       <Card>

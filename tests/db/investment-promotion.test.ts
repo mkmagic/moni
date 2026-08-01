@@ -539,4 +539,33 @@ describe("promoteInvestmentSnapshot", () => {
       expect(run.error).toBe("missing_fx");
     });
   });
+
+  it("accepts a BOI observation exactly seven calendar days before a timestamped snapshot", async () => {
+    const f = await fixture();
+    const boundary = envelope("100", "2026-07-31T23:59:00Z");
+    boundary.accounts[0].baseCurrency = "JPY";
+    boundary.accounts[0].positions[0].currency = "JPY";
+    boundary.accounts[0].positions[0].sourceValueCurrency = "JPY";
+    boundary.accounts[0].cash[0].currency = "JPY";
+    boundary.accounts[0].brokerTotal.currency = "JPY";
+    await elevatedDb
+      .insert(schema.fxRates)
+      .values({
+        id: randomUUID(),
+        fromCurrency: "JPY",
+        toCurrency: "ILS",
+        date: "2026-07-24",
+        rate: "0.02",
+        source: "boi",
+      })
+      .onConflictDoNothing();
+
+    await expect(
+      promoteInvestmentSnapshot({
+        ...f,
+        syncRunId: await running(f.userId, f.connectionId),
+        envelope: boundary,
+      }),
+    ).resolves.toMatchObject({ outcome: "promoted" });
+  });
 });

@@ -159,6 +159,39 @@ async function quote(
 }
 
 describe("portfolio public reads", () => {
+  it("does not overlap queries on the transaction client", async () => {
+    const o = await owner();
+    await fx("USD", "2026-07-31", "3.5");
+    const source = await connection(o);
+    await promote(
+      o,
+      source.connectionId,
+      source.syncRunId,
+      "****0099",
+      "2026-07-31",
+      [
+        { id: "SERIAL-A", value: "10" },
+        { id: "SERIAL-B", value: "20" },
+      ],
+      "5",
+    );
+
+    const warnings: Error[] = [];
+    const collect = (warning: Error) => {
+      if (warning.message.includes("client.query() when the client is already executing a query"))
+        warnings.push(warning);
+    };
+    process.on("warning", collect);
+    try {
+      await getPortfolioOverview(o.session);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    } finally {
+      process.off("warning", collect);
+    }
+
+    expect(warnings).toEqual([]);
+  });
+
   it("returns exact consolidated overview and filtered stable pages without exposing cursor values", async () => {
     const o = await owner();
     await fx("USD", "2026-07-31", "3.5");

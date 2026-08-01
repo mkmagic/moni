@@ -18,6 +18,7 @@ import { decText } from "./fields";
 import {
   selectCurrentComponent,
   valueInvestmentSnapshot,
+  type InvestmentValuation,
   type ValuationMetadata,
 } from "./investment-valuation";
 
@@ -195,27 +196,17 @@ function decodeCursor(key: Uint8Array, cursor: string, revision: string, filters
 }
 
 async function structural(tx: Tx): Promise<Structural> {
-  const [
-    details,
-    accountRows,
-    connectionRows,
-    positions,
-    cash,
-    instrumentRows,
-    quotes,
-    mappings,
-    fx,
-  ] = await Promise.all([
-    tx.select().from(investmentSnapshotDetails),
-    tx.select().from(accounts),
-    tx.select().from(connections),
-    tx.select().from(investmentSnapshotPositions),
-    tx.select().from(investmentSnapshotCashBalances),
-    tx.select().from(instruments),
-    tx.select().from(investmentMarketQuotes),
-    tx.select().from(instrumentSourceMappings),
-    tx.select().from(fxRates),
-  ]);
+  // A withUser transaction owns one pg client. Keep its queries sequential;
+  // pg@8 only tolerated overlapping client.query calls and pg@9 removes them.
+  const details = await tx.select().from(investmentSnapshotDetails);
+  const accountRows = await tx.select().from(accounts);
+  const connectionRows = await tx.select().from(connections);
+  const positions = await tx.select().from(investmentSnapshotPositions);
+  const cash = await tx.select().from(investmentSnapshotCashBalances);
+  const instrumentRows = await tx.select().from(instruments);
+  const quotes = await tx.select().from(investmentMarketQuotes);
+  const mappings = await tx.select().from(instrumentSourceMappings);
+  const fx = await tx.select().from(fxRates);
   return {
     details,
     accounts: accountRows,
@@ -315,118 +306,113 @@ async function rowsForSnapshot(
   };
   const positions = all.positions.filter((row) => row.snapshotId === detail.id);
   const cash = all.cash.filter((row) => row.snapshotId === detail.id);
-  return Promise.all([
-    ...positions.map(async (row): Promise<PortfolioHolding> => {
-      let value =
-        decText(key, row.sourceValueCt, row.id, "source_value_ct", row.version) ??
-        new Decimal(decText(key, row.quantityCt, row.id, "quantity_ct", row.version)!)
-          .mul(decText(key, row.sourcePriceCt, row.id, "source_price_ct", row.version) ?? "0")
-          .toFixed();
-      const sourceCurrency = row.sourceValueCurrency ?? row.sourcePriceCurrency ?? row.currency;
-      const sourceDate = row.sourceAsOf ?? detail.sourceAsOf;
-      const instrument = instrumentById.get(row.instrumentId);
-      const quote = all.quotes.find(
-        (candidate) =>
-          candidate.instrumentId === row.instrumentId && candidate.provider === "tiingo",
-      );
-      const mapping = all.mappings.find((candidate) => candidate.instrumentId === row.instrumentId);
-      const exchange = mapping?.exchangeCt
-        ? (decText(
-            key,
-            mapping.exchangeCt,
-            mapping.id,
-            "exchange_ct",
-            mapping.version,
-          )?.toUpperCase() ?? null)
-        : null;
-      const quotePrice = quote
-        ? decText(key, quote.priceCt, quote.id, "price_ct", quote.version)!
-        : null;
-      const selected = selectCurrentComponent({
-        estimateNow,
-        now: new Date(),
-        kind: instrument?.kind,
-        positionCurrency: row.currency,
-        mappingCurrency: mapping?.currency,
-        exchange,
-        quantity: decText(key, row.quantityCt, row.id, "quantity_ct", row.version)!,
-        brokerValue: value,
-        brokerCurrency: sourceCurrency,
-        brokerDate: sourceDate,
-        quote: quote
-          ? {
-              price: quotePrice!,
-              currency: quote.currency,
-              sourceDate: quote.sourceDate,
-              qualityState: quote.qualityState,
-              splitState: quote.splitState,
-            }
-          : undefined,
-      });
-      value = selected.value;
-      const fx = await rate(tx, selected.currency, selected.date);
-      return {
-        id: row.id,
-        kind: "position",
-        instrumentId: row.instrumentId,
-        instrumentKind: instrument?.kind ?? null,
-        label:
-          decText(
-            key,
-            instrument?.canonicalNameCt,
-            instrument?.id ?? row.id,
-            "canonical_name_ct",
-            instrument?.version ?? 1,
-          ) ??
-          decText(
-            key,
-            instrument?.canonicalSymbolCt,
-            instrument?.id ?? row.id,
-            "canonical_symbol_ct",
-            instrument?.version ?? 1,
-          ) ??
-          "Unresolved instrument",
-        currency: selected.currency,
-        quantity: decText(key, row.quantityCt, row.id, "quantity_ct", row.version),
-        price:
-          selected.basis === "tiingo_estimate"
-            ? quotePrice
-            : decText(key, row.sourcePriceCt, row.id, "source_price_ct", row.version),
-        nativeValue: value,
-        ilsValue: fx ? new Decimal(value).mul(fx.rate).toFixed() : "0",
-        fxAsOf: fx?.date ?? null,
-        ...common,
-        basis: selected.basis,
-        sourceAsOf: datePart(selected.date),
-        qualityReasons: fx
-          ? [...quality, ...(selected.fallback ? ["quote_fallback" as const] : [])]
-          : [
-              ...quality,
-              ...(selected.fallback ? ["quote_fallback" as const] : []),
-              "incomplete_fx",
-            ],
-      };
-    }),
-    ...cash.map(async (row): Promise<PortfolioHolding> => {
-      const value = decText(key, row.amountCt, row.id, "amount_ct", row.version)!;
-      const fx = await rate(tx, row.currency, detail.sourceAsOf);
-      return {
-        id: row.id,
-        kind: "cash",
-        instrumentId: null,
-        instrumentKind: null,
-        label: `Cash (${row.currency})`,
-        currency: row.currency,
-        quantity: null,
-        price: null,
-        nativeValue: value,
-        ilsValue: fx ? new Decimal(value).mul(fx.rate).toFixed() : "0",
-        fxAsOf: fx?.date ?? null,
-        ...common,
-        qualityReasons: fx ? quality : [...quality, "incomplete_fx"],
-      };
-    }),
-  ]);
+  const result: PortfolioHolding[] = [];
+  for (const row of positions) {
+    let value =
+      decText(key, row.sourceValueCt, row.id, "source_value_ct", row.version) ??
+      new Decimal(decText(key, row.quantityCt, row.id, "quantity_ct", row.version)!)
+        .mul(decText(key, row.sourcePriceCt, row.id, "source_price_ct", row.version) ?? "0")
+        .toFixed();
+    const sourceCurrency = row.sourceValueCurrency ?? row.sourcePriceCurrency ?? row.currency;
+    const sourceDate = row.sourceAsOf ?? detail.sourceAsOf;
+    const instrument = instrumentById.get(row.instrumentId);
+    const quote = all.quotes.find(
+      (candidate) => candidate.instrumentId === row.instrumentId && candidate.provider === "tiingo",
+    );
+    const mapping = all.mappings.find((candidate) => candidate.instrumentId === row.instrumentId);
+    const exchange = mapping?.exchangeCt
+      ? (decText(
+          key,
+          mapping.exchangeCt,
+          mapping.id,
+          "exchange_ct",
+          mapping.version,
+        )?.toUpperCase() ?? null)
+      : null;
+    const quotePrice = quote
+      ? decText(key, quote.priceCt, quote.id, "price_ct", quote.version)!
+      : null;
+    const selected = selectCurrentComponent({
+      estimateNow,
+      now: new Date(),
+      kind: instrument?.kind,
+      positionCurrency: row.currency,
+      mappingCurrency: mapping?.currency,
+      exchange,
+      quantity: decText(key, row.quantityCt, row.id, "quantity_ct", row.version)!,
+      brokerValue: value,
+      brokerCurrency: sourceCurrency,
+      brokerDate: sourceDate,
+      quote: quote
+        ? {
+            price: quotePrice!,
+            currency: quote.currency,
+            sourceDate: quote.sourceDate,
+            qualityState: quote.qualityState,
+            splitState: quote.splitState,
+          }
+        : undefined,
+    });
+    value = selected.value;
+    const fx = await rate(tx, selected.currency, selected.date);
+    result.push({
+      id: row.id,
+      kind: "position",
+      instrumentId: row.instrumentId,
+      instrumentKind: instrument?.kind ?? null,
+      label:
+        decText(
+          key,
+          instrument?.canonicalNameCt,
+          instrument?.id ?? row.id,
+          "canonical_name_ct",
+          instrument?.version ?? 1,
+        ) ??
+        decText(
+          key,
+          instrument?.canonicalSymbolCt,
+          instrument?.id ?? row.id,
+          "canonical_symbol_ct",
+          instrument?.version ?? 1,
+        ) ??
+        "Unresolved instrument",
+      currency: selected.currency,
+      quantity: decText(key, row.quantityCt, row.id, "quantity_ct", row.version),
+      price:
+        selected.basis === "tiingo_estimate"
+          ? quotePrice
+          : decText(key, row.sourcePriceCt, row.id, "source_price_ct", row.version),
+      nativeValue: value,
+      ilsValue: fx ? new Decimal(value).mul(fx.rate).toFixed() : "0",
+      fxAsOf: fx?.date ?? null,
+      ...common,
+      basis: selected.basis,
+      sourceAsOf: datePart(selected.date),
+      qualityReasons: fx
+        ? [...quality, ...(selected.fallback ? ["quote_fallback" as const] : [])]
+        : [...quality, ...(selected.fallback ? ["quote_fallback" as const] : []), "incomplete_fx"],
+    });
+  }
+  for (const row of cash) {
+    const value = decText(key, row.amountCt, row.id, "amount_ct", row.version)!;
+    const fx = await rate(tx, row.currency, detail.sourceAsOf);
+    result.push({
+      id: row.id,
+      kind: "cash",
+      instrumentId: null,
+      instrumentKind: null,
+      label: `Cash (${row.currency})`,
+      currency: row.currency,
+      quantity: null,
+      price: null,
+      nativeValue: value,
+      ilsValue: fx ? new Decimal(value).mul(fx.rate).toFixed() : "0",
+      fxAsOf: fx?.date ?? null,
+      ...common,
+      qualityReasons: fx ? quality : [...quality, "incomplete_fx"],
+    });
+  }
+  return result;
 }
 function allocation(rows: PortfolioHolding[]): PortfolioHolding[] {
   const total = rows.reduce((sum, row) => sum.plus(row.ilsValue), new Decimal(0));
@@ -473,19 +459,20 @@ export async function getPortfolioOverview(session: Session): Promise<PortfolioO
   return withUser(session.userId, async (tx) => {
     const all = await structural(tx);
     const active = latestByAccount(all);
-    const values = await Promise.all(
-      [...active.values()].map(async (detail) => ({
+    const values: Array<{
+      detail: Structural["details"][number];
+      value: InvestmentValuation;
+    }> = [];
+    const currentRows: PortfolioHolding[] = [];
+    for (const detail of active.values()) {
+      values.push({
         detail,
-        value: await valueInvestmentSnapshot(tx, session.dataKey, detail.id, { estimateNow: true }),
-      })),
-    );
-    const currentRows = (
-      await Promise.all(
-        [...active.values()].map((detail) =>
-          rowsForSnapshot(tx, session.dataKey, all, detail, false, true),
-        ),
-      )
-    ).flat();
+        value: await valueInvestmentSnapshot(tx, session.dataKey, detail.id, {
+          estimateNow: true,
+        }),
+      });
+      currentRows.push(...(await rowsForSnapshot(tx, session.dataKey, all, detail, false, true)));
+    }
     const total = currentRows.reduce((sum, row) => sum.plus(row.ilsValue), new Decimal(0));
     const cashRows = currentRows.filter((row) => row.kind === "cash");
     const allocationRows = allocation(currentRows.filter((row) => row.kind === "position"));
@@ -611,13 +598,9 @@ export async function listPortfolioHoldings(
 ): Promise<PortfolioPage> {
   return withUser(session.userId, async (tx) => {
     const all = await structural(tx);
-    const rows = (
-      await Promise.all(
-        [...latestByAccount(all).values()].map((detail) =>
-          rowsForSnapshot(tx, session.dataKey, all, detail, false, true),
-        ),
-      )
-    ).flat();
+    const rows: PortfolioHolding[] = [];
+    for (const detail of latestByAccount(all).values())
+      rows.push(...(await rowsForSnapshot(tx, session.dataKey, all, detail, false, true)));
     return page(
       session.dataKey,
       allocation(rows.filter((row) => applies(row, filters))),
@@ -661,13 +644,9 @@ export async function getPortfolioHistory(
         const detail = candidates.sort((a, b) => b.weekStart.localeCompare(a.weekStart))[0];
         if (detail) used.push({ detail, carried: detail.weekStart !== week });
       }
-      const components = (
-        await Promise.all(
-          used.map(({ detail, carried }) =>
-            rowsForSnapshot(tx, session.dataKey, all, detail, carried),
-          ),
-        )
-      ).flat();
+      const components: PortfolioHolding[] = [];
+      for (const { detail, carried } of used)
+        components.push(...(await rowsForSnapshot(tx, session.dataKey, all, detail, carried)));
       const grouped = new Map<string, { id: string; label: string; ils: Decimal }>();
       for (const row of components) {
         const id =
@@ -729,11 +708,11 @@ export async function getPortfolioHistory(
         ? change.div(first!.ilsValue).mul(100).toFixed()
         : "0";
     const latest = latestByAccount(all);
-    const estimate = await Promise.all(
-      [...latest.values()].map((detail) =>
-        valueInvestmentSnapshot(tx, session.dataKey, detail.id, { estimateNow: true }),
-      ),
-    );
+    const estimate: InvestmentValuation[] = [];
+    for (const detail of latest.values())
+      estimate.push(
+        await valueInvestmentSnapshot(tx, session.dataKey, detail.id, { estimateNow: true }),
+      );
     return {
       points,
       valuationChange: change
@@ -764,32 +743,29 @@ export async function getPortfolioSnapshot(
   return withUser(session.userId, async (tx) => {
     const all = await structural(tx);
     const chosen = sunday(week);
-    const rows = (
-      await Promise.all(
-        all.accounts
-          .filter(
-            (account) =>
-              account.accountType === "investment" &&
-              (!account.archivedAt ||
-                account.archivedAt >
-                  new Date(new Date(`${chosen}T00:00:00Z`).getTime() + 7 * 86_400_000)),
-          )
-          .map(async (account) => {
-            const details = all.details
-              .filter((detail) => detail.accountId === account.id && detail.weekStart <= chosen)
-              .sort((a, b) => b.weekStart.localeCompare(a.weekStart));
-            return details[0]
-              ? rowsForSnapshot(
-                  tx,
-                  session.dataKey,
-                  all,
-                  details[0],
-                  details[0].weekStart !== chosen,
-                )
-              : [];
-          }),
-      )
-    ).flat();
+    const rows: PortfolioHolding[] = [];
+    const eligibleAccounts = all.accounts.filter(
+      (account) =>
+        account.accountType === "investment" &&
+        (!account.archivedAt ||
+          account.archivedAt >
+            new Date(new Date(`${chosen}T00:00:00Z`).getTime() + 7 * 86_400_000)),
+    );
+    for (const account of eligibleAccounts) {
+      const details = all.details
+        .filter((detail) => detail.accountId === account.id && detail.weekStart <= chosen)
+        .sort((a, b) => b.weekStart.localeCompare(a.weekStart));
+      if (details[0])
+        rows.push(
+          ...(await rowsForSnapshot(
+            tx,
+            session.dataKey,
+            all,
+            details[0],
+            details[0].weekStart !== chosen,
+          )),
+        );
+    }
     const result = page(
       session.dataKey,
       allocation(rows),

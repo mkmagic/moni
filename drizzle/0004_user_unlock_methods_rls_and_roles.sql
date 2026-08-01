@@ -14,6 +14,8 @@
 -- ---------------------------------------------------------------------------
 -- 1. Table ownership -> moni_owner (0001 §3's pattern)
 -- ---------------------------------------------------------------------------
+ALTER TYPE "unlock_method_type" OWNER TO moni_owner;
+--> statement-breakpoint
 ALTER TABLE "user_unlock_methods" OWNER TO moni_owner;
 --> statement-breakpoint
 
