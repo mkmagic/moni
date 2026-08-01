@@ -6,20 +6,53 @@ import { encodeBinaryChildFrame } from "@/lib/connectors";
 export const WORKER_TIMEOUT_MS = 5 * 60 * 1000;
 const KILL_GRACE_MS = 5_000;
 
-function start(script: string, frame: Buffer): ReturnType<typeof spawn> {
+export interface TiingoRefreshCounts {
+  attempted: number;
+  updated: number;
+}
+
+/**
+ * Reads the one structural line a quote worker writes to stdout. Counts only —
+ * a worker never puts a symbol or a provider message on a pipe the route reads.
+ */
+export function parseTiingoRefreshCounts(output: string): TiingoRefreshCounts {
+  try {
+    const parsed = JSON.parse(output.trim().split("\n").pop() ?? "") as unknown;
+    const counts = parsed as { attempted?: unknown; updated?: unknown };
+    if (
+      typeof counts?.attempted !== "number" ||
+      typeof counts?.updated !== "number" ||
+      !Number.isInteger(counts.attempted) ||
+      !Number.isInteger(counts.updated) ||
+      counts.attempted < 0 ||
+      counts.updated < 0 ||
+      counts.updated > counts.attempted
+    )
+      return { attempted: 0, updated: 0 };
+    return { attempted: counts.attempted, updated: counts.updated };
+  } catch {
+    return { attempted: 0, updated: 0 };
+  }
+}
+
+function start(script: string, frame: Buffer, captureStdout = false): ReturnType<typeof spawn> {
   const child = spawn(
     path.join(process.cwd(), "node_modules", ".bin", "tsx"),
     [path.join(process.cwd(), "scripts", script)],
     {
       stdio: [
         "pipe",
-        "ignore",
+        captureStdout ? "pipe" : "ignore",
         process.env.MONI_IBKR_DIAGNOSTIC === "1" || process.env.MONI_SYNC_DIAGNOSTIC === "1"
           ? "inherit"
           : "ignore",
       ],
     },
   );
+  // A conditional stdio entry costs the literal-tuple overload that used to
+  // prove stdin is a pipe. Both callers already treat a throw here as a failed
+  // start and wipe the frame themselves.
+  if (!child.stdin) throw new Error("worker_stdin_unavailable");
   child.stdin.write(frame, () => frame.fill(0));
   child.stdin.end();
   child.once("error", () => frame.fill(0));
@@ -74,19 +107,26 @@ export async function runTiingoWorker(input: {
   userId: string;
   dataKey: Buffer;
   token: Buffer;
-}): Promise<boolean> {
+}): Promise<{ ok: boolean } & TiingoRefreshCounts> {
   const frame = encodeBinaryChildFrame({ userId: input.userId }, [input.dataKey, input.token]);
   let child: ReturnType<typeof spawn>;
   try {
-    child = start("tiingo-quote-worker.mts", frame);
+    child = start("tiingo-quote-worker.mts", frame, true);
   } catch {
     frame.fill(0);
     input.dataKey.fill(0);
     input.token.fill(0);
-    return false;
+    return { ok: false, attempted: 0, updated: 0 };
   }
   input.dataKey.fill(0);
   input.token.fill(0);
+  // Bounded: the worker writes one short counts line, and a runaway child must
+  // not be able to grow the route's memory.
+  let output = "";
+  child.stdout?.setEncoding("utf8");
+  child.stdout?.on("data", (chunk: string) => {
+    if (output.length < 1024) output += chunk;
+  });
   return new Promise((resolve) => {
     let kill: NodeJS.Timeout | undefined;
     let settled = false;
@@ -100,7 +140,7 @@ export async function runTiingoWorker(input: {
       settled = true;
       clearTimeout(term);
       if (kill && !preserveKill) clearTimeout(kill);
-      resolve(ok);
+      resolve({ ok, ...(ok ? parseTiingoRefreshCounts(output) : { attempted: 0, updated: 0 }) });
     };
     child.once("close", (code, signal) => done(code === 0 && !signal));
     child.once("error", () => done(false));

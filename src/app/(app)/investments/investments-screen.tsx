@@ -251,15 +251,20 @@ export function InvestmentsScreen({
       () => null,
     );
     // A configured-but-absent Tiingo token answers 200 with refreshed:false, so
-    // response.ok alone reported success for a refresh that never ran.
+    // response.ok alone reported success for a refresh that never ran. The
+    // counts separate that again from "ran, but nothing was eligible".
     const quoteBody = quotes?.ok
-      ? await quotes.json().catch(() => null as { refreshed?: boolean } | null)
+      ? await quotes
+          .json()
+          .catch(() => null as { refreshed?: boolean; attempted?: number; updated?: number } | null)
       : null;
     const refreshed = !quotes?.ok
       ? " Quote refresh was unavailable; broker values remain included."
-      : quoteBody?.refreshed
-        ? " Quote refresh completed best-effort."
-        : " Quote estimates are not configured; broker values remain included.";
+      : !quoteBody?.refreshed
+        ? " Quote estimates are not configured; broker values remain included."
+        : !quoteBody.attempted
+          ? " No holdings were eligible for a quote estimate; broker values remain included."
+          : ` Quote estimates refreshed for ${quoteBody.updated} of ${quoteBody.attempted} holdings.`;
     setNotice(
       `${files.length ? `${files.join(", ")} need a statement file.` : ""}${failures.join(" ")}${refreshed}`.trim(),
     );

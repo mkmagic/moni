@@ -7,12 +7,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const session = getSessionFromRequest(req);
   if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const token = tiingoWorkerConfiguration();
+  // No counts here on purpose: nothing ran, so there is nothing to count.
   if (!token) return NextResponse.json({ refreshed: false });
-  const refreshed = await runTiingoWorker({
+  const result = await runTiingoWorker({
     userId: session.userId,
     dataKey: Buffer.from(session.dataKey),
     token,
   });
-  if (!refreshed) return NextResponse.json({ error: "quote_refresh_failed" }, { status: 502 });
-  return NextResponse.json({ refreshed: true });
+  if (!result.ok) return NextResponse.json({ error: "quote_refresh_failed" }, { status: 502 });
+  return NextResponse.json({
+    refreshed: true,
+    attempted: result.attempted,
+    updated: result.updated,
+  });
 }

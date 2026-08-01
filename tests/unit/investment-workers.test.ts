@@ -6,6 +6,7 @@ import {
   fetchBoiRates,
   fetchIbkrFlexXml,
   parseBoiSdmxCsv,
+  parseTiingoRefreshCounts,
   readBoundedResponse,
   refreshBoiWithFallback,
   requiredBoiPairs,
@@ -270,5 +271,36 @@ describe("investment worker seams", () => {
       { currency: "GBP", date: "2026-08-02" },
       { currency: "USD", date: "2026-07-31" },
     ]);
+  });
+});
+
+describe("parseTiingoRefreshCounts", () => {
+  it("reads the counts line the quote worker writes", () => {
+    expect(parseTiingoRefreshCounts('{"attempted":3,"updated":2}\n')).toEqual({
+      attempted: 3,
+      updated: 2,
+    });
+  });
+
+  it("takes the last line, so a stray earlier write cannot shift the counts", () => {
+    expect(parseTiingoRefreshCounts('noise\n{"attempted":1,"updated":1}\n')).toEqual({
+      attempted: 1,
+      updated: 1,
+    });
+  });
+
+  it("reports nothing rather than guessing when the output is unusable", () => {
+    // A worker that crashed mid-write, or wrote something impossible, must not
+    // be able to make the UI claim a refresh that did not happen.
+    for (const output of [
+      "",
+      "not json",
+      '{"attempted":2}',
+      '{"attempted":"3","updated":"2"}',
+      '{"attempted":1,"updated":5}',
+      '{"attempted":-1,"updated":-1}',
+      '{"attempted":1.5,"updated":1}',
+    ])
+      expect(parseTiingoRefreshCounts(output)).toEqual({ attempted: 0, updated: 0 });
   });
 });

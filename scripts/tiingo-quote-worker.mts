@@ -9,7 +9,7 @@ import { fetchTiingoEodQuote, runTiingoQuoteWorkerFrame } from "@/lib/investment
 async function main(): Promise<void> {
   const frame = await readChildStdin(process.stdin);
   await runTiingoQuoteWorkerFrame(frame, async ({ userId, dataKey, token }) => {
-    await refreshTiingoQuotes({
+    const counts = await refreshTiingoQuotes({
       dataKey,
       token,
       fetcher: fetch,
@@ -18,6 +18,9 @@ async function main(): Promise<void> {
       replaceQuote: (dataKey, input) =>
         replaceTiingoQuoteForUser(userId, dataKey, { ...input, qualityState: "accepted" }),
     });
+    // Counts only — the sole thing this worker is allowed to put on stdout,
+    // which the route reads to report what the refresh actually did.
+    process.stdout.write(`${JSON.stringify(counts)}\n`);
   });
 }
 
