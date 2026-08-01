@@ -15,6 +15,17 @@ export {
   readBoundedResponse,
 } from "./workers";
 export {
+  TIINGO_API_ORIGIN,
+  fetchTiingoEodQuote,
+  parseTiingoEodQuote,
+  type TiingoEodQuote,
+} from "./tiingo";
+export {
+  refreshTiingoQuotes,
+  runTiingoQuoteWorkerFrame,
+  type TiingoQuoteRefreshDependencies,
+} from "./tiingo-worker";
+export {
   InvestmentNormalizationError,
   type InvestmentNormalizationErrorCode,
   type InvestmentSyncEnvelope,
