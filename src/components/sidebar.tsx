@@ -17,7 +17,7 @@ const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
   { href: "/accounts", label: "Accounts", icon: Landmark },
-  { href: "/prototype/investments", label: "Investments", icon: TrendingUp },
+  { href: "/investments", label: "Investments", icon: TrendingUp },
 ] as const;
 
 // Sits at the bottom of the rail, above the account block — Connections now
