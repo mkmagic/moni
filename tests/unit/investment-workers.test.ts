@@ -3,9 +3,11 @@ import {
   BOI_SDMX_URL,
   IBKR_FLEX_URL,
   completeSourceRefresh,
+  fetchBoiRates,
   fetchIbkrFlexXml,
   parseBoiSdmxCsv,
   readBoundedResponse,
+  refreshBoiWithFallback,
   requiredBoiPairs,
 } from "@/lib/investments";
 import {
@@ -75,6 +77,28 @@ describe("investment worker seams", () => {
     );
   });
 
+  it("bounds BOI requests to the required currencies and seven-day date window", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          "BASE_CURRENCY,COUNTER_CURRENCY,TIME_PERIOD,OBS_VALUE,UNIT_MULT\nUSD,ILS,2026-07-28,3058,3\n",
+        ),
+      );
+
+    await expect(
+      fetchBoiRates([{ currency: "USD", date: "2026-07-31" }], fetcher),
+    ).resolves.toEqual([{ currency: "USD", date: "2026-07-28", rate: "3.058" }]);
+
+    const url = new URL(fetcher.mock.calls[0][0]);
+    expect(url.searchParams.get("c[DATA_TYPE]")).toBe("OF00");
+    expect(url.searchParams.get("c[BASE_CURRENCY]")).toBe("USD");
+    expect(url.searchParams.get("c[COUNTER_CURRENCY]")).toBe("ILS");
+    expect(url.searchParams.get("startPeriod")).toBe("2026-07-24");
+    expect(url.searchParams.get("endPeriod")).toBe("2026-07-31");
+    expect(url.searchParams.get("format")).toBe("csv");
+  });
+
   it("rejects declared and streamed oversized responses before retaining a body", async () => {
     await expect(
       readBoundedResponse(
@@ -137,6 +161,38 @@ describe("investment worker seams", () => {
       },
     });
     expect(order).toEqual(["cache", "promote"]);
+  });
+
+  it("attempts an authoritative BOI refresh even when a usable cached rate exists", async () => {
+    const required = [{ currency: "USD", date: "2026-07-31" }];
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const missing = vi.fn().mockResolvedValue([]);
+
+    await refreshBoiWithFallback(required, refresh, missing);
+
+    expect(refresh).toHaveBeenCalledWith(required);
+    expect(missing).not.toHaveBeenCalled();
+  });
+
+  it("uses a recent BOI cache only when the authoritative refresh fails", async () => {
+    const required = [{ currency: "USD", date: "2026-07-31" }];
+    const failure = new Error("boi_failed");
+
+    await expect(
+      refreshBoiWithFallback(
+        required,
+        vi.fn().mockRejectedValue(failure),
+        vi.fn().mockResolvedValue([]),
+      ),
+    ).resolves.toBeUndefined();
+
+    await expect(
+      refreshBoiWithFallback(
+        required,
+        vi.fn().mockRejectedValue(failure),
+        vi.fn().mockResolvedValue(required),
+      ),
+    ).rejects.toBe(failure);
   });
 
   it("derives distinct component currency/date pairs using Israel source dates", () => {

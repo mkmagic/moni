@@ -80,9 +80,10 @@ async function wipeAll(owner: Client): Promise<void> {
 // ---------------------------------------------------------------------------
 // 2. fx_rates (global reference data, no owner_id — moni_app is SELECT-only
 //    per the T3 grants, so this also goes through the elevated connection).
-//    A handful of representative ILS<->USD dates spanning the entries below.
+//    A handful of deterministic ILS<->USD demo dates spanning the entries
+//    below. They are explicitly not attributed to an external authority.
 // ---------------------------------------------------------------------------
-const FX_SOURCE = "boi";
+const DEMO_FX_SOURCE = "demo-fixed";
 const FX_DATES_USD_ILS: Array<{ date: string; rate: string }> = [
   { date: "2026-05-01", rate: "3.70" },
   { date: "2026-05-15", rate: "3.72" },
@@ -92,6 +93,9 @@ const FX_DATES_USD_ILS: Array<{ date: string; rate: string }> = [
   { date: "2026-07-15", rate: "3.75" },
   { date: "2026-07-24", rate: "3.74" },
 ];
+// Captured from the official BOI USD representative-rate page. This is a real
+// historical observation used to promote the deterministic investment demo.
+const BOI_USD_ILS_FIXTURE = { date: "2026-07-28", rate: "3.058" } as const;
 /** Rate lookup entries reuse so entries.fxRate is honestly "a real locked rate from
  * the seeded fx_rates table," not a coincidentally-matching separate number. */
 const fxRateByDate = new Map(FX_DATES_USD_ILS.map((r) => [r.date, r.rate]));
@@ -102,17 +106,23 @@ async function seedFxRates(owner: Client): Promise<number> {
     await owner.query(
       `INSERT INTO fx_rates (id, from_currency, to_currency, date, rate, source)
        VALUES ($1, 'USD', 'ILS', $2, $3, $4)`,
-      [randomUUID(), date, rate, FX_SOURCE],
+      [randomUUID(), date, rate, DEMO_FX_SOURCE],
     );
     count++;
     const inverse = new Decimal(1).dividedBy(new Decimal(rate)).toDecimalPlaces(6).toString();
     await owner.query(
       `INSERT INTO fx_rates (id, from_currency, to_currency, date, rate, source)
        VALUES ($1, 'ILS', 'USD', $2, $3, $4)`,
-      [randomUUID(), date, inverse, FX_SOURCE],
+      [randomUUID(), date, inverse, DEMO_FX_SOURCE],
     );
     count++;
   }
+  await owner.query(
+    `INSERT INTO fx_rates (id, from_currency, to_currency, date, rate, source)
+     VALUES ($1, 'USD', 'ILS', $2, $3, 'boi')`,
+    [randomUUID(), BOI_USD_ILS_FIXTURE.date, BOI_USD_ILS_FIXTURE.rate],
+  );
+  count++;
   return count;
 }
 
@@ -544,7 +554,7 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
         accountCurrency: "ILS",
         fxRate: rate,
         fxStatus: "locked",
-        fxSource: FX_SOURCE,
+        fxSource: DEMO_FX_SOURCE,
         source: "scrape",
         kind: "standard",
       });
@@ -680,7 +690,7 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
   if (plan.thirdAccount.type === "investment") {
     const syncRunId = await startSyncRun(userId, investmentConnectionId);
     counts.syncRuns++;
-    const asOf = `${TODAY}T12:00:00Z`;
+    const asOf = `${BOI_USD_ILS_FIXTURE.date}T12:00:00Z`;
     const promoted = await promoteInvestmentSnapshot({
       userId,
       connectionId: investmentConnectionId,

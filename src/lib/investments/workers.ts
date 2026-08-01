@@ -137,7 +137,23 @@ export async function fetchBoiRates(
   required: Array<{ currency: string; date: string }>,
   fetcher: FetchAdapter,
 ): Promise<Array<{ currency: string; date: string; rate: string }>> {
-  const response = await fetcher(`${BOI_SDMX_URL}?format=csv`, { redirect: "error" });
+  const foreign = required.filter(({ currency }) => currency !== "ILS");
+  if (foreign.length === 0)
+    return required.map(({ currency, date }) => ({ currency, date, rate: "1" }));
+  const dates = foreign.map(({ date }) => date).sort();
+  const start = new Date(`${dates[0]}T00:00:00Z`);
+  start.setUTCDate(start.getUTCDate() - 7);
+  const url = new URL(BOI_SDMX_URL);
+  url.searchParams.set("c[DATA_TYPE]", "OF00");
+  url.searchParams.set(
+    "c[BASE_CURRENCY]",
+    [...new Set(foreign.map(({ currency }) => currency))].sort().join(","),
+  );
+  url.searchParams.set("c[COUNTER_CURRENCY]", "ILS");
+  url.searchParams.set("startPeriod", start.toISOString().slice(0, 10));
+  url.searchParams.set("endPeriod", dates.at(-1)!);
+  url.searchParams.set("format", "csv");
+  const response = await fetcher(url.toString(), { redirect: "error" });
   if (response.redirected) throw new WorkerSourceError("redirect_rejected");
   if (!response.ok) throw new WorkerSourceError("provider_rejected");
   const csv = await readBoundedResponse(response);
@@ -194,4 +210,20 @@ export async function completeSourceRefresh<T>(input: {
 }): Promise<T> {
   await input.cacheBoi(requiredBoiPairs(input.envelope));
   return input.promote(input.envelope);
+}
+
+/** Refreshes public BOI data first; a recent authoritative cache is only an outage fallback. */
+export async function refreshBoiWithFallback(
+  required: Array<{ currency: string; date: string }>,
+  refresh: (pairs: Array<{ currency: string; date: string }>) => Promise<void>,
+  missing: (
+    pairs: Array<{ currency: string; date: string }>,
+  ) => Promise<Array<{ currency: string; date: string }>>,
+): Promise<void> {
+  if (required.length === 0) return;
+  try {
+    await refresh(required);
+  } catch (error) {
+    if ((await missing(required)).length > 0) throw error;
+  }
 }
