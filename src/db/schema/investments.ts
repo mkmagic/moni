@@ -24,10 +24,12 @@ export const instrumentKindEnum = pgEnum("instrument_kind", [
 export const investmentSourceEnum = pgEnum("investment_source", [
   "ibkr_flex",
   "schwab_positions_csv",
+  "snaptrade",
 ]);
 export const investmentProviderEnum = pgEnum("investment_provider", [
   "ibkr_flex",
   "schwab_positions_csv",
+  "snaptrade",
   "tiingo",
 ]);
 export const sourceAsOfPrecisionEnum = pgEnum("source_as_of_precision", ["date", "timestamp"]);

@@ -45,7 +45,8 @@ export type ConnectorId =
   | "mercantile"
   | "yahav"
   | "ibkr_flex"
-  | "schwab_positions_csv";
+  | "schwab_positions_csv"
+  | "snaptrade";
 
 export interface ConnectorDefinition {
   id: ConnectorId;

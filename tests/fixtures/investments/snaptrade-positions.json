@@ -1,0 +1,26 @@
+{
+  "results": [
+    {
+      "instrument": {
+        "kind": "etf",
+        "id": "8df8c08b-fbe5-4fe0-99ba-86e84d381fd0",
+        "symbol": "VTI",
+        "raw_symbol": "VTI",
+        "description": "VANGUARD TOTAL STOCK MKT ETF",
+        "currency": "USD",
+        "exchange": "ARCX",
+        "figi_instrument": {
+          "figi_code": "BBG000HRBDF4",
+          "figi_share_class": "BBG001SHTB03"
+        }
+      },
+      "units": 518.4274,
+      "price": 368.21,
+      "cost_basis": 270.939267,
+      "currency": "USD"
+    }
+  ],
+  "data_freshness": {
+    "as_of": "2026-08-01T18:44:24Z"
+  }
+}

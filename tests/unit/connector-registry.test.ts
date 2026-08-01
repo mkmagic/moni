@@ -48,6 +48,14 @@ describe("CONNECTOR_REGISTRY matches israeli-bank-scrapers' SCRAPERS", () => {
         mode: "user_mediated_import",
         loginFields: [],
       }),
+      expect.objectContaining({
+        id: "snaptrade",
+        mode: "credentialed_fetch",
+        loginFields: [
+          expect.objectContaining({ key: "clientId" }),
+          expect.objectContaining({ key: "consumerKey" }),
+        ],
+      }),
     ]);
   });
 });

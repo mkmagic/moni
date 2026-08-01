@@ -59,6 +59,8 @@ const MIGRATION_FILES = [
   "0015_investment-rls-and-lifecycle.sql",
   "0016_fx_rates_boi_writer.sql",
   "0017_enum-ownership-repair.sql",
+  "0018_snaptrade_source.sql",
+  "0019_snaptrade_sync_run_check.sql",
 ];
 
 /** Bookkeeping for which of MIGRATION_FILES this database has already seen.

@@ -134,6 +134,23 @@ export async function POST(
       syncRunId,
     });
     if (!started) return NextResponse.json({ error: "sync_unavailable" }, { status: 500 });
+  } else if (connection.connectorId === "snaptrade") {
+    const clientId = Buffer.from(decrypted.credentials.clientId ?? "", "utf8");
+    const consumerKey = Buffer.from(decrypted.credentials.consumerKey ?? "", "utf8");
+    if (!clientId.length || !consumerKey.length) {
+      clientId.fill(0);
+      consumerKey.fill(0);
+      await markSyncRunFailed(session.userId, syncRunId, "invalid_credentials");
+      return NextResponse.json({ error: "invalid request" }, { status: 400 });
+    }
+    const started = await spawnInvestmentSyncWorker({
+      script: "snaptrade-worker.mts",
+      metadata: { userId: session.userId, connectionId: connection.id, syncRunId },
+      segments: [Buffer.from(session.dataKey), clientId, consumerKey],
+      userId: session.userId,
+      syncRunId,
+    });
+    if (!started) return NextResponse.json({ error: "sync_unavailable" }, { status: 500 });
   } else {
     spawnBankWorker(session.dataKey, {
       syncRunId,

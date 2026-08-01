@@ -16,6 +16,13 @@ export {
   readBoundedResponse,
 } from "./workers";
 export {
+  SNAPTRADE_API_ORIGIN,
+  fetchSnaptradeHoldings,
+  normalizeSnaptradeHoldings,
+  parseJsonPreservingNumbers,
+  type SnaptradeAccountPayload,
+} from "./snaptrade";
+export {
   TIINGO_API_ORIGIN,
   fetchTiingoEodQuote,
   parseTiingoEodQuote,

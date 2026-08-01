@@ -127,6 +127,20 @@
       "when": 1785588190860,
       "tag": "0017_enum-ownership-repair",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1785588190861,
+      "tag": "0018_snaptrade_source",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1785588190862,
+      "tag": "0019_snaptrade_sync_run_check",
+      "breakpoints": true
     }
   ]
 }

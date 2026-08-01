@@ -1,5 +1,5 @@
 export interface InvestmentSyncEnvelope {
-  source: "ibkr_flex" | "schwab_positions_csv";
+  source: "ibkr_flex" | "schwab_positions_csv" | "snaptrade";
   coverage: {
     kind: "configured_query_accounts" | "bound_single_account";
     accountRefs: string[];

@@ -50,6 +50,10 @@ const CODES: Record<string, string> = {
   blank_input: "The statement file was empty.",
   missing_fx: "No Bank of Israel exchange rate was available for the report's dates.",
   invalid_fx: "The Bank of Israel returned an unusable exchange rate.",
+  invalid_sync:
+    "This sync run no longer matches its connection, so the snapshot was not accepted. Start a new sync.",
+  promotion_failed:
+    "Moni could not save the snapshot it fetched. The broker's data arrived fine, so retry the sync; if it keeps failing, restart with MONI_SYNC_DIAGNOSTIC=1 to log the underlying fault.",
   source_worker_failed: "The sync did not complete. Retry it.",
   source_worker_start_failed: "Moni could not start the sync. Retry it.",
 };

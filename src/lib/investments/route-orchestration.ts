@@ -11,7 +11,13 @@ function start(script: string, frame: Buffer): ReturnType<typeof spawn> {
     path.join(process.cwd(), "node_modules", ".bin", "tsx"),
     [path.join(process.cwd(), "scripts", script)],
     {
-      stdio: ["pipe", "ignore", process.env.MONI_IBKR_DIAGNOSTIC === "1" ? "inherit" : "ignore"],
+      stdio: [
+        "pipe",
+        "ignore",
+        process.env.MONI_IBKR_DIAGNOSTIC === "1" || process.env.MONI_SYNC_DIAGNOSTIC === "1"
+          ? "inherit"
+          : "ignore",
+      ],
     },
   );
   child.stdin.write(frame, () => frame.fill(0));
@@ -22,7 +28,7 @@ function start(script: string, frame: Buffer): ReturnType<typeof spawn> {
 
 /** Starts a source worker and preserves the existing guarded failed-run fallback. */
 export async function spawnInvestmentSyncWorker(input: {
-  script: "ibkr-worker.mts" | "schwab-import-worker.mts";
+  script: "ibkr-worker.mts" | "schwab-import-worker.mts" | "snaptrade-worker.mts";
   metadata: Record<string, unknown>;
   segments: Buffer[];
   userId: string;

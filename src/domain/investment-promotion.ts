@@ -27,6 +27,7 @@ type Source = InvestmentSyncEnvelope["source"];
 
 export type InvestmentPromotionErrorCode =
   | "invalid_sync"
+  | "promotion_failed"
   | "incomplete_coverage"
   | "identity_conflict"
   | "stale_source"
@@ -56,6 +57,16 @@ function sourceDate(value: string): Date {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) fail("incomplete_coverage");
   return date;
+}
+
+/**
+ * Half of the last digit a decimal actually reports — the most its rounding
+ * can conceal. "368.21" could stand for anything in [368.205, 368.215), so it
+ * hides at most 0.005.
+ */
+function halfUlp(value: string): Decimal {
+  const decimals = value.split(".")[1]?.length ?? 0;
+  return new Decimal(5).div(new Decimal(10).pow(decimals + 1));
 }
 
 function isoDate(value: Date): string {
@@ -175,7 +186,45 @@ async function resolveInstrument(
       mapping.currency !== position.currency
     )
       fail("identity_conflict");
-    if (mapping.provider !== source) {
+    if (mapping.provider === source) {
+      // Descriptive provider metadata, unlike the identity fields checked
+      // above, can legitimately change between syncs — a venue relabelled, or
+      // a MIC that Moni has since learned to translate. Valuation reads the
+      // exchange only from here, so a stale one keeps a position permanently
+      // and invisibly ineligible for a quote.
+      const stored = (column: keyof typeof mapping, name: string) => {
+        const value = mapping[column] as Buffer | null;
+        return value ? decText(dataKey, value, mapping.id, name, mapping.version) : null;
+      };
+      if (
+        stored("exchangeCt", "exchange_ct") !== (position.exchange ?? null) ||
+        stored("providerSymbolCt", "provider_symbol_ct") !== (position.symbol ?? null) ||
+        stored("providerNameCt", "provider_name_ct") !== (position.name ?? null)
+      ) {
+        // The row's version is the AAD for every encrypted column on it, so a
+        // bump re-encrypts all of them together or the untouched ones stop
+        // decrypting.
+        const version = mapping.version + 1;
+        const field = (value: string | undefined, name: string) =>
+          value ? encText(dataKey, value, mapping.id, name, version) : null;
+        await tx
+          .update(instrumentSourceMappings)
+          .set({
+            providerIdentifierCt: encText(
+              dataKey,
+              position.sourceSecurityId,
+              mapping.id,
+              "provider_identifier_ct",
+              version,
+            ),
+            providerSymbolCt: field(position.symbol, "provider_symbol_ct"),
+            providerNameCt: field(position.name, "provider_name_ct"),
+            exchangeCt: field(position.exchange, "exchange_ct"),
+            version,
+          })
+          .where(eq(instrumentSourceMappings.id, mapping.id));
+      }
+    } else {
       const id = randomUUID();
       await tx.insert(instrumentSourceMappings).values({
         id,
@@ -394,6 +443,9 @@ async function promote(
           .where(eq(accountBalanceSnapshots.id, old.accountBalanceSnapshotId));
       }
       const componentIls: Decimal[] = [];
+      // Zero whenever every position carried its own market value, which keeps
+      // broker-valued sources on the exact comparison they have always had.
+      let slackIls = new Decimal(0);
       const positionRows: Array<{
         position: (typeof account.positions)[number];
         instrumentId: string;
@@ -410,16 +462,20 @@ async function promote(
         if (!value && !new Decimal(position.quantity).isZero()) fail("unvalued_position");
         const valueCurrency =
           position.sourceValueCurrency ?? position.sourcePriceCurrency ?? position.currency;
-        if (value)
-          componentIls.push(
-            new Decimal(value).mul(
-              await ilsRate(
-                tx,
-                valueCurrency,
-                sourceDate(position.sourceAsOf ?? envelope.sourceAsOf.value),
-              ),
-            ),
+        if (value) {
+          const rate = await ilsRate(
+            tx,
+            valueCurrency,
+            sourceDate(position.sourceAsOf ?? envelope.sourceAsOf.value),
           );
+          componentIls.push(new Decimal(value).mul(rate));
+          // A derived value can only be as exact as the price it was derived
+          // from, so carry how much the broker's own rounding could hide.
+          if (!position.sourceValue && position.sourcePrice)
+            slackIls = slackIls.plus(
+              new Decimal(position.quantity).abs().mul(halfUlp(position.sourcePrice)).mul(rate),
+            );
+        }
         positionRows.push({
           position,
           instrumentId: await resolveInstrument(tx, userId, dataKey, envelope.source, position),
@@ -432,13 +488,20 @@ async function promote(
         componentIls.push(
           new Decimal(cash.amount).mul(await ilsRate(tx, cash.currency, sourceAsOf)),
         );
-      const totalIls = new Decimal(account.brokerTotal.amount).mul(
-        await ilsRate(tx, account.brokerTotal.currency, sourceDate(account.brokerTotal.asOf)),
+      const totalRate = await ilsRate(
+        tx,
+        account.brokerTotal.currency,
+        sourceDate(account.brokerTotal.asOf),
       );
+      const totalIls = new Decimal(account.brokerTotal.amount).mul(totalRate);
+      if (slackIls.isPositive())
+        slackIls = slackIls.plus(halfUlp(account.brokerTotal.amount).mul(totalRate));
       const reconciliationState = componentIls
         .reduce((total, item) => total.plus(item), new Decimal(0))
         .toDecimalPlaces(2)
-        .eq(totalIls.toDecimalPlaces(2))
+        .minus(totalIls.toDecimalPlaces(2))
+        .abs()
+        .lte(slackIls.toDecimalPlaces(2))
         ? "matched"
         : "mismatch";
       const parentId = randomUUID();
@@ -555,8 +618,43 @@ export async function promoteInvestmentSnapshot(input: {
   try {
     return await withUser(input.userId, (tx) => promote(tx, input));
   } catch (error) {
-    const safe = error instanceof InvestmentPromotionError ? error.code : "invalid_sync";
+    // `invalid_sync` is a specific rejection (the run or connection did not
+    // match the envelope). Anything else reaching here is an unexpected
+    // exception and must not borrow that code, or a database fault reads as a
+    // deliberate guard.
+    const promotion = error instanceof InvestmentPromotionError;
+    if (!promotion) reportPromotionFault(error);
+    const safe = promotion ? error.code : "promotion_failed";
     await markSyncRunFailed(input.userId, input.syncRunId, safe);
-    throw error instanceof InvestmentPromotionError ? error : new InvestmentPromotionError(safe);
+    throw promotion ? error : new InvestmentPromotionError(safe);
   }
+}
+
+/**
+ * Opt-in fault report (MONI_SYNC_DIAGNOSTIC=1) for an exception the promotion
+ * path did not expect. Prints the error's identity and Postgres's structural
+ * fields only — never `detail`, which quotes offending row values and would
+ * put ciphertext or an account reference in the log.
+ */
+function reportPromotionFault(error: unknown): void {
+  if (process.env.MONI_SYNC_DIAGNOSTIC !== "1") return;
+  const lines: string[] = [];
+  // Drizzle wraps the driver error, so the Postgres fields that actually name
+  // the fault live on `cause`. Without walking the chain the report stops at
+  // "Failed query: ..." and says nothing about why it failed.
+  let current: unknown = error;
+  for (let depth = 0; current != null && depth < 5; depth += 1) {
+    const fault = current as { message?: unknown } & Record<string, unknown>;
+    const fields = ["code", "constraint", "table", "column", "dataType", "schema", "routine"]
+      .map((key) => (fault[key] == null ? null : `${key}=${String(fault[key])}`))
+      .filter(Boolean);
+    lines.push(
+      `${depth === 0 ? "promotion diagnostic" : `  caused by`}: ` +
+        `${current instanceof Error ? current.name : typeof current}: ` +
+        `${String(fault.message ?? current).split("\n")[0]}`,
+    );
+    if (fields.length) lines.push(`    postgres: ${fields.join(" ")}`);
+    current = (fault as { cause?: unknown }).cause;
+  }
+  console.error(lines.join("\n"));
 }

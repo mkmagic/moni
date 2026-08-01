@@ -111,6 +111,16 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
     mode: "user_mediated_import",
     loginFields: [],
   },
+  snaptrade: {
+    id: "snaptrade",
+    label: "SnapTrade",
+    kind: "investment",
+    mode: "credentialed_fetch",
+    loginFields: [
+      { key: "clientId", label: "Client ID", inputType: "text" },
+      { key: "consumerKey", label: "Consumer Key", inputType: "password" },
+    ],
+  },
 };
 
 export const CONNECTOR_LIST: ConnectorDefinition[] = Object.values(CONNECTOR_REGISTRY);
