@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { Wallet } from "lucide-react";
 import { requireSession } from "@/domain/auth";
 import { listConnections } from "@/domain/connections";
+import { listCredentialUnlockMethods } from "@/domain/credential-unlock";
 import { todayIso } from "@/lib/backfill-window";
 import { OnboardingWizard } from "./onboarding-wizard";
 
@@ -12,7 +13,10 @@ import { OnboardingWizard } from "./onboarding-wizard";
 // no extra machinery — this route needs no sidebar anyway.
 export default async function OnboardingPage() {
   const session = await requireSession();
-  const connections = await listConnections(session.userId);
+  const [connections, unlockMethods] = await Promise.all([
+    listConnections(session.userId),
+    listCredentialUnlockMethods(session.userId),
+  ]);
   if (connections.length > 0) redirect("/dashboard");
 
   return (
@@ -31,7 +35,7 @@ export default async function OnboardingPage() {
             backfill picker's bounds must agree with the cap the sync route
             enforces, and deriving them in the browser would depend on the
             visitor's clock. */}
-        <OnboardingWizard today={todayIso()} />
+        <OnboardingWizard today={todayIso()} hasPasskey={unlockMethods.length > 0} />
       </div>
     </main>
   );

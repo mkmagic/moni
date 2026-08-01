@@ -1,23 +1,24 @@
-// POST creates a connection (task 14's sibling — the "first-connect arms
-// inline" half of the plan): the caller supplies the connector's login
-// fields plus their Moni login password, since no credential window can
-// already be open before a connection exists (docs plan §"Connector
-// registry (task 8)"). Credentials are encrypted under the credential key
-// (CK) BEFORE the first write — createConnection() does this, never this
-// route directly (one access path, AGENTS.md). On success the SAME key arms
-// the credential window, so onboarding's first sync needs no second
-// password prompt.
+// POST creates a connection. Credentials are encrypted under the credential
+// key (CK) BEFORE the first write — createConnection() does this, never this
+// route directly (one access path, AGENTS.md).
+//
+// CK comes from the armed credential window, so this route returns 423 when
+// the window is closed, exactly like the sync route. It used to accept the
+// Moni login password inline and unwrap CK from it; issue #7 removed that
+// path entirely — the login password no longer wraps CK on any row, so
+// there is nothing here to unwrap it with. The client arms with a passkey
+// first (an enrollment leaves the window armed, so the very first connection
+// in onboarding still needs no extra step).
 // GET lists the caller's connections — never their credentials.
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getSessionFromRequest, unlockCredentialKey } from "@/domain/auth";
+import { getSessionFromRequest } from "@/domain/auth";
 import {
   createConnection,
   InvalidCredentialsShapeError,
   listConnections,
 } from "@/domain/connections";
-import { armCredentialWindow } from "@/lib/auth/cred-window";
-import { wipe } from "@/lib/crypto";
+import { getCredentialKey } from "@/lib/auth/cred-window";
 import { isConnectorId } from "@/lib/connectors";
 
 // Zod at the trust boundary (docs/design/conventions.md — Validation).
@@ -25,10 +26,6 @@ const CreateConnectionSchema = z.object({
   connectorId: z.string().min(1),
   credentials: z.record(z.string(), z.string()),
   displayName: z.string().min(1).optional(),
-  // The user's Moni login password — unlocks CK. Arrives as a JS string at
-  // the HTTP/JSON boundary (unavoidable — see the login route's identical
-  // comment); moved into a wipeable Buffer immediately below.
-  password: z.string().min(1),
 });
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
@@ -52,44 +49,32 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "invalid request" }, { status: 400 });
   }
 
-  // Validated before the (expensive) Argon2id derivation below, so a bogus
-  // connector id fails fast without paying for it.
   if (!isConnectorId(parsed.data.connectorId)) {
     return NextResponse.json({ error: "unknown connector" }, { status: 400 });
   }
   const connectorId = parsed.data.connectorId;
 
-  const password = Buffer.from(parsed.data.password, "utf8");
-  try {
-    const credentialKey = await unlockCredentialKey(session.userId, password);
-    if (!credentialKey) {
-      return NextResponse.json({ error: "invalid password" }, { status: 401 });
-    }
+  // 423 Locked — remediation is "unlock with your passkey", not "log in
+  // again" (docs plan §B). credentialKey is BORROWED from the cred-window
+  // store; this route must never wipe it.
+  const credentialKey = getCredentialKey(session.id);
+  if (!credentialKey) {
+    return NextResponse.json({ error: "credential_window_locked" }, { status: 423 });
+  }
 
-    try {
-      const { id } = await createConnection(
-        session.userId,
-        connectorId,
-        parsed.data.credentials,
-        credentialKey,
-        parsed.data.displayName,
-      );
-      // Success: arm the credential window with this SAME key. Ownership of
-      // credentialKey transfers to the window store now — this route must
-      // NOT wipe it below (armCredentialWindow/destroyCredentialWindow own
-      // that wipe from here on).
-      armCredentialWindow(session.id, session.userId, credentialKey);
-      return NextResponse.json({ id }, { status: 201 });
-    } catch (err) {
-      // createConnection threw before the window was armed — this route
-      // still owns credentialKey and must wipe it (Tier-0 hygiene).
-      wipe(credentialKey);
-      if (err instanceof InvalidCredentialsShapeError) {
-        return NextResponse.json({ error: err.message }, { status: 400 });
-      }
-      throw err;
+  try {
+    const { id } = await createConnection(
+      session.userId,
+      connectorId,
+      parsed.data.credentials,
+      credentialKey,
+      parsed.data.displayName,
+    );
+    return NextResponse.json({ id }, { status: 201 });
+  } catch (err) {
+    if (err instanceof InvalidCredentialsShapeError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
     }
-  } finally {
-    password.fill(0);
+    throw err;
   }
 }

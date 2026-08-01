@@ -10,7 +10,6 @@ import { eq } from "drizzle-orm";
 import { withUser } from "@/db/client";
 import * as schema from "@/db/schema";
 import { createUser } from "@/domain/registration";
-import { unlockCredentialKey } from "@/domain/auth";
 import { createConnection } from "@/domain/connections";
 import { promoteScrapeResult, startSyncRun } from "@/domain/sync-promotion";
 import {
@@ -29,7 +28,7 @@ import {
 import { listEntries } from "@/domain/transactions";
 import type { Session } from "@/lib/auth/session-store";
 import type { ScraperAccount, ScraperTransaction } from "@/lib/connectors";
-import { cleanupOwners } from "./helpers";
+import { cleanupOwners, enrollTestCredentialKey } from "./helpers";
 
 const SIGNUP_TOKEN = process.env.MONI_SIGNUP_TOKEN;
 if (!SIGNUP_TOKEN) {
@@ -50,8 +49,7 @@ async function freshFixture(label: string): Promise<Fixture> {
   const password = Buffer.from("correct horse battery staple", "utf8");
   const { userId, dataKey } = await createUser(email, password, SIGNUP_TOKEN!);
   createdUserIds.push(userId);
-  const credentialKey = await unlockCredentialKey(userId, password);
-  if (!credentialKey) throw new Error("test setup: failed to unlock credential key");
+  const credentialKey = await enrollTestCredentialKey(userId);
   const { id: connectionId } = await createConnection(
     userId,
     "leumi",

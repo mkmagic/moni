@@ -45,15 +45,25 @@ export const unlockMethodTypeEnum = pgEnum("unlock_method_type", [
 ]);
 
 /**
- * One row per unlock factor (docs/security/threat-model.md §5). Each row
- * independently wraps BOTH the per-user data key (DK — Tier-1 field reads)
- * and credential key (CK — Tier-0 bank-credential reads) under that
- * factor's key-encryption-key, so a password change (or a future passkey/
- * recovery-code enrollment) only ever re-wraps 32 opaque bytes twice, never
- * decrypts-and-re-encrypts a user's actual data. Only `password-argon2id` is
- * implemented in v1.0; the shape supports "insert another row" for
- * WebAuthn-PRF and recovery codes without a later migration over live
- * Tier-0 columns.
+ * One row per unlock factor (docs/security/threat-model.md §5). A row wraps
+ * the per-user data key (DK — Tier-1 field reads), the credential key (CK —
+ * Tier-0 bank-credential reads), or one of the two, under that factor's
+ * key-encryption-key — so enrolling or re-keying a factor only ever re-wraps
+ * 32 opaque bytes, never decrypts-and-re-encrypts a user's actual data.
+ *
+ * **Which keys a row opens is recorded by which wrap column is non-null**
+ * (issue #7's decision, inheriting the requirement from #18). No row wraps
+ * both today, and the split is the point rather than an accident:
+ *
+ *   * `password-argon2id` wraps DK only. The login password is structurally
+ *     incapable of reaching CK, which is what removes the whole class of
+ *     "prompt the user for their Moni password and harvest it" attacks
+ *     against a future AI-agent surface.
+ *   * `webauthn-prf` wraps CK only. Bank credentials are reachable only via
+ *     a passkey's origin-bound, non-replayable PRF output.
+ *   * `recovery-code` (not implemented) would wrap DK only. There is
+ *     deliberately NO recovery path for CK: lose every enrolled passkey and
+ *     you re-enter your bank logins.
  *
  * The AAD for each wrapped column binds to *this row's* id, not `users.id`
  * (docs/design/encryption.md §3) — every other ciphertext column in the
@@ -67,10 +77,12 @@ export const userUnlockMethods = pgTable(
       .notNull()
       .references(() => users.id),
     type: unlockMethodTypeEnum("type").notNull(),
-    wrappedDataKey: bytea("wrapped_data_key").notNull(),
-    wrappedCredentialKey: bytea("wrapped_credential_key").notNull(),
-    // Public, non-secret unlock parameters (e.g. { saltB64, params } for the
-    // password method) — never the plaintext key material itself.
+    wrappedDataKey: bytea("wrapped_data_key"),
+    wrappedCredentialKey: bytea("wrapped_credential_key"),
+    // Public, non-secret unlock parameters — `{ saltB64, params }` for the
+    // password method, `{ credentialIdB64Url, publicKeyB64Url, counter, rpId,
+    // … }` for a WebAuthn-PRF passkey. Never the plaintext key material
+    // itself, and never the PRF output.
     unlockRef: jsonb("unlock_ref").notNull(),
     version: integer("version").notNull().default(1),
     ...timestamps,

@@ -2,17 +2,21 @@ import Link from "next/link";
 import { requireSession } from "@/domain/auth";
 import { getProfile } from "@/domain/profile";
 import { listConnections } from "@/domain/connections";
+import { listCredentialUnlockMethods } from "@/domain/credential-unlock";
 import { getLatestSyncRunByConnection } from "@/domain/sync-promotion";
+import { rpId } from "@/lib/auth/webauthn-config";
 import { Button } from "@/components/ui/button";
+import { PasskeyManager } from "@/components/passkey-manager";
 import { SyncPreference } from "../sync-preference";
 import { ConnectionsList } from "../connections-list";
 
 export default async function ConnectionsSettingsPage() {
   const session = await requireSession();
-  const [profile, connections, latestRuns] = await Promise.all([
+  const [profile, connections, latestRuns, passkeys] = await Promise.all([
     getProfile(session.userId),
     listConnections(session.userId),
     getLatestSyncRunByConnection(session.userId),
+    listCredentialUnlockMethods(session.userId),
   ]);
 
   // Dates cross the boundary already FORMATTED, not as ISO strings for the
@@ -43,14 +47,28 @@ export default async function ConnectionsSettingsPage() {
     };
   });
 
+  // Same reason as `syncedAtFmt` above: formatted here, on the server.
+  const addedAtFmt = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium" });
+  const passkeyRows = passkeys.map((p) => ({
+    id: p.id,
+    label: p.ref.label,
+    addedLabel: `Added ${addedAtFmt.format(p.createdAt)}`,
+    usable: p.ref.rpId === rpId(),
+    rpId: p.ref.rpId,
+  }));
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-4">
         <p className="text-sm text-muted-foreground">Linked bank and credit card logins</p>
         <Link href="/settings/connections/connect">
-          <Button>Add connection</Button>
+          <Button variant="outline">Add connection</Button>
         </Link>
       </div>
+      {/* Above the connections themselves: with no passkey there is no key to
+          encrypt a bank login under, so this is the prerequisite, not a
+          footnote. It also owns this view's amber when nothing is enrolled. */}
+      <PasskeyManager initialPasskeys={passkeyRows} />
       <SyncPreference initial={profile?.autoSyncOnLogin ?? false} />
       <ConnectionsList initialConnections={rows} />
     </div>

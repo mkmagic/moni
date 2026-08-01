@@ -1,9 +1,11 @@
 /**
- * The browser side of the sync protocol, in one place: start a run, poll it
- * to a terminal state, arm the credential window. Three call sites now need
- * it — the connections list, the dashboard's Sync all, and the connect
- * wizard's first sync — and the 423-means-arm rule is too easy to get subtly
- * wrong in a second copy.
+ * The browser side of the sync protocol, in one place: start a run and poll
+ * it to a terminal state. Three call sites need it — the connections list,
+ * the dashboard's Sync all, and the connect wizard's first sync — and the
+ * 423-means-arm rule is too easy to get subtly wrong in a second copy.
+ *
+ * Arming itself lives in src/lib/passkey-client.ts (`armWithPasskey`), since
+ * issue #7 made it a WebAuthn ceremony rather than a password POST.
  */
 
 /** Cadence for `waitForSyncRun`. The scrape takes tens of seconds at best. */
@@ -12,7 +14,7 @@ export const SYNC_POLL_MS = 2000;
 export type StartSyncResult =
   | { kind: "started"; syncRunId: string }
   /** HTTP 423, and ONLY 423 — the credential window is closed, so the
-   * remediation is "re-enter your Moni password", never "log in again". */
+   * remediation is "unlock with your passkey", never "log in again". */
   | { kind: "locked" }
   | { kind: "error"; message: string };
 
@@ -62,18 +64,4 @@ export function waitForSyncRun(syncRunId: string, pollMs = SYNC_POLL_MS): Promis
         .catch(() => undefined);
     }, pollMs);
   });
-}
-
-/** Re-opens the credential window with the user's Moni password. */
-export async function armCredentialWindow(password: string): Promise<boolean> {
-  try {
-    const res = await fetch("/api/connections/arm", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ password }),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
 }

@@ -1,7 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { armCredentialWindow, startSyncRun, waitForSyncRun } from "@/lib/sync-client";
+import { startSyncRun, waitForSyncRun } from "@/lib/sync-client";
+import { armWithPasskey } from "@/lib/passkey-client";
 
 /**
  * Bulk sync is SEQUENTIAL and driven from the client. Each scrape spawns its
@@ -30,8 +31,9 @@ export interface SyncAllCallbacks {
     status: "succeeded" | "failed",
     error: string | null,
   ) => void;
-  /** The password was rejected; the chain is abandoned at `connectionId`. */
-  onArmRejected?: (connectionId: string) => void;
+  /** Unlocking failed (cancelled, unenrolled device, RP ID mismatch); the
+   * chain is abandoned at `connectionId`. `message` is showable verbatim. */
+  onArmRejected?: (connectionId: string, message: string) => void;
   onChainFinished?: () => void;
 }
 
@@ -80,14 +82,15 @@ export function useSyncAll(callbacks: SyncAllCallbacks = {}) {
       if (busy.current || ids.length === 0) return;
       void runChain(ids, 0, ids.length);
     },
-    async arm(password: string) {
+    async arm() {
       if (busy.current || state.kind !== "locked") return;
       busy.current = true;
       const { remaining, done, total } = state;
       try {
-        if (!(await armCredentialWindow(password))) {
+        const armed = await armWithPasskey();
+        if (!armed.ok) {
           setState({ kind: "idle" });
-          callbacks.onArmRejected?.(remaining[0]);
+          callbacks.onArmRejected?.(remaining[0], armed.message);
           return;
         }
       } finally {

@@ -74,6 +74,13 @@ export function getSession(id: string | undefined): Session | null {
   return s;
 }
 
+/** Every live session id belonging to `userId` — one per device/browser the
+ * user logged in from. Used by account deletion, which has to reach the
+ * sessions it is not itself being called through. */
+export function sessionIdsForUser(userId: string): string[] {
+  return [...store.values()].filter((s) => s.userId === userId).map((s) => s.id);
+}
+
 /** Destroys a session and wipes its data key from memory. */
 export function destroySession(id: string): void {
   const s = store.get(id);

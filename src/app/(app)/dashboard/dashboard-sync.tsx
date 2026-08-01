@@ -95,7 +95,7 @@ export function DashboardSync({
         </div>
         <div className="flex flex-col items-end gap-1.5">
           {sync.state.kind === "locked" ? (
-            <ArmPrompt label="Unlock to continue" onArm={(p) => void sync.arm(p)} />
+            <ArmPrompt label="Unlock to continue" onArm={() => sync.arm()} />
           ) : (
             // Outline, not the amber primary: the dashboard's accent belongs
             // to the reminder card's own call to action when it's showing.
