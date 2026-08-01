@@ -189,8 +189,8 @@ describe("POST/GET /api/connections", () => {
     createdUserIds.push(session.userId);
     createdSessionIds.push(session.sessionId);
 
-    // The exact body that used to work. The password is now inert: with no
-    // armed window this is a 423, and nothing is written.
+    // The legacy extra password field is now rejected at the strict boundary;
+    // it cannot influence credential-window behavior or create a connection.
     const res = await createConnectionRoute(
       jsonRequest("http://localhost/api/connections", {
         method: "POST",
@@ -202,7 +202,7 @@ describe("POST/GET /api/connections", () => {
         },
       }),
     );
-    expect(res.status).toBe(423);
+    expect(res.status).toBe(400);
     expect(getCredentialKey(session.sessionId)).toBeNull();
 
     const listRes = await listConnectionsRoute(

@@ -1,6 +1,7 @@
 // Domain read: a user's accounts, decrypted. Goes through withUser (RLS) and
 // decrypts Tier-1 fields with the session's in-RAM data key. Returns money as
 // exact decimal strings (Money) — never formatted, never a float.
+import { and, eq } from "drizzle-orm";
 import { withUser } from "@/db/client";
 import { accounts } from "@/db/schema";
 import type { Money } from "@/lib/money";
@@ -18,6 +19,24 @@ export interface AccountView {
   /** Latest known native balance (from the cached snapshot). Null if unknown. */
   balance: Money | null;
   status: string;
+}
+
+/** Archives an account without deleting its historical observations. */
+export async function archiveAccount(userId: string, accountId: string): Promise<boolean> {
+  return withUser(userId, async (tx) => {
+    const updated = await tx
+      .update(accounts)
+      .set({ status: "archived", archivedAt: new Date() })
+      .where(
+        and(
+          eq(accounts.id, accountId),
+          eq(accounts.accountType, "investment"),
+          eq(accounts.status, "active"),
+        ),
+      )
+      .returning({ id: accounts.id });
+    return updated.length > 0;
+  });
 }
 
 export async function listAccounts(session: Session): Promise<AccountView[]> {

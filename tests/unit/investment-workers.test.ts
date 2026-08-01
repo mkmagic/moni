@@ -8,9 +8,29 @@ import {
   readBoundedResponse,
   requiredBoiPairs,
 } from "@/lib/investments";
-import { readChildStdin } from "@/lib/connectors";
+import {
+  decodeBinaryChildFrame,
+  encodeBinaryChildFrame,
+  MAX_CHILD_SEGMENT_BYTES,
+  readChildStdin,
+} from "@/lib/connectors";
 
 describe("investment worker seams", () => {
+  it("permits an exactly-10MiB source segment plus bounded framing overhead", () => {
+    const source = Buffer.alloc(MAX_CHILD_SEGMENT_BYTES, 1);
+    const key = Buffer.alloc(32, 2);
+    const frame = encodeBinaryChildFrame({ userId: "structural" }, [key, source]);
+    expect(frame.length).toBeGreaterThan(MAX_CHILD_SEGMENT_BYTES);
+    const decoded = decodeBinaryChildFrame(frame);
+    expect(decoded.segments[1]).toHaveLength(MAX_CHILD_SEGMENT_BYTES);
+    for (const segment of decoded.segments) segment.fill(0);
+    frame.fill(0);
+    source.fill(0);
+    key.fill(0);
+    expect(() => encodeBinaryChildFrame({}, [Buffer.alloc(MAX_CHILD_SEGMENT_BYTES + 1)])).toThrow(
+      "segment too large",
+    );
+  });
   it("uses the exact IBKR endpoint, rejects redirects, retries only transient failures, and wipes credentials", async () => {
     const token = Buffer.from("token");
     const query = Buffer.from("query");

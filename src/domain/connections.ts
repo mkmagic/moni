@@ -5,9 +5,9 @@
 // Tier-1 reads (threat-model.md §5, docs plan Decision #1). Nothing here
 // ever touches DK.
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { withUser } from "@/db/client";
-import { connections } from "@/db/schema";
+import { connections, syncRuns } from "@/db/schema";
 import { encryptField, decryptField, type AadContext } from "@/lib/crypto";
 import { getConnectorDefinition, isConnectorId, type ConnectorId } from "@/lib/connectors";
 
@@ -17,6 +17,7 @@ export interface ConnectionView {
   displayName: string | null;
   status: string;
   lastSyncAt: Date | null;
+  mode: "credentialed_fetch" | "user_mediated_import";
 }
 
 export interface DecryptedConnection {
@@ -71,6 +72,7 @@ function toView(row: typeof connections.$inferSelect): ConnectionView {
     displayName: row.displayName,
     status: row.status,
     lastSyncAt: row.lastSyncAt,
+    mode: row.mode,
   };
 }
 
@@ -123,19 +125,30 @@ export async function findConnectionByConnector(
 export async function createConnection(
   userId: string,
   connectorId: ConnectorId,
-  credentials: Record<string, string>,
-  credentialKey: Buffer,
+  credentials: Record<string, string> | null,
+  credentialKey: Buffer | null,
   displayName?: string,
 ): Promise<{ id: string }> {
-  assertValidCredentialsShape(connectorId, credentials);
+  const definition = getConnectorDefinition(connectorId);
+  if (!definition) throw new UnknownConnectorError(connectorId);
+  if (definition.mode === "credentialed_fetch") {
+    if (!credentials || !credentialKey) throw new InvalidCredentialsShapeError(connectorId);
+    assertValidCredentialsShape(connectorId, credentials);
+  } else if (credentials !== null || credentialKey !== null) {
+    throw new ConnectionCredentialsUnavailableError();
+  }
 
   const id = randomUUID();
   const aad: AadContext = { rowId: id, column: "credentials_ct", version: 1 };
-  const credentialsCt = encryptField(
-    credentialKey,
-    Buffer.from(JSON.stringify(credentials), "utf8"),
-    aad,
-  );
+  let credentialsCt: Buffer | null = null;
+  if (credentials && credentialKey) {
+    const plaintext = Buffer.from(JSON.stringify(credentials), "utf8");
+    try {
+      credentialsCt = encryptField(credentialKey, plaintext, aad);
+    } finally {
+      plaintext.fill(0);
+    }
+  }
 
   return withUser(userId, async (tx) => {
     await tx.insert(connections).values({
@@ -144,10 +157,39 @@ export async function createConnection(
       connectorId,
       displayName: displayName ?? null,
       credentialsCt,
-      mode: "credentialed_fetch",
+      mode: definition.mode,
       status: "active",
     });
     return { id };
+  });
+}
+
+/** Removes reusable source access but retains the financial record. */
+export async function disconnectConnection(
+  userId: string,
+  connectionId: string,
+): Promise<"disconnected" | "not_found" | "sync_running"> {
+  return withUser(userId, async (tx) => {
+    const row = (
+      await tx
+        .select({ id: connections.id })
+        .from(connections)
+        .where(eq(connections.id, connectionId))
+        .for("update")
+        .limit(1)
+    )[0];
+    if (!row) return "not_found";
+    const running = await tx
+      .select({ id: syncRuns.id })
+      .from(syncRuns)
+      .where(and(eq(syncRuns.connectionId, connectionId), eq(syncRuns.status, "running")))
+      .limit(1);
+    if (running[0]) return "sync_running";
+    await tx
+      .update(connections)
+      .set({ credentialsCt: null, status: "disconnected" })
+      .where(eq(connections.id, connectionId));
+    return "disconnected";
   });
 }
 
@@ -213,11 +255,17 @@ export async function updateConnectionCredentials(
     assertValidCredentialsShape(connectorId, credentials);
 
     const nextVersion = row.version + 1;
-    const credentialsCt = encryptField(
-      credentialKey,
-      Buffer.from(JSON.stringify(credentials), "utf8"),
-      { rowId: connectionId, column: "credentials_ct", version: nextVersion },
-    );
+    const plaintext = Buffer.from(JSON.stringify(credentials), "utf8");
+    let credentialsCt: Buffer;
+    try {
+      credentialsCt = encryptField(credentialKey, plaintext, {
+        rowId: connectionId,
+        column: "credentials_ct",
+        version: nextVersion,
+      });
+    } finally {
+      plaintext.fill(0);
+    }
 
     await tx
       .update(connections)
@@ -255,10 +303,14 @@ export async function getDecryptedCredentials(
       column: "credentials_ct",
       version: row.version,
     });
-    return {
-      id: row.id,
-      connectorId: row.connectorId,
-      credentials: JSON.parse(plaintext.toString("utf8")) as Record<string, string>,
-    };
+    try {
+      return {
+        id: row.id,
+        connectorId: row.connectorId,
+        credentials: JSON.parse(plaintext.toString("utf8")) as Record<string, string>,
+      };
+    } finally {
+      plaintext.fill(0);
+    }
   });
 }

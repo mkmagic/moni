@@ -11,6 +11,10 @@ export interface ChildStdinPayload {
 
 const PREFIX = 4;
 export const MAX_CHILD_STDIN_BYTES = 10 * 1024 * 1024;
+/** A source segment may be 10 MiB; metadata/framing gets a small separate budget. */
+export const MAX_CHILD_SEGMENT_BYTES = 10 * 1024 * 1024;
+export const MAX_CHILD_METADATA_BYTES = 64 * 1024;
+export const MAX_CHILD_FRAME_BYTES = MAX_CHILD_SEGMENT_BYTES + MAX_CHILD_METADATA_BYTES;
 export const MAX_CHILD_SEGMENTS = 4;
 
 function uint(n: number): Buffer {
@@ -19,8 +23,8 @@ function uint(n: number): Buffer {
   return value;
 }
 
-function checkedLength(value: number): void {
-  if (value > MAX_CHILD_STDIN_BYTES) throw new Error("child-stdin-framing: frame too large");
+function checkedSegmentLength(value: number): void {
+  if (value > MAX_CHILD_SEGMENT_BYTES) throw new Error("child-stdin-framing: segment too large");
 }
 
 function assertStructuralMetadata(value: unknown, key = ""): void {
@@ -47,12 +51,14 @@ export function encodeBinaryChildFrame(
   if (segments.length > MAX_CHILD_SEGMENTS)
     throw new Error("child-stdin-framing: too many segments");
   const json = Buffer.from(JSON.stringify(metadata), "utf8");
+  if (json.length > MAX_CHILD_METADATA_BYTES)
+    throw new Error("child-stdin-framing: metadata too large");
   const pieces = [uint(json.length), json, uint(segments.length)];
   let length = PREFIX + json.length + PREFIX;
   for (const segment of segments) {
-    checkedLength(segment.length);
+    checkedSegmentLength(segment.length);
     length += PREFIX + segment.length;
-    checkedLength(length);
+    if (length > MAX_CHILD_FRAME_BYTES) throw new Error("child-stdin-framing: frame too large");
     pieces.push(uint(segment.length), segment);
   }
   return Buffer.concat(pieces, length);
@@ -62,7 +68,7 @@ export function decodeBinaryChildFrame(frame: Buffer): {
   metadata: Record<string, unknown>;
   segments: Buffer[];
 } {
-  if (frame.length > MAX_CHILD_STDIN_BYTES) throw new Error("child-stdin-framing: frame too large");
+  if (frame.length > MAX_CHILD_FRAME_BYTES) throw new Error("child-stdin-framing: frame too large");
   let offset = 0;
   const read = (): number => {
     if (offset + PREFIX > frame.length)
@@ -72,7 +78,7 @@ export function decodeBinaryChildFrame(frame: Buffer): {
     return length;
   };
   const take = (length: number): Buffer => {
-    checkedLength(length);
+    checkedSegmentLength(length);
     if (offset + length > frame.length) throw new Error("child-stdin-framing: truncated frame");
     const result = Buffer.from(frame.subarray(offset, offset + length));
     offset += length;

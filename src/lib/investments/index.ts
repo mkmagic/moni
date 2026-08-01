@@ -25,6 +25,7 @@ export {
   runTiingoQuoteWorkerFrame,
   type TiingoQuoteRefreshDependencies,
 } from "./tiingo-worker";
+export { runTiingoWorker, spawnInvestmentSyncWorker } from "./route-orchestration";
 export {
   InvestmentNormalizationError,
   type InvestmentNormalizationErrorCode,

@@ -18,6 +18,8 @@ export type StartSyncResult =
   | { kind: "locked" }
   | { kind: "error"; message: string };
 
+export type ConnectionSyncOutcome = StartSyncResult | { kind: "file_required" };
+
 export async function startSyncRun(
   connectionId: string,
   startDate?: string,
@@ -38,6 +40,15 @@ export async function startSyncRun(
   } catch {
     return { kind: "error", message: "Could not reach the server" };
   }
+}
+
+/** Import sources need a user-selected file; they are not failed refreshes. */
+export async function startConnectionSync(connection: {
+  id: string;
+  mode: "credentialed_fetch" | "user_mediated_import";
+}): Promise<ConnectionSyncOutcome> {
+  if (connection.mode === "user_mediated_import") return { kind: "file_required" };
+  return startSyncRun(connection.id);
 }
 
 export interface FinishedRun {

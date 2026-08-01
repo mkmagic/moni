@@ -30,6 +30,9 @@ export {
   encodeBinaryChildFrame,
   decodeBinaryChildFrame,
   MAX_CHILD_STDIN_BYTES,
+  MAX_CHILD_SEGMENT_BYTES,
+  MAX_CHILD_METADATA_BYTES,
+  MAX_CHILD_FRAME_BYTES,
   type ChildStdinPayload,
 } from "./child-stdin-framing";
 export { readChildStdin } from "./read-child-stdin";

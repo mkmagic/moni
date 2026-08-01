@@ -19,14 +19,16 @@ import {
   listConnections,
 } from "@/domain/connections";
 import { getCredentialKey } from "@/lib/auth/cred-window";
-import { isConnectorId } from "@/lib/connectors";
+import { getConnectorDefinition, isConnectorId } from "@/lib/connectors";
 
 // Zod at the trust boundary (docs/design/conventions.md — Validation).
-const CreateConnectionSchema = z.object({
-  connectorId: z.string().min(1),
-  credentials: z.record(z.string(), z.string()),
-  displayName: z.string().min(1).optional(),
-});
+const CreateConnectionSchema = z
+  .object({
+    connectorId: z.string().min(1),
+    credentials: z.record(z.string(), z.string()).optional(),
+    displayName: z.string().min(1).optional(),
+  })
+  .strict();
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const session = getSessionFromRequest(req);
@@ -53,6 +55,30 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "unknown connector" }, { status: 400 });
   }
   const connectorId = parsed.data.connectorId;
+  const definition = getConnectorDefinition(connectorId);
+  if (!definition) return NextResponse.json({ error: "unknown connector" }, { status: 400 });
+
+  if (definition.mode === "user_mediated_import") {
+    if (parsed.data.credentials !== undefined)
+      return NextResponse.json({ error: "invalid request" }, { status: 400 });
+    try {
+      const { id } = await createConnection(
+        session.userId,
+        connectorId,
+        null,
+        null,
+        parsed.data.displayName,
+      );
+      return NextResponse.json({ id }, { status: 201 });
+    } catch (err) {
+      if (err instanceof InvalidCredentialsShapeError) {
+        return NextResponse.json({ error: "invalid request" }, { status: 400 });
+      }
+      throw err;
+    }
+  }
+  if (parsed.data.credentials === undefined)
+    return NextResponse.json({ error: "invalid request" }, { status: 400 });
 
   // 423 Locked — remediation is "unlock with your passkey", not "log in
   // again" (docs plan §B). credentialKey is BORROWED from the cred-window

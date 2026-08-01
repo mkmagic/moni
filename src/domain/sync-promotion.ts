@@ -574,6 +574,33 @@ export async function startSyncRun(userId: string, connectionId: string): Promis
   return id;
 }
 
+/** Creates a run only while the source remains active, serializing with disconnect. */
+export async function startActiveConnectionSyncRun(
+  userId: string,
+  connectionId: string,
+): Promise<string | null> {
+  const id = randomUUID();
+  return withUser(userId, async (tx) => {
+    const connection = (
+      await tx
+        .select({ id: connections.id, status: connections.status })
+        .from(connections)
+        .where(eq(connections.id, connectionId))
+        .for("update")
+        .limit(1)
+    )[0];
+    if (!connection || connection.status !== "active") return null;
+    await tx.insert(syncRuns).values({
+      id,
+      ownerId: userId,
+      connectionId,
+      status: "running",
+      windowStart: new Date(),
+    });
+    return id;
+  });
+}
+
 /**
  * Writes the terminal 'failed' state for a sync run. Deliberately its OWN
  * transaction, separate from whatever `promoteScrapeResult` attempted and
