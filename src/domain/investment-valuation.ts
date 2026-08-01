@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import Decimal from "decimal.js";
 import { and, desc, eq, lte } from "drizzle-orm";
-import type { UserTransaction } from "@/db/client";
+import { withUser, type UserTransaction } from "@/db/client";
 import {
   accounts,
   fxRates,
@@ -618,6 +618,26 @@ export async function replaceTiingoQuote(
       version: 1,
       ...values,
     });
+}
+
+/** Worker-facing domain reads keep child processes out of the database layer. */
+export function listTiingoQuoteTargetsForUser(userId: string, dataKey: Uint8Array) {
+  return withUser(userId, (tx) => listTiingoQuoteTargets(tx, dataKey));
+}
+
+/** Worker-facing domain write for one accepted, user-owned Tiingo observation. */
+export function replaceTiingoQuoteForUser(
+  userId: string,
+  dataKey: Uint8Array,
+  input: TiingoQuoteTarget & {
+    price: string;
+    sourceDate: string;
+    fetchedAt: Date;
+    splitState: "safe" | "post_split" | "unknown";
+    qualityState: "accepted" | "stale";
+  },
+) {
+  return withUser(userId, (tx) => replaceTiingoQuote(tx, dataKey, input));
 }
 
 export function tiingoWorkerConfiguration(

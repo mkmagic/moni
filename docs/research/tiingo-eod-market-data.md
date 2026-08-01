@@ -12,12 +12,13 @@ parse money as exact decimal text. Tiingo documents end-of-day availability arou
 5:30 p.m. Eastern with possible corrections through 8 p.m.; this is appropriate for
 a daily estimate, not a real-time price.
 
-The local POC (`npm run poc:tiingo-eod`) proved current inventory coverage, expected
-ETF/stock classification, USD currency, one latest row per symbol, exact positive
-decimal closes, ISO source dates, and no-more-than-seven-day freshness for VTI,
-VXUS, and AAPL. It printed or persisted no token, URL, price, holding quantity,
-symbol metadata, or raw provider response. This sample does not prove every security
-or corporate-action edge.
+The local POC proved current inventory coverage, expected ETF/stock classification,
+USD currency, one latest row per symbol, exact positive decimal closes, ISO source
+dates, and no-more-than-seven-day freshness for VTI, VXUS, and AAPL. It printed or
+persisted no token, URL, price, holding quantity, symbol metadata, or raw provider
+response. The live POC entrypoint was removed after validation; its historical
+evidence remains in git history. This sample does not prove every security or
+corporate-action edge.
 
 ## Product boundary
 

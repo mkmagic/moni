@@ -26,8 +26,9 @@ and remain visibly stale. Bank of Israel observations convert both bases to ILS.
   rewriting encrypted rollups whenever current FX or a historical correction changes.
 - Source valuation timestamps remain authoritative. A position inherits the account
   source time only when it has no more specific source time; import time is never
-  substituted. Old source evidence remains in current totals until the account is
-  archived, even when it is stale.
+  substituted. Broker evidence is current in the present or immediately preceding
+  Israeli Sunday–Saturday week; older source evidence remains in current totals
+  until the account is archived, visibly stale.
 - Tiingo closes arrive as exact CSV decimal text with explicit price currency and
   source date. A quote older than seven calendar days is unusable. Quote refresh is
   best-effort and separate from atomic broker/import promotion: quote failure never
@@ -53,10 +54,10 @@ and remain visibly stale. Bank of Israel observations convert both bases to ILS.
   value history. Investment snapshots do not copy or lock FX rates. Future tax-lot
   FX evidence requires its own locking policy.
 - One instance-wide Tiingo token is configured outside the database and used by a
-  short-lived market-data worker that receives no broker credentials. The current
-  deployment is single-user. Enabling this shared feed for more than one user is
-  gated on written provider permission for that use; Moni does not silently broaden
-  a personal internal-use license.
+  short-lived market-data worker that receives no broker credentials. It is enabled
+  only when `MONI_TIINGO_MULTI_USER_AUTHORIZED=true` explicitly attests that the
+  deployment has provider permission for shared multi-user use; otherwise refresh is
+  a local no-op and broker fallback applies.
 - The token is supplied in the Authorization header. Its mutable byte copy is wiped,
   while the HTTP client's unavoidable immutable header string is confined to the
   worker lifetime and never logged. There is no scheduler: refresh is

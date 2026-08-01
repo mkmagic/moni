@@ -18,14 +18,19 @@ A connector is a static registry entry, not a plug-in class — `israeli-bank-sc
 interface ConnectorDefinition {
   id: ConnectorId;
   label: string;               // display name ("Bank Leumi")
-  kind: "bank" | "credit_card";
+  kind: "bank" | "credit_card" | "investment";
+  mode: "credentialed_fetch" | "user_mediated_import";
   loginFields: LoginFieldDescriptor[]; // ordered to match the scraper's credentials object
 }
 ```
 
 `src/lib/connectors/registry.ts` — `CONNECTOR_REGISTRY` is the concrete list: the `["username","password"]` banks, `hapoalim` (`userCode`), `isracard`/`amex` (`id`,`card6Digits`,`password`), `discount`/`mercantile` (`id`,`password`,`num`), `yahav` (`username`,`nationalID`,`password`). `oneZero` is deliberately excluded — it needs OTP, which this plain login-field shape can't express. `tests/unit/connector-registry.test.ts` is a drift gate: each entry's field keys must `===` the installed library's own `SCRAPERS[id].loginFields`, so a library upgrade that reorders or renames a field fails a test instead of silently breaking a login form.
 
-The UI never hardcodes a second list of institutions — `src/components/institution-picker.tsx` renders `CONNECTOR_LIST` (`Object.values(CONNECTOR_REGISTRY)`) directly, grouped by `kind`. Investments has no registry entries at all (vision.md defers the whole module); the picker shows it as a disabled tile with a "coming after v1.0" note rather than a real option.
+The registry also contains `ibkr_flex` (`investment`, `credentialed_fetch`,
+`flexToken` and `queryId`) and `schwab_positions_csv` (`investment`,
+`user_mediated_import`, no credentials). UI and routes derive source mode from this
+registry; they do not keep a second broker list. Credentialed connections require
+`credentials_ct`; import connections require it to be null.
 
 ---
 
@@ -38,7 +43,14 @@ The UI never hardcodes a second list of institutions — `src/components/institu
 
 **The keys are wrapped by different factors, and that is the point** (issue #7, requirement from #18). DK is wrapped by the Argon2id(password) KEK; CK is wrapped only on `webauthn-prf` rows of `user_unlock_methods`, never by the password. So a stolen session cookie yields no bank credential, and neither does a phished Moni password. CK is minted at the first passkey enrollment — a user with no passkey has no CK and cannot store a bank credential at all. There is **no recovery path for CK**: lose every passkey and you delete the connection and re-enter the bank login. `endSession()` cascades to `destroyCredentialWindow()` and `clearPendingCeremony()` so logout wipes both windows and any half-finished ceremony.
 
-**Everything that touches CK checks the window**, including the first connect. `POST /api/connections`, `PATCH /api/connections/[id]` (credential replacement) and `POST /api/connections/[id]/sync` all call `getCredentialKey(session.id)` and return **`423 Locked`** with `{ error: "credential_window_locked" }` when it is closed — not 401 (that means "log in again") and not 403 (that means "denied"); 423 means exactly "unlock with your passkey to proceed." The client keys off that literal status code: `sendUnlocked()` (`src/lib/passkey-client.ts`) arms and retries once for the writes, and the sync surfaces show an inline unlock button. Enrollment itself leaves the window armed, so onboarding's "create a passkey, then connect a bank" needs no extra prompt.
+**Everything that touches CK checks the window**, including the first credentialed
+connect. `POST /api/connections`, `PATCH /api/connections/[id]` (credential
+replacement), and credentialed `POST /api/connections/[id]/sync` return **`423
+Locked`** with `{ error: "credential_window_locked" }` when it is closed. That covers
+bank connectors and IBKR Flex. Schwab Positions CSV is an import connection: it has
+no reusable credential, does not require CK, and its bounded Tier-1 upload is handled
+with the active data key. The client arms and retries credentialed actions once; a
+new passkey enrollment leaves the window armed.
 
 **Arming is two requests.** `POST /api/connections/arm/options` issues a single-use, server-issued challenge (RAM, per session); `POST /api/connections/arm` verifies the assertion — signature *and* the user-verification flag, via `@simplewebauthn/server` — then HKDFs the PRF output to the KEK that unwraps CK. Enrollment is the same shape at `/api/passkeys/options` and `/api/passkeys`, except it pairs a `create` ceremony with an immediate `get`: only the assertion's PRF output is trusted to wrap CK, because a wrap that only the create ceremony can open is a wrap nobody can ever open.
 
@@ -143,7 +155,7 @@ The sync route sets `running` itself right after deciding to spawn (before the c
 
 ## 7. What's deferred, explicitly
 
-pg-boss and any scheduled/unattended sync (v1.0 is user-triggered only — every sync starts from a browser click) · connectors beyond the registry, especially `oneZero`/anything needing OTP · a manual review queue before promotion (v1.0 auto-promotes) · worker network egress filtering (the child has unrestricted outbound today — an accepted gap, not an oversight) · a cron-based orphaned-run sweeper (the lazy on-read check in §3/§6 is the whole mechanism) · Chrome/Docker production packaging · a concurrency guard on the sync route (two simultaneous syncs for one connection currently spawn two children — data-safe because promotion is idempotent, but wasteful).
+pg-boss and any scheduled/unattended sync (v1.0 is user-triggered only — every sync starts from a browser click) · connectors beyond the registry, especially `oneZero`/anything needing OTP · a manual review queue before promotion (v1.0 auto-promotes) · a cron-based orphaned-run sweeper (the lazy on-read check in §3/§6 is the whole mechanism) · Chrome/Docker production packaging · a concurrency guard on the sync route (two simultaneous syncs for one connection currently spawn two children — data-safe because promotion is idempotent, but wasteful).
 
 ---
 
@@ -167,13 +179,18 @@ interface InvestmentSyncEnvelope {
     baseCurrency: string;
     positions: Array<{
       sourceSecurityId: string;
+      sourceSecurityIdKind: string;
       symbol?: string;
+      name?: string;
+      exchange?: string;
       assetKind: "stock" | "etf" | "mutual_fund" | "generic";
       quantity: string;
       quantityUnit: string;
       currency: string;
       sourcePrice?: string;
+      sourcePriceCurrency?: string;
       sourceValue?: string;
+      sourceValueCurrency?: string;
       sourceAsOf?: string;
     }>;
     cash: Array<{ currency: string; amount: string }>;
@@ -246,6 +263,18 @@ falls back to broker-observed value with explicit basis and staleness. Weekly hi
 always uses the source-date snapshot. Reads make no external request and there is no
 scheduler; one user action may refresh the local quotes at most once per day.
 
-The current deployment is single-user and uses one instance token. Before that token
-can serve more than one user, the deployment must have written provider permission
-for the shared use. This licensing gate does not alter database user isolation.
+Tiingo is disabled unless both `MONI_TIINGO_TOKEN` and
+`MONI_TIINGO_MULTI_USER_AUTHORIZED=true` are present. The latter is an explicit
+operator attestation that the instance has provider permission to use its shared
+token for multiple users; without either setting, refresh is a local no-op and the
+broker fallback remains the product behavior.
+
+### 8.4 Investment-worker egress
+
+Deployment policy is part of this boundary, not an application allowlist: see
+[`../deployment/egress.md`](../deployment/egress.md). IBKR workers may reach only
+`ndcdyn.interactivebrokers.com` and PostgreSQL; Schwab import workers may reach only
+PostgreSQL; BOI workers may reach only `edge.boi.gov.il` and PostgreSQL; Tiingo
+workers may reach only `api.tiingo.com` and PostgreSQL and receive no broker
+credentials. Code also pins origins and rejects redirects, but that does not replace
+the deployment firewall.

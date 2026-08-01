@@ -1,6 +1,8 @@
 import "dotenv/config";
-import { withUser } from "@/db/client";
-import { listTiingoQuoteTargets, replaceTiingoQuote } from "@/domain/investment-valuation";
+import {
+  listTiingoQuoteTargetsForUser,
+  replaceTiingoQuoteForUser,
+} from "@/domain/investment-valuation";
 import { readChildStdin } from "@/lib/connectors";
 import { fetchTiingoEodQuote, runTiingoQuoteWorkerFrame } from "@/lib/investments";
 
@@ -11,12 +13,10 @@ async function main(): Promise<void> {
       dataKey,
       token,
       fetcher: fetch,
-      listTargets: (dataKey) => withUser(userId, (tx) => listTiingoQuoteTargets(tx, dataKey)),
+      listTargets: (dataKey) => listTiingoQuoteTargetsForUser(userId, dataKey),
       fetchQuote: fetchTiingoEodQuote,
       replaceQuote: (dataKey, input) =>
-        withUser(userId, (tx) =>
-          replaceTiingoQuote(tx, dataKey, { ...input, qualityState: "accepted" }),
-        ),
+        replaceTiingoQuoteForUser(userId, dataKey, { ...input, qualityState: "accepted" }),
     });
   });
 }

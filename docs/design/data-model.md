@@ -221,15 +221,18 @@ For the current estimate, active USD ETFs and common stocks on NYSE or Nasdaq ma
 use the latest usable Tiingo EOD close with the last accepted exact quantity;
 last-known cash remains at its source amount. Quote refresh is a separate
 best-effort operation and cannot accept, reject, or mutate a broker/import snapshot.
-A missing, unresolved, more-than-seven-day-old, or post-split quote falls back to the
-position's broker-observed value and makes the returned basis/freshness explicit.
-Historical weekly values always use source-date broker observations.
+Tiingo requires both an instance token and explicit multi-user provider
+authorization; missing either is a local no-op. A missing, unresolved,
+more-than-seven-day-old, or post-split quote falls back to the position's
+broker-observed value and makes the returned basis/freshness explicit. Historical
+weekly values always use source-date broker observations.
 
 Every source valuation keeps its real as-of time and precision. A position-specific
 valuation time wins; otherwise the position inherits the account source time, never
-the ingestion time. Any included component older than seven calendar days marks the
-account and consolidated current value stale without removing it from totals. A
-broker account total that differs from Moni's component sum after both are rounded
+the ingestion time. Broker evidence is current only in the present or immediately
+preceding Israeli Sunday–Saturday week; older evidence remains included but stale.
+Tiingo quotes and BOI observations retain their separate seven-calendar-day limits.
+A broker account total that differs from Moni's component sum after both are rounded
 to ILS display precision adds a non-blocking reconciliation-mismatch quality state.
 
 Historical reporting-currency conversion batch-reads the shared local `fx_rates`

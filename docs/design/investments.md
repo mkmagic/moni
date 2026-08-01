@@ -336,8 +336,7 @@ a local no-op and use broker fallback; do not create a shipping research task.
 ## 9. Freshness and history
 
 Broker evidence is current when its source observation falls in the present or
-immediately preceding Israeli Sunday-Saturday week. Otherwise it is stale. This
-week-based rule supersedes ADR 0009's earlier seven-calendar-day broker rule. Tiingo
+immediately preceding Israeli Sunday-Saturday week. Otherwise it is stale. Tiingo
 quote and BOI observation usability retain their seven-calendar-day limits.
 
 Every valuation exposes:
