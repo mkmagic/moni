@@ -4,6 +4,7 @@
 export type {
   ConnectorId,
   ConnectorKind,
+  ConnectorMode,
   ConnectorDefinition,
   LoginFieldDescriptor,
   LoginFieldInputType,

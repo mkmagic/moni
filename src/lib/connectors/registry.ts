@@ -17,6 +17,7 @@ function usernamePassword(
     id,
     label,
     kind,
+    mode: "credentialed_fetch",
     loginFields: [{ key: "username", label: "Username", inputType: "text" }, PASSWORD_FIELD],
   };
 }
@@ -35,12 +36,14 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
     id: "hapoalim",
     label: "Bank Hapoalim",
     kind: "bank",
+    mode: "credentialed_fetch",
     loginFields: [{ key: "userCode", label: "User Code", inputType: "text" }, PASSWORD_FIELD],
   },
   isracard: {
     id: "isracard",
     label: "Isracard",
     kind: "credit_card",
+    mode: "credentialed_fetch",
     loginFields: [
       { key: "id", label: "ID Number", inputType: "text" },
       { key: "card6Digits", label: "Last 6 Digits of Card", inputType: "text" },
@@ -51,6 +54,7 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
     id: "amex",
     label: "American Express (Isracard)",
     kind: "credit_card",
+    mode: "credentialed_fetch",
     loginFields: [
       { key: "id", label: "ID Number", inputType: "text" },
       { key: "card6Digits", label: "Last 6 Digits of Card", inputType: "text" },
@@ -61,6 +65,7 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
     id: "discount",
     label: "Discount Bank",
     kind: "bank",
+    mode: "credentialed_fetch",
     loginFields: [
       { key: "id", label: "ID Number", inputType: "text" },
       PASSWORD_FIELD,
@@ -71,6 +76,7 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
     id: "mercantile",
     label: "Mercantile Discount Bank",
     kind: "bank",
+    mode: "credentialed_fetch",
     loginFields: [
       { key: "id", label: "ID Number", inputType: "text" },
       PASSWORD_FIELD,
@@ -81,11 +87,29 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
     id: "yahav",
     label: "Bank Yahav",
     kind: "bank",
+    mode: "credentialed_fetch",
     loginFields: [
       { key: "username", label: "Username", inputType: "text" },
       { key: "nationalID", label: "National ID", inputType: "text" },
       PASSWORD_FIELD,
     ],
+  },
+  ibkr_flex: {
+    id: "ibkr_flex",
+    label: "Interactive Brokers Flex",
+    kind: "investment",
+    mode: "credentialed_fetch",
+    loginFields: [
+      { key: "flexToken", label: "Flex Token", inputType: "password" },
+      { key: "queryId", label: "Query ID", inputType: "text" },
+    ],
+  },
+  schwab_positions_csv: {
+    id: "schwab_positions_csv",
+    label: "Schwab Positions CSV",
+    kind: "investment",
+    mode: "user_mediated_import",
+    loginFields: [],
   },
 };
 
