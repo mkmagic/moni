@@ -37,6 +37,11 @@ export interface InvestmentValuation {
   metadata: ValuationMetadata;
 }
 
+export interface InvestmentNetWorth {
+  ilsValue: string;
+  metadata: ValuationMetadata;
+}
+
 /** Shared internal quote-or-broker decision; it is deliberately pure and has no I/O. */
 export function selectCurrentComponent(input: {
   estimateNow: boolean;
@@ -101,7 +106,7 @@ export function selectCurrentComponent(input: {
 type Tx = UserTransaction;
 const DAY = 86_400_000;
 
-function israelDate(date: Date): string {
+export function israelDate(date: Date): string {
   const parts = new Intl.DateTimeFormat("en", {
     timeZone: "Asia/Jerusalem",
     year: "numeric",
@@ -110,6 +115,12 @@ function israelDate(date: Date): string {
   }).formatToParts(date);
   const part = (type: string) => parts.find((item) => item.type === type)?.value;
   return `${part("year")}-${part("month")}-${part("day")}`;
+}
+export function israelWeekStart(date: Date | string): string {
+  const day = typeof date === "string" ? date : israelDate(date);
+  const value = new Date(`${day}T00:00:00Z`);
+  value.setUTCDate(value.getUTCDate() - value.getUTCDay());
+  return value.toISOString().slice(0, 10);
 }
 
 function dateAtMidnight(value: string): Date {
@@ -335,6 +346,99 @@ export async function valueInvestmentSnapshot(
       affectedComponentCount:
         fallback + incompleteFx + (detail.reconciliationState === "mismatch" ? 1 : 0),
       qualityFlags: [...qualities].sort(),
+    },
+  };
+}
+
+/**
+ * Internal dashboard seam.  It intentionally shares the per-component valuation
+ * engine above so current estimates and durable broker history cannot diverge.
+ */
+export async function valueInvestmentNetWorth(
+  tx: Tx,
+  dataKey: Uint8Array,
+  options: { now?: Date; cutoff?: string } = {},
+): Promise<InvestmentNetWorth> {
+  const now = options.now ?? new Date();
+  const cutoff = options.cutoff;
+  const [accountRows, detailRows] = await Promise.all([
+    tx.select().from(accounts),
+    tx.select().from(investmentSnapshotDetails),
+  ]);
+  const selected: Array<{ id: string; carried: boolean }> = [];
+  for (const account of accountRows) {
+    if (account.accountType !== "investment") continue;
+    const point = cutoff ?? israelDate(now);
+    if (account.archivedAt && israelDate(account.archivedAt) <= point) continue;
+    if (!cutoff && account.status !== "active") continue;
+    const candidates = detailRows.filter(
+      (detail) =>
+        detail.accountId === account.id && (!cutoff || israelDate(detail.sourceAsOf) <= cutoff),
+    );
+    const detail = candidates.sort((a, b) => b.sourceAsOf.getTime() - a.sourceAsOf.getTime())[0];
+    if (detail)
+      selected.push({
+        id: detail.id,
+        carried: !!cutoff && detail.weekStart < israelWeekStart(cutoff),
+      });
+  }
+  const values = await Promise.all(
+    selected.map(async ({ id, carried }) => {
+      const value = await valueInvestmentSnapshot(tx, dataKey, id, {
+        now,
+        estimateNow: !cutoff,
+      });
+      if (!carried) return value;
+      return {
+        ...value,
+        metadata: {
+          ...value.metadata,
+          freshness: "stale" as const,
+          affectedComponentCount: value.metadata.affectedComponentCount + 1,
+          qualityFlags: [
+            ...new Set([...value.metadata.qualityFlags, "carried_forward" as const]),
+          ].sort(),
+        },
+      };
+    }),
+  );
+  const flags = new Set<ValuationQualityFlag>();
+  values.forEach((value) => value.metadata.qualityFlags.forEach((flag) => flags.add(flag)));
+  const dates = (
+    key: keyof Pick<
+      ValuationMetadata,
+      "sourceAsOf" | "quoteAsOf" | "fxAsOf" | "oldestComponentDate"
+    >,
+  ) =>
+    values
+      .map((value) => value.metadata[key])
+      .filter((value): value is string => value !== null)
+      .sort();
+  const freshnesses = values.map((value) => value.metadata.freshness);
+  return {
+    ilsValue: values.reduce((sum, value) => sum.plus(value.ilsValue), new Decimal(0)).toFixed(),
+    metadata: {
+      basis: values.every((value) => value.metadata.basis === "broker_source")
+        ? "broker_source"
+        : values.every((value) => value.metadata.basis === "tiingo_estimate")
+          ? "tiingo_estimate"
+          : "mixed",
+      freshness:
+        freshnesses.includes("mixed_age") ||
+        (freshnesses.includes("current") && freshnesses.includes("stale"))
+          ? "mixed_age"
+          : freshnesses.includes("stale")
+            ? "stale"
+            : "current",
+      sourceAsOf: dates("sourceAsOf").at(-1) ?? null,
+      quoteAsOf: dates("quoteAsOf").at(-1) ?? null,
+      fxAsOf: dates("fxAsOf").at(-1) ?? null,
+      oldestComponentDate: dates("oldestComponentDate")[0] ?? null,
+      affectedComponentCount: values.reduce(
+        (sum, value) => sum + value.metadata.affectedComponentCount,
+        0,
+      ),
+      qualityFlags: [...flags].sort(),
     },
   };
 }

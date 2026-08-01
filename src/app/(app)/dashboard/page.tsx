@@ -50,10 +50,14 @@ export default async function DashboardPage() {
     ? `${timeOfDay(new Date().getHours())}, ${name}, here's your financial picture`
     : `${timeOfDay(new Date().getHours())}, here's your financial picture`;
 
-  const netWorthSeries = overview.months.map((m) => Number(m.net));
+  const netWorthSeries = overview.netWorthHistory.map((point) => Number(point.amount));
   const monthLabelFmt = new Intl.DateTimeFormat("en-US", { month: "short" });
   const monthLabels = overview.months.map((m) => {
     const [year, month] = m.month.split("-").map(Number);
+    return monthLabelFmt.format(new Date(Date.UTC(year, month - 1, 1)));
+  });
+  const netWorthLabels = overview.netWorthHistory.map((point) => {
+    const [year, month] = point.month.split("-").map(Number);
     return monthLabelFmt.format(new Date(Date.UTC(year, month - 1, 1)));
   });
 
@@ -80,7 +84,7 @@ export default async function DashboardPage() {
           <div className="w-full md:w-64">
             <Sparkline
               data={netWorthSeries}
-              labels={monthLabels}
+              labels={netWorthLabels}
               currency={overview.netWorth.currency}
               color="var(--color-chart-1)"
               height={64}
