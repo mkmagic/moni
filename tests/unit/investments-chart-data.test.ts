@@ -26,4 +26,10 @@ describe("investment chart coordinates", () => {
     expect(points[0].values.a + points[0].values.b).toBeCloseTo(100);
     expect(weekEnding("2026-07-26")).toBe("2026-08-01");
   });
+
+  it("passes a non-date label through instead of throwing on an invalid date", () => {
+    // The chart appends this label for the current estimate, and the axis tick
+    // formatter and tooltip both run every x value through weekEnding.
+    expect(weekEnding("Estimated now")).toBe("Estimated now");
+  });
 });

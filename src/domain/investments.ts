@@ -49,6 +49,10 @@ export interface PortfolioHolding {
   connectionId: string;
   instrumentId: string | null;
   instrumentKind: "stock" | "etf" | "mutual_fund" | "generic" | null;
+  /** The ticker when the instrument resolved to one; drives the display label. */
+  symbol: string | null;
+  /** The instrument's long name, shown as secondary detail beside the symbol. */
+  name: string | null;
   label: string;
   currency: string;
   quantity: string | null;
@@ -316,6 +320,22 @@ async function rowsForSnapshot(
     const sourceCurrency = row.sourceValueCurrency ?? row.sourcePriceCurrency ?? row.currency;
     const sourceDate = row.sourceAsOf ?? detail.sourceAsOf;
     const instrument = instrumentById.get(row.instrumentId);
+    const symbol =
+      decText(
+        key,
+        instrument?.canonicalSymbolCt,
+        instrument?.id ?? row.id,
+        "canonical_symbol_ct",
+        instrument?.version ?? 1,
+      ) ?? null;
+    const name =
+      decText(
+        key,
+        instrument?.canonicalNameCt,
+        instrument?.id ?? row.id,
+        "canonical_name_ct",
+        instrument?.version ?? 1,
+      ) ?? null;
     const quote = all.quotes.find(
       (candidate) => candidate.instrumentId === row.instrumentId && candidate.provider === "tiingo",
     );
@@ -360,22 +380,11 @@ async function rowsForSnapshot(
       kind: "position",
       instrumentId: row.instrumentId,
       instrumentKind: instrument?.kind ?? null,
-      label:
-        decText(
-          key,
-          instrument?.canonicalNameCt,
-          instrument?.id ?? row.id,
-          "canonical_name_ct",
-          instrument?.version ?? 1,
-        ) ??
-        decText(
-          key,
-          instrument?.canonicalSymbolCt,
-          instrument?.id ?? row.id,
-          "canonical_symbol_ct",
-          instrument?.version ?? 1,
-        ) ??
-        "Unresolved instrument",
+      symbol,
+      name,
+      // The ticker is what identifies a holding at a glance; the long name is
+      // secondary detail, so it only stands in when there is no symbol.
+      label: symbol ?? name ?? "Unresolved instrument",
       currency: selected.currency,
       quantity: decText(key, row.quantityCt, row.id, "quantity_ct", row.version),
       price:
@@ -401,6 +410,8 @@ async function rowsForSnapshot(
       kind: "cash",
       instrumentId: null,
       instrumentKind: null,
+      symbol: null,
+      name: null,
       label: `Cash (${row.currency})`,
       currency: row.currency,
       quantity: null,

@@ -42,6 +42,73 @@ new feedback lands.
 
 ## Feedback log (newest first — append, don't overwrite)
 
+### 2026-08-01 — the investments screen (issue #37): a ticker is the name, and an opaque code is not an error message
+
+- **A holding is identified by its ticker, not its legal name.** The table and the hero donut both
+  rendered "VANGUARD MORNINGSTAR TOTAL STOCK MARKET ETF". The fix was in the **domain layer**, not
+  the components: `PortfolioHolding` now carries `symbol` and `name` separately and `label` is
+  `symbol ?? name`. Because the donut, the history legend, and the table all read `row.label`, one
+  change fixed all three — worth checking for that shared-field leverage before editing three
+  components. The long name survives as a muted `truncate` second line with a `title`.
+- **`capitalize` turns an initialism into a typo.** `instrumentKind` "etf" rendered as "Etf". CSS
+  `capitalize` cannot know; it needs a real mapping function. Assume this recurs for any enum shown
+  to a user (ISIN, CUSIP, ILS, ETF).
+- **A symbol should be a link out.** Tickers now link to `finance.yahoo.com/quote/<symbol>/` with
+  `target="_blank" rel="noreferrer noopener"`.
+- **The timeframe control belongs under the chart as a draggable window.** Two `<input type="range">`
+  labelled Start and End were the wrong instrument — Recharts' own `<Brush>` (as the prototype in
+  commit `f57b0fd` already had it) is one control that shows the window *and* the dates it covers.
+  Consequence worth knowing: with a Brush you must pass the chart the **full** data array and let
+  `startIndex`/`endIndex` window it. Pre-slicing the array *and* brushing it feeds the brush its own
+  output. Reset the indices to `null` whenever new history loads, since indices into a new range are
+  meaningless.
+- **A worker's safe failure code is not a user-facing message.** "Last sync failed,
+  provider_rejected" told the owner nothing. Workers deliberately emit opaque codes so a provider's
+  error text can never carry credentials into a log, which leaves the mapping to advice as a UI
+  concern — now `src/lib/sync-error-message.ts`, a dependency-free module so both the connections
+  list and the investments screen say the same thing. It decodes IBKR's numeric Flex codes
+  (`send_flex_1012` → "Your Flex token has expired. Create a new token…"). **Any new worker error
+  code needs an entry there or it surfaces raw.**
+- **A button that un-presses while the work continues is worse than no feedback.** The import dialog
+  called `setBusy(false)` right after the POST returned 202 — but the POST only *starts* a worker,
+  and the real wait is `waitForSyncRun`. The busy flag has to span the whole promise (`try/finally`),
+  and the dialog swaps its whole body for a spinner rather than only disabling the button.
+- **Style `<input type="file">` with the `file:` variants.** The native "Choose File" button is
+  unstyled and reads as plain text on a dark card; `file:rounded-[var(--radius)] file:border
+  file:border-border file:bg-muted file:px-3 file:py-1.5` makes it a button.
+- **Don't name a shared surface after one provider.** "Import Schwab statement" and a hardcoded
+  `?? "Schwab"` fallback assumed the only importer there will ever be. Fall back to
+  `getConnectorDefinition(connectorId)?.label` instead.
+- **Verifying a busy state without writing data:** stub `window.fetch` in the page so the POST
+  returns a fake `syncRunId` and the sync-run poll stays `"running"`. The dialog holds its busy
+  branch indefinitely and nothing reaches the database — much better than importing a fixture into
+  the owner's dev portfolio just to see a spinner.
+- **A Recharts series with its own `data` prop poisons the shared category axis.** The owner reported
+  a tooltip showing a date that "doesn't even change when you move the mouse". The cause was an
+  `<Area>`-stacked chart carrying one `<Line data={[...]} dataKey={() => 0}>` for "Estimated now":
+  a second, 2-point dataset whose categories get concatenated onto the x-axis (Recharts'
+  `allowDuplicatedCategory` defaults to `true`), which desynchronizes the tooltip's active index
+  from the main series. **The tell is a tick label that isn't in your data** — the axis literally
+  rendered "Estimated now" as its last tick. Fix is one dataset for the whole chart; put extra
+  series in the shared array as extra keys (the prototype in `f57b0fd` does exactly that with
+  `snapshotTotal`/`estimatedTotal`). That phantom line also encoded nothing — a constant `0` on a
+  0–100% composition axis — so it was removed rather than restructured.
+- **My first diagnosis was wrong and the owner's second report corrected it.** I read "tooltip
+  doesn't match the graph" as a date-convention mismatch (the axis showed week *start* dates while
+  the tooltip said "Week ending"), which was real and worth fixing, but it was not what they were
+  seeing. **A constant offset and a stuck value are different symptoms — establish which one before
+  fixing.** Hovering two known x positions and comparing the tooltip against the tick under the
+  cursor settles it in two screenshots.
+- **`weekEnding` threw on the estimate label.** Adding a `tickFormatter` to the axis made every x
+  value flow through `weekEnding`, including the non-date "Estimated now", so
+  `new Date("Estimated nowT00:00:00Z").toISOString()` crashed the page with a `RangeError`. The
+  guard now lives in `weekEnding` itself, since the tooltip could have hit it too. **A formatter
+  runs over every category, not only the ones you were thinking about.**
+- **A first paint of a Recharts `<Pie>` can be a degenerate sliver.** The donut rendered as a flat
+  sliver with correct radii but ~6° of sweep, which looks exactly like a data bug. It resolves
+  itself; the owner confirmed it renders correctly. **Re-screenshot before investigating a chart
+  that looks wrong immediately after load.**
+
 ### 2026-07-30 (later) — delete account (issue #31): the confirm flow the Remove button was waiting for
 
 - **The 2026-07-30 rule below was a "not yet", not a "never".** "Don't offer a destructive control with no undo" ended with *"until there's a confirm flow that can say what is lost"*. This is that flow, so the copy enumerates the loss ("your transactions and their history, your accounts and balances, your categories, rules and merchants, and every bank connection along with its encrypted login") instead of asking "are you sure?". The owner chose **password re-entry** over a type-your-email confirmation when asked: a typed email stops a misclick, a password also stops a borrowed session.

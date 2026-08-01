@@ -14,9 +14,9 @@ import {
 } from "lucide-react";
 import {
   Area,
+  Brush,
   Cell,
   ComposedChart,
-  Line,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -36,7 +36,9 @@ import type {
   PortfolioPage,
   PortfolioSnapshotPage,
 } from "@/domain/investments";
+import { getConnectorDefinition } from "@/lib/connectors";
 import { startConnectionSync, waitForSyncRun } from "@/lib/sync-client";
+import { syncErrorMessage } from "@/lib/sync-error-message";
 import { cn } from "@/lib/utils";
 import { compositionCoordinates, weekEnding } from "./chart-data";
 
@@ -86,6 +88,16 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
 function qualityText(flags: string[]) {
   return flags.map((flag) => flag.replaceAll("_", " ")).join(" · ");
 }
+/** "etf" is an initialism, so title-casing it to "Etf" reads as a typo. */
+function instrumentTypeLabel(kind: string | null | undefined) {
+  if (!kind) return "—";
+  if (kind === "etf") return "ETF";
+  const words = kind.replaceAll("_", " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+function quoteUrl(symbol: string) {
+  return `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}/`;
+}
 
 export function InvestmentsScreen({
   initialOverview,
@@ -101,7 +113,8 @@ export function InvestmentsScreen({
   const [expanded, setExpanded] = useState<string | null>(null);
   const [groupBy, setGroupBy] = useState<GroupBy>("holding");
   const [range, setRange] = useState<Range>("1Y");
-  const [bounds, setBounds] = useState({ start: 0, end: 100 });
+  // Indices into the loaded history points; the chart's Brush owns this window.
+  const [bounds, setBounds] = useState<{ start: number; end: number } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -127,7 +140,11 @@ export function InvestmentsScreen({
     void json<PortfolioHistory>(
       `/api/investments/history?start=${dates.start}&end=${dates.end}&groupBy=${groupBy}`,
     )
-      .then(setHistory)
+      .then((next) => {
+        setHistory(next);
+        // A new range has different indices, so the old window is meaningless.
+        setBounds(null);
+      })
       .catch((cause: unknown) =>
         setError(cause instanceof Error ? cause.message : "Could not load history"),
       );
@@ -187,12 +204,8 @@ export function InvestmentsScreen({
         overview.ilsValue === "0" ? 0 : slice.ilsValue.div(overview.ilsValue).mul(100).toNumber(),
     }));
   }, [rows, overview.ilsValue]);
-  const chart = history
-    ? compositionCoordinates(history).slice(
-        Math.floor((bounds.start / 100) * history.points.length),
-        Math.max(1, Math.ceil((bounds.end / 100) * history.points.length)),
-      )
-    : [];
+  // The Brush windows the chart itself, so it always receives every point.
+  const chart = useMemo(() => (history ? compositionCoordinates(history) : []), [history]);
   const keys = history
     ? [
         ...new Map(
@@ -211,7 +224,11 @@ export function InvestmentsScreen({
     )) {
       const outcome = await startConnectionSync(connection);
       if (outcome.kind === "file_required") {
-        files.push(connection.displayName ?? "Schwab");
+        files.push(
+          connection.displayName ??
+            getConnectorDefinition(connection.connectorId)?.label ??
+            connection.connectorId,
+        );
         continue;
       }
       if (outcome.kind === "locked") {
@@ -227,7 +244,7 @@ export function InvestmentsScreen({
       const finished = await waitForSyncRun(outcome.syncRunId);
       if (finished.status === "failed")
         failures.push(
-          `${connection.displayName ?? "Connection"}: ${finished.error ?? "Sync failed; retry when the source is available"}`,
+          `${connection.displayName ?? "Connection"}: ${syncErrorMessage(finished.error)}`,
         );
     }
     const quotes = await fetch("/api/investments/quotes/refresh", { method: "POST" }).catch(
@@ -255,11 +272,8 @@ export function InvestmentsScreen({
     else if (outcome.kind === "error") setError(outcome.message);
     else {
       const done = await waitForSyncRun(outcome.syncRunId);
-      setNotice(
-        done.status === "succeeded"
-          ? "Connection updated."
-          : `${done.error ?? "Sync failed"}. Last accepted snapshot remains included; retry when the source is available.`,
-      );
+      if (done.status === "succeeded") setNotice("Connection updated.");
+      else setError(`${syncErrorMessage(done.error)} The last accepted snapshot remains included.`);
     }
     setBusy(false);
   }
@@ -347,7 +361,7 @@ export function InvestmentsScreen({
         <Donut slices={slices} selected={selected} onSelect={setSelected} />
       </Card>
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Connections</h2>
+        <h2 className="text-lg font-semibold">Accounts</h2>
         {overview.connections.map((view) => (
           <ConnectionCard
             key={view.id}
@@ -589,18 +603,30 @@ function ConnectionCard({
 function HoldingTable({ rows, selected }: { rows: PortfolioHolding[]; selected: string | null }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[860px] text-sm">
-        <thead className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+      <table className="w-full min-w-[940px] border-separate border-spacing-0 text-sm">
+        <thead className="text-left text-xs font-medium text-muted-foreground">
           <tr>
-            <th className="pb-2">Holding / symbol</th>
-            <th className="pb-2">Type</th>
-            <th className="pb-2 text-right">Quantity</th>
-            <th className="pb-2 text-right">Price</th>
-            <th className="pb-2 text-right">Native value</th>
-            <th className="pb-2 text-right">ILS value</th>
-            <th className="pb-2 text-right">Allocation</th>
-            <th className="pb-2">Valuation source</th>
-            <th className="pb-2">As of</th>
+            {[
+              ["Holding", "left"],
+              ["Type", "left"],
+              ["Quantity", "right"],
+              ["Price", "right"],
+              ["Value", "right"],
+              ["Value (ILS)", "right"],
+              ["Allocation", "right"],
+              ["Source", "left"],
+              ["As of", "left"],
+            ].map(([label, align]) => (
+              <th
+                key={label}
+                className={cn(
+                  "whitespace-nowrap border-b border-border px-3 pb-3 first:pl-0 last:pr-0",
+                  align === "right" && "text-right",
+                )}
+              >
+                {label}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
@@ -608,43 +634,64 @@ function HoldingTable({ rows, selected }: { rows: PortfolioHolding[]; selected: 
             <tr
               key={row.id}
               className={cn(
-                "border-b border-border/70",
                 selected &&
                   (row.instrumentId === selected || `cash:${row.currency}` === selected) &&
                   "bg-primary/5",
               )}
             >
-              <td className="py-3">
-                <p>{row.label}</p>
-                {row.instrumentKind === "generic" && (
-                  <p className="text-xs text-muted-foreground">
-                    Generic instrument · broker value only
+              <td className="max-w-[260px] border-b border-border/60 px-3 py-4 pl-0">
+                {row.symbol ? (
+                  <a
+                    href={quoteUrl(row.symbol)}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="font-medium text-foreground underline-offset-4 hover:text-primary hover:underline"
+                  >
+                    {row.symbol}
+                  </a>
+                ) : (
+                  <span className="font-medium">{row.label}</span>
+                )}
+                {row.name && row.name !== row.symbol && (
+                  <p className="truncate text-xs text-muted-foreground" title={row.name}>
+                    {row.name}
                   </p>
                 )}
+                {row.instrumentKind === "generic" && (
+                  <p className="text-xs text-muted-foreground">Broker value only</p>
+                )}
               </td>
-              <td className="py-3 capitalize">
-                {row.kind === "cash" ? "Cash" : row.instrumentKind?.replaceAll("_", " ")}
+              <td className="whitespace-nowrap border-b border-border/60 px-3 py-4">
+                {row.kind === "cash" ? "Cash" : instrumentTypeLabel(row.instrumentKind)}
               </td>
-              <td className="py-3 text-right tabular-nums">{row.quantity ?? "—"}</td>
-              <td className="py-3 text-right tabular-nums">
+              <td className="whitespace-nowrap border-b border-border/60 px-3 py-4 text-right tabular-nums">
+                {row.quantity ?? "—"}
+              </td>
+              <td className="whitespace-nowrap border-b border-border/60 px-3 py-4 text-right tabular-nums">
                 {row.price ? money(row.price, row.currency) : "—"}
               </td>
-              <td className="py-3 text-right tabular-nums">
+              <td className="whitespace-nowrap border-b border-border/60 px-3 py-4 text-right tabular-nums">
                 {money(row.nativeValue, row.currency)}
               </td>
-              <td className="py-3 text-right tabular-nums">
+              <td className="whitespace-nowrap border-b border-border/60 px-3 py-4 text-right tabular-nums">
                 {row.qualityReasons.includes("incomplete_fx")
                   ? "Excluded (FX incomplete)"
                   : money(row.ilsValue)}
               </td>
-              <td className="py-3 text-right tabular-nums">{percent(row.allocationPercentage)}</td>
-              <td className="py-3 capitalize">
-                {row.basis.replaceAll("_", " ")}
+              <td className="whitespace-nowrap border-b border-border/60 px-3 py-4 text-right tabular-nums">
+                {percent(row.allocationPercentage)}
+              </td>
+              <td className="border-b border-border/60 px-3 py-4">
+                <span className="whitespace-nowrap capitalize">
+                  {row.basis.replaceAll("_", " ")}
+                </span>
                 {row.qualityReasons.length ? (
                   <p className="text-xs text-primary">{qualityText(row.qualityReasons)}</p>
                 ) : null}
               </td>
-              <td className="py-3 tabular-nums">{row.sourceAsOf}</td>
+              <td className="whitespace-nowrap border-b border-border/60 px-3 py-4 pr-0 tabular-nums">
+                {row.sourceAsOf}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -669,12 +716,14 @@ function History({
   keys: Array<[string, string]>;
   range: Range;
   groupBy: GroupBy;
-  bounds: { start: number; end: number };
+  bounds: { start: number; end: number } | null;
   onRange: (value: Range) => void;
   onGroup: (value: GroupBy) => void;
   onBounds: (value: { start: number; end: number }) => void;
   onWeek: (week: string) => void;
 }) {
+  const last = Math.max(0, chart.length - 1);
+  const window = bounds ?? { start: 0, end: last };
   return (
     <Card className="p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -714,40 +763,20 @@ function History({
             key={value}
             variant={range === value ? "primary" : "outline"}
             className="h-8 px-3 text-xs"
-            onClick={() => {
-              onRange(value);
-              onBounds({ start: 0, end: 100 });
-            }}
+            onClick={() => onRange(value)}
           >
             {value}
           </Button>
         ))}
       </div>
-      <div className="mt-4 flex items-center gap-3 text-xs text-muted-foreground">
-        <label>
-          Start{" "}
-          <input
-            aria-label="History start"
-            type="range"
-            min="0"
-            max={bounds.end - 1}
-            value={bounds.start}
-            onChange={(event) => onBounds({ ...bounds, start: Number(event.target.value) })}
-          />
-        </label>
-        <label>
-          End{" "}
-          <input
-            aria-label="History end"
-            type="range"
-            min={bounds.start + 1}
-            max="100"
-            value={bounds.end}
-            onChange={(event) => onBounds({ ...bounds, end: Number(event.target.value) })}
-          />
-        </label>
-      </div>
-      <div className="mt-4 h-80">
+      {chart.length > 0 && (
+        <p className="mt-4 text-xs text-muted-foreground">
+          Showing {weekEnding(chart[window.start]?.week ?? chart[0].week)} to{" "}
+          {weekEnding(chart[window.end]?.week ?? chart[last].week)} · drag the handles below the
+          chart to narrow the window.
+        </p>
+      )}
+      <div className="mt-4 h-96">
         {history ? (
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
@@ -764,6 +793,11 @@ function History({
                 dataKey="week"
                 axisLine={false}
                 tickLine={false}
+                minTickGap={38}
+                // `week` is the week's start date, but every other surface — the
+                // tooltip, the brush, the snapshot heading — names a week by the
+                // day it ends. An unformatted axis reads six days off from them.
+                tickFormatter={(value: string) => weekEnding(value)}
                 tick={{ fill: "var(--color-muted-foreground)", fontSize: 11 }}
               />
               <YAxis
@@ -784,23 +818,6 @@ function History({
                   fillOpacity={0.35}
                 />
               ))}
-              {history.estimatedNow && (
-                <Line
-                  data={[
-                    ...chart.slice(-1),
-                    {
-                      week: "Estimated now",
-                      total: history.estimatedNow.ilsValue,
-                      values: {},
-                      exact: {},
-                    },
-                  ]}
-                  dataKey={() => 0}
-                  stroke="var(--color-muted-foreground)"
-                  strokeDasharray="4 4"
-                  dot={false}
-                />
-              )}
               <Tooltip
                 content={({ active, payload }) => {
                   const point = active
@@ -822,6 +839,20 @@ function History({
                       )}
                     </div>
                   );
+                }}
+              />
+              <Brush
+                dataKey="week"
+                height={26}
+                travellerWidth={10}
+                startIndex={window.start}
+                endIndex={window.end}
+                stroke="var(--color-primary)"
+                fill="var(--color-muted)"
+                tickFormatter={(value: string) => weekEnding(value)}
+                onChange={(next) => {
+                  if (next.startIndex !== undefined && next.endIndex !== undefined)
+                    onBounds({ start: next.startIndex, end: next.endIndex });
                 }}
               />
             </ComposedChart>
@@ -884,7 +915,7 @@ function ImportDialog({
   const [busy, setBusy] = useState(false);
   async function submit() {
     if (!file || !connectionId) {
-      setError("Choose a Schwab CSV and its connection.");
+      setError("Choose a statement file and its connection.");
       return;
     }
     if (file.size > 10 * 1024 * 1024) {
@@ -892,76 +923,98 @@ function ImportDialog({
       return;
     }
     setBusy(true);
+    setError(null);
     const form = new FormData();
     form.append("file", file);
     form.append("valuationCurrency", currency);
-    const response = await fetch(`/api/connections/${connectionId}/sync`, {
-      method: "POST",
-      body: form,
-    });
-    setBusy(false);
-    if (!response.ok) {
-      setError(
-        ((await response.json().catch(() => ({}))) as { error?: string }).error ??
-          "Could not import statement",
-      );
-      return;
+    try {
+      const response = await fetch(`/api/connections/${connectionId}/sync`, {
+        method: "POST",
+        body: form,
+      });
+      if (!response.ok) {
+        setError(
+          ((await response.json().catch(() => ({}))) as { error?: string }).error ??
+            "Could not import statement",
+        );
+        return;
+      }
+      const body = (await response.json()) as { syncRunId: string };
+      // Parsing and promotion happen in a worker, so the run is only finished
+      // once the poll says so — the dialog stays busy for all of it.
+      const done = await waitForSyncRun(body.syncRunId);
+      if (done.status !== "succeeded") {
+        setError(`${syncErrorMessage(done.error)} The last accepted snapshot remains included.`);
+        return;
+      }
+      onDone("Statement imported.");
+    } finally {
+      setBusy(false);
     }
-    const body = (await response.json()) as { syncRunId: string };
-    const done = await waitForSyncRun(body.syncRunId);
-    if (done.status !== "succeeded") {
-      setError(`${done.error ?? "Import failed"}. Last accepted snapshot remains included.`);
-      return;
-    }
-    onDone("Statement imported.");
   }
   return (
     <Dialog
       open={open}
-      onClose={onClose}
-      title="Import Schwab statement"
-      description="CSV only; the file stays bounded in memory."
+      onClose={busy ? () => undefined : onClose}
+      title="Import statement"
+      description="A CSV statement exported from your broker; the file stays bounded in memory."
     >
-      <div className="space-y-4">
-        <label className="block text-sm">
-          Connection
-          <select
-            className="mt-1 w-full rounded-[var(--radius)] border border-border bg-background p-2"
-            value={connectionId}
-            onChange={(event) => setConnectionId(event.target.value)}
-          >
-            {connections.map((connection) => (
-              <option key={connection.id} value={connection.id}>
-                {connection.displayName ?? "Schwab"}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block text-sm">
-          Valuation currency
-          <input
-            className="mt-1 w-full rounded-[var(--radius)] border border-border bg-background p-2 uppercase"
-            value={currency}
-            maxLength={3}
-            onChange={(event) => setCurrency(event.target.value.toUpperCase())}
-          />
-        </label>
-        <input
-          aria-label="Schwab CSV"
-          type="file"
-          accept=".csv,text/csv"
-          onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-        />
-        {!connections.length && (
-          <p className="text-xs text-muted-foreground">
-            Create a Schwab statement connection first.
+      {busy ? (
+        <div className="flex flex-col items-center gap-3 py-10 text-center">
+          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+          <p className="text-sm font-medium">Importing statement…</p>
+          <p className="max-w-xs text-xs text-muted-foreground">
+            {"Reading the file, valuing every holding, and refreshing exchange rates."}
           </p>
-        )}
-        {error && <p className="text-sm text-negative">{error}</p>}
-        <Button disabled={busy || !connections.length} onClick={() => void submit()}>
-          {busy && <Loader2 className="h-4 w-4 animate-spin" />}Import statement
-        </Button>
-      </div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <label className="block text-sm">
+            Connection
+            <select
+              className="mt-1 w-full rounded-[var(--radius)] border border-border bg-background p-2"
+              value={connectionId}
+              onChange={(event) => setConnectionId(event.target.value)}
+            >
+              {connections.map((connection) => (
+                <option key={connection.id} value={connection.id}>
+                  {connection.displayName ??
+                    getConnectorDefinition(connection.connectorId)?.label ??
+                    connection.connectorId}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-sm">
+            Valuation currency
+            <input
+              className="mt-1 w-full rounded-[var(--radius)] border border-border bg-background p-2 uppercase"
+              value={currency}
+              maxLength={3}
+              onChange={(event) => setCurrency(event.target.value.toUpperCase())}
+            />
+          </label>
+          <label className="block text-sm">
+            Statement file
+            <input
+              aria-label="Statement CSV"
+              type="file"
+              accept=".csv,text/csv"
+              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+              className="mt-1 block w-full text-sm text-muted-foreground file:mr-3 file:cursor-pointer file:rounded-[var(--radius)] file:border file:border-border file:bg-muted file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-foreground hover:file:bg-muted/70"
+            />
+          </label>
+          {!connections.length && (
+            <p className="text-xs text-muted-foreground">
+              Create a statement-import connection first.
+            </p>
+          )}
+          {error && <p className="text-sm text-negative">{error}</p>}
+          <Button disabled={!connections.length} onClick={() => void submit()}>
+            Import statement
+          </Button>
+        </div>
+      )}
     </Dialog>
   );
 }
