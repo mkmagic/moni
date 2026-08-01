@@ -33,17 +33,34 @@ describe("investment worker seams", () => {
       "segment too large",
     );
   });
-  it("uses the exact IBKR endpoint, rejects redirects, retries only transient failures, and wipes credentials", async () => {
+  it("completes the IBKR SendRequest/GetStatement handshake and wipes credentials", async () => {
     const token = Buffer.from("token");
     const query = Buffer.from("query");
+    const report = "<FlexQueryResponse/>";
     const fetcher = vi
       .fn()
       .mockRejectedValueOnce(new TypeError("ECONNRESET"))
-      .mockResolvedValueOnce(new Response("<FlexQueryResponse/>"));
+      .mockResolvedValueOnce(
+        new Response(
+          "<FlexStatementResponse><Status>Success</Status><ReferenceCode>reference</ReferenceCode><Url>https://gdcdyn.interactivebrokers.com/AccountManagement/FlexWebService/GetStatement</Url></FlexStatementResponse>",
+        ),
+      )
+      .mockResolvedValueOnce(new Response(report));
     const body = await fetchIbkrFlexXml(token, query, fetcher);
-    expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(fetcher.mock.calls[0][0]).toContain(IBKR_FLEX_URL);
-    expect(fetcher.mock.calls[0][1]).toMatchObject({ redirect: "error" });
+    expect(body.toString("utf8")).toBe(report);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    const sendUrl = new URL(fetcher.mock.calls[1][0]);
+    expect(sendUrl.origin + sendUrl.pathname).toBe(`${IBKR_FLEX_URL}/SendRequest`);
+    expect(sendUrl.searchParams.get("v")).toBe("3");
+    const statementUrl = new URL(fetcher.mock.calls[2][0]);
+    expect(statementUrl.origin + statementUrl.pathname).toBe(
+      "https://gdcdyn.interactivebrokers.com/AccountManagement/FlexWebService/GetStatement",
+    );
+    expect(statementUrl.searchParams.get("q")).toBe("reference");
+    expect(fetcher.mock.calls[0][1]).toMatchObject({
+      redirect: "error",
+      headers: { "User-Agent": "Moni/0.1" },
+    });
     expect([...token, ...query]).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     body.fill(0);
   });
@@ -54,6 +71,30 @@ describe("investment worker seams", () => {
       fetchIbkrFlexXml(Buffer.from("token"), Buffer.from("query"), fetcher),
     ).rejects.toThrow("redirect mode");
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("polls when IBKR reports statement generation in progress", async () => {
+    const wait = vi.fn().mockResolvedValue(undefined);
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          "<FlexStatementResponse><Status>Success</Status><ReferenceCode>reference</ReferenceCode><Url>https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/GetStatement</Url></FlexStatementResponse>",
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          "<FlexStatementResponse><Status>Fail</Status><ErrorCode>1019</ErrorCode><ErrorMessage>Statement generation in progress.</ErrorMessage></FlexStatementResponse>",
+        ),
+      )
+      .mockResolvedValueOnce(new Response("<FlexQueryResponse/>"));
+
+    const body = await fetchIbkrFlexXml(Buffer.from("token"), Buffer.from("query"), fetcher, wait);
+
+    expect(body.toString("utf8")).toBe("<FlexQueryResponse/>");
+    expect(wait).toHaveBeenCalledOnce();
+    expect(wait).toHaveBeenCalledWith(1_000);
+    body.fill(0);
   });
 
   it("parses BOI text decimals with exponent and rejects stale observations", () => {

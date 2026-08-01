@@ -1,5 +1,6 @@
 import Decimal from "decimal.js";
 import { parse } from "csv-parse/sync";
+import { XMLParser } from "fast-xml-parser";
 import { normalizeIbkrFlexXml, normalizeSchwabPositionsCsv, type InvestmentSyncEnvelope } from ".";
 
 export const IBKR_FLEX_URL =
@@ -9,10 +10,75 @@ export const BOI_SDMX_URL =
 const MAX = 10 * 1024 * 1024;
 
 export type FetchAdapter = (input: string, init?: RequestInit) => Promise<Response>;
+type SleepAdapter = (milliseconds: number) => Promise<void>;
 export class WorkerSourceError extends Error {
   constructor(readonly code: string) {
     super(code);
   }
+}
+
+const sleep: SleepAdapter = (milliseconds) =>
+  new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+async function fetchIbkrResponse(url: URL, fetcher: FetchAdapter): Promise<Buffer> {
+  let last: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetcher(url.toString(), {
+        redirect: "error",
+        headers: { "User-Agent": "Moni/0.1" },
+      });
+      if (response.redirected) throw new WorkerSourceError("redirect_rejected");
+      if (!response.ok) throw new WorkerSourceError("provider_rejected");
+      return await readBoundedResponse(response);
+    } catch (error) {
+      last = error;
+      if (error instanceof WorkerSourceError || !transient(error) || attempt === 2) throw error;
+    }
+  }
+  throw last;
+}
+
+interface IbkrStatus {
+  status?: string;
+  referenceCode?: string;
+  url?: string;
+  errorCode?: string;
+}
+
+function ibkrStatus(xml: Buffer): IbkrStatus | null {
+  const parser = new XMLParser({ parseTagValue: false, trimValues: true });
+  const parsed = parser.parse(xml.toString("utf8")) as {
+    FlexStatementResponse?: {
+      Status?: unknown;
+      ReferenceCode?: unknown;
+      Url?: unknown;
+      url?: unknown;
+      ErrorCode?: unknown;
+    };
+  };
+  const response = parsed.FlexStatementResponse;
+  if (!response || typeof response !== "object") return null;
+  const text = (value: unknown): string | undefined =>
+    typeof value === "string" ? value.trim() : undefined;
+  return {
+    status: text(response.Status),
+    referenceCode: text(response.ReferenceCode),
+    url: text(response.Url) ?? text(response.url),
+    errorCode: text(response.ErrorCode),
+  };
+}
+
+function trustedIbkrStatementUrl(value: string): URL {
+  const url = new URL(value);
+  if (
+    url.protocol !== "https:" ||
+    !["ndcdyn.interactivebrokers.com", "gdcdyn.interactivebrokers.com"].includes(url.hostname) ||
+    url.pathname !== "/AccountManagement/FlexWebService/GetStatement"
+  )
+    throw new WorkerSourceError("provider_rejected");
+  url.search = "";
+  return url;
 }
 
 function transient(error: unknown): boolean {
@@ -60,24 +126,36 @@ export async function fetchIbkrFlexXml(
   token: Buffer,
   queryId: Buffer,
   fetcher: FetchAdapter,
+  wait: SleepAdapter = sleep,
 ): Promise<Buffer> {
-  let last: unknown;
   try {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        const url = new URL(IBKR_FLEX_URL);
-        url.searchParams.set("t", token.toString("utf8"));
-        url.searchParams.set("q", queryId.toString("utf8"));
-        const response = await fetcher(url.toString(), { redirect: "error" });
-        if (response.redirected) throw new WorkerSourceError("redirect_rejected");
-        if (!response.ok) throw new WorkerSourceError("provider_rejected");
-        return await readBoundedResponse(response);
-      } catch (error) {
-        last = error;
-        if (error instanceof WorkerSourceError || !transient(error) || attempt === 2) throw error;
-      }
+    const sendUrl = new URL(`${IBKR_FLEX_URL}/SendRequest`);
+    sendUrl.searchParams.set("t", token.toString("utf8"));
+    sendUrl.searchParams.set("q", queryId.toString("utf8"));
+    sendUrl.searchParams.set("v", "3");
+    const sendBody = await fetchIbkrResponse(sendUrl, fetcher);
+    let status: IbkrStatus | null;
+    try {
+      status = ibkrStatus(sendBody);
+    } finally {
+      sendBody.fill(0);
     }
-    throw last;
+    if (status?.status !== "Success" || !status.referenceCode || !status.url)
+      throw new WorkerSourceError("provider_rejected");
+    const statementUrl = trustedIbkrStatementUrl(status.url);
+    statementUrl.searchParams.set("t", token.toString("utf8"));
+    statementUrl.searchParams.set("q", status.referenceCode);
+    statementUrl.searchParams.set("v", "3");
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const body = await fetchIbkrResponse(statementUrl, fetcher);
+      const statementStatus = ibkrStatus(body);
+      if (!statementStatus) return body;
+      body.fill(0);
+      if (statementStatus.errorCode !== "1019" || attempt === 9)
+        throw new WorkerSourceError("provider_rejected");
+      await wait(1_000);
+    }
+    throw new WorkerSourceError("provider_rejected");
   } finally {
     token.fill(0);
     queryId.fill(0);
