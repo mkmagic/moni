@@ -33,8 +33,36 @@ const positionSchema = z.object({
   levelOfDetail: z.string().optional(),
   symbol: z.string().optional(),
   description: z.string().optional(),
+  // IBKR names the venue `listingExchange` on OpenPosition; `exchange` is a
+  // trade-level attribute that these rows do not carry. Reading only
+  // `exchange` left every IBKR mapping with a null venue, which silently
+  // disqualified the holding from a Tiingo quote forever
+  // (src/domain/investment-valuation.ts, listTiingoQuoteTargets).
+  listingExchange: z.string().optional(),
   exchange: z.string().optional(),
 });
+
+/**
+ * IBKR reports the venue a security actually lists on, so a US ETF commonly
+ * says ARCA or BATS. Tiingo eligibility is written against NYSE/NASDAQ, and
+ * these are the same venues src/lib/investments/snaptrade.ts already folds in
+ * from their MIC codes — ARCA is NYSE Arca and BATS is Cboe BZX.
+ */
+const IBKR_EXCHANGE_ALIASES: Record<string, string> = {
+  ARCA: "NYSE",
+  NYSEARCA: "NYSE",
+  AMEX: "NYSE",
+  BATS: "NYSE",
+  BATSEX: "NYSE",
+  NMS: "NASDAQ",
+  ISLAND: "NASDAQ",
+};
+
+function venue(row: { listingExchange?: string; exchange?: string }): string | undefined {
+  const raw = (row.listingExchange ?? row.exchange)?.trim();
+  if (!raw) return undefined;
+  return IBKR_EXCHANGE_ALIASES[raw.toUpperCase()] ?? raw;
+}
 const cashSchema = z.object({
   accountId: nonblankSchema,
   currency: currencySchema,
@@ -205,7 +233,7 @@ export function normalizeIbkrFlexXml(source: string): InvestmentSyncEnvelope {
         sourceSecurityIdKind: "conid",
         symbol: row.symbol?.trim() || undefined,
         name: row.description?.trim() || undefined,
-        exchange: row.exchange?.trim() || undefined,
+        exchange: venue(row),
         assetKind: kind(row.assetCategory, row.subCategory),
         quantity,
         quantityUnit: "shares",
