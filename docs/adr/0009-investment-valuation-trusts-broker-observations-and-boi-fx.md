@@ -36,6 +36,25 @@ translation existed must not pin an instrument to the wrong venue forever.
   reported market value, so a directly-valued source is still compared exactly. It
   is bounded by the provider's stated precision and cannot absorb a missing
   holding.
+- Where a holding is denominated in a currency other than the one the broker
+  stated its account total in, the comparison additionally allows 0.5% of the
+  converted amount. This is not slack for imprecision: the broker converted that
+  holding with its own rate at its own mark time, Moni converts it with BOI's
+  representative rate, and BOI fixes one rate per day in the early afternoon
+  Israel time. Requiring exact agreement asks two independent FX authorities to
+  publish the same number, so a USD holding inside an ILS-denominated total would
+  report a mismatch on every sync forever — observed live at 6.2 bps apart with a
+  rounding allowance of exactly zero. The allowance is proportional to the
+  cross-currency portion only; an account whose holdings and total share a
+  currency is still compared as exactly as before, and a genuinely missing
+  position lands orders of magnitude outside it.
+- `reconciliation_state` is a cached judgement rather than an observation, so
+  `investment_snapshot_details.validation_version` records which revision of
+  these rules produced it. A source that re-serves a byte-identical statement is
+  normally promoted as `unchanged`, which would strand a corrected rule until the
+  provider happened to publish something new — over a weekend, that is never.
+  Bumping the constant makes the next sync recompute instead of taking the
+  fingerprint-match fast path.
 - Reconciliation compares the broker total with the source-date component
   valuation. A newer market estimate never creates or clears a reconciliation
   mismatch.

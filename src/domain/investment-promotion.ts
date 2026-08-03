@@ -19,6 +19,8 @@ import {
   serializeCanonicalInvestmentEnvelope,
   type InvestmentSyncEnvelope,
 } from "@/lib/investments";
+import { getConnectorDefinition } from "@/lib/connectors";
+import { errorLabel, syncLog } from "@/lib/sync-log";
 import { decText, encText } from "./fields";
 import { markSyncRunFailed } from "./sync-promotion";
 
@@ -48,6 +50,36 @@ export interface InvestmentPromotionResult {
   positions: number;
   cashBalances: number;
 }
+
+/**
+ * How far a broker's own FX rate may sit from BOI's before a cross-currency
+ * holding stops reconciling — 0.5% of the converted amount.
+ *
+ * This is not a fudge factor for sloppy arithmetic; it is the width of a gap
+ * that exists by construction. BOI publishes one representative rate per day,
+ * fixed in the early afternoon Israel time, while a broker marks its NAV at
+ * its own venue's close using its own rate. Two different sources, two
+ * different moments on the same calendar day.
+ *
+ * Sized from live data: an IBKR account holding USD inside an ILS-based total
+ * reconciled 6.2 bps apart, and 50 bps leaves room for an ordinary day's
+ * USD/ILS move without hiding anything that matters — a genuinely missing
+ * position lands in the thousands of bps.
+ */
+const FX_CROSS_SOURCE_TOLERANCE = new Decimal("0.005");
+
+/**
+ * Which revision of the reconciliation rules produced a stored verdict.
+ *
+ * `reconciliation_state` is a cached judgement, not observed data, so a
+ * snapshot judged under older rules is stale even when the source re-serves a
+ * byte-identical statement. Bump this whenever the verdict could change for
+ * unchanged input, and the next sync recomputes instead of taking the
+ * fingerprint-match fast path.
+ *
+ * 2 — cross-currency totals gained an FX allowance (FX_CROSS_SOURCE_TOLERANCE).
+ */
+const VALIDATION_VERSION = 2;
 
 function fail(code: InvestmentPromotionErrorCode): never {
   throw new InvestmentPromotionError(code);
@@ -100,6 +132,18 @@ function fingerprint(dataKey: Uint8Array, envelope: InvestmentSyncEnvelope): Buf
     .digest();
 }
 
+/**
+ * What the user calls this account. The source id ("snaptrade") is Moni's
+ * plumbing, not a brokerage — an aggregator names the institution per account,
+ * a direct connector is the institution.
+ */
+function institutionLabel(
+  source: Source,
+  account: InvestmentSyncEnvelope["accounts"][number],
+): string {
+  return account.institutionName ?? getConnectorDefinition(source)?.institutionLabel ?? source;
+}
+
 async function resolveAccount(
   tx: Tx,
   ownerId: string,
@@ -108,6 +152,8 @@ async function resolveAccount(
   source: Source,
   account: InvestmentSyncEnvelope["accounts"][number],
 ): Promise<string> {
+  const last4 = account.sourceAccountRef.slice(-4);
+  const name = `${institutionLabel(source, account)} (${last4})`;
   const rows = await tx.select().from(accounts);
   for (const row of rows) {
     if (!row.externalAccountRefCt) continue;
@@ -121,19 +167,62 @@ async function resolveAccount(
         row.currency !== account.baseCurrency
       )
         fail("incomplete_coverage");
+      // The institution is descriptive, not identity: a brokerage can rebrand,
+      // and accounts created before Moni learned the real name are still
+      // sitting on "snaptrade (EE23)". Re-derive it rather than stranding
+      // them. Bumping the version re-keys every encrypted column on the row,
+      // so all of them are rewritten together or the untouched ones stop
+      // decrypting.
+      if (decText(dataKey, row.nameCt, row.id, "name_ct", row.version) !== name) {
+        const version = row.version + 1;
+        // Carried across unchanged in value, but re-encrypted because the AAD
+        // moved with the version.
+        const carry = (value: Buffer | null, field: string) =>
+          value
+            ? encText(
+                dataKey,
+                decText(dataKey, value, row.id, field, row.version)!,
+                row.id,
+                field,
+                version,
+              )
+            : null;
+        await tx
+          .update(accounts)
+          .set({
+            nameCt: encText(dataKey, name, row.id, "name_ct", version),
+            accountNumberLast4Ct: encText(
+              dataKey,
+              last4,
+              row.id,
+              "account_number_last4_ct",
+              version,
+            ),
+            externalAccountRefCt: encText(
+              dataKey,
+              account.sourceAccountRef,
+              row.id,
+              "external_account_ref_ct",
+              version,
+            ),
+            currentBalanceCt: carry(row.currentBalanceCt, "current_balance_ct"),
+            institution: institutionLabel(source, account),
+            version,
+          })
+          .where(eq(accounts.id, row.id));
+      }
       return row.id;
     }
   }
   const id = randomUUID();
-  const last4 = account.sourceAccountRef.slice(-4);
   await tx.insert(accounts).values({
     id,
     ownerId,
     accountType: "investment",
     classification: "asset",
     connectionId,
-    nameCt: encText(dataKey, `${source} (${last4})`, id, "name_ct", 1),
-    institution: source,
+    nameCt: encText(dataKey, name, id, "name_ct", 1),
+    institution: institutionLabel(source, account),
     accountNumberLast4Ct: encText(dataKey, last4, id, "account_number_last4_ct", 1),
     externalAccountRefCt: encText(
       dataKey,
@@ -423,7 +512,16 @@ async function promote(
         ),
       )
       .limit(1);
-    if (evidence.some((row) => Buffer.from(row.normalizedFingerprint).equals(fp))) continue;
+    // An identical statement is only genuinely "nothing to do" if the verdict
+    // stored beside it was reached under the rules in force now. Otherwise a
+    // rule fix would not reach an account until its broker happened to publish
+    // something new — which for a Friday-dated statement means never, over a
+    // weekend.
+    if (
+      detail.validationVersion === VALIDATION_VERSION &&
+      evidence.some((row) => Buffer.from(row.normalizedFingerprint).equals(fp))
+    )
+      continue;
     if (detail.sourceAsOf.getTime() > sourceAsOf.getTime()) fail("stale_source");
     unchanged = false;
   }
@@ -446,6 +544,13 @@ async function promote(
       // Zero whenever every position carried its own market value, which keeps
       // broker-valued sources on the exact comparison they have always had.
       let slackIls = new Decimal(0);
+      // The ILS worth of everything held in a currency other than the one the
+      // broker stated its total in. See FX_CROSS_SOURCE_TOLERANCE.
+      let crossCurrencyIls = new Decimal(0);
+      const crossCurrency = (currency: string, ils: Decimal) => {
+        if (currency !== account.brokerTotal.currency)
+          crossCurrencyIls = crossCurrencyIls.plus(ils.abs());
+      };
       const positionRows: Array<{
         position: (typeof account.positions)[number];
         instrumentId: string;
@@ -469,6 +574,7 @@ async function promote(
             sourceDate(position.sourceAsOf ?? envelope.sourceAsOf.value),
           );
           componentIls.push(new Decimal(value).mul(rate));
+          crossCurrency(valueCurrency, new Decimal(value).mul(rate));
           // A derived value can only be as exact as the price it was derived
           // from, so carry how much the broker's own rounding could hide.
           if (!position.sourceValue && position.sourcePrice)
@@ -484,10 +590,11 @@ async function promote(
           basis: position.sourceValue ? "market_value" : "quantity_times_price",
         });
       }
-      for (const cash of account.cash)
-        componentIls.push(
-          new Decimal(cash.amount).mul(await ilsRate(tx, cash.currency, sourceAsOf)),
-        );
+      for (const cash of account.cash) {
+        const ils = new Decimal(cash.amount).mul(await ilsRate(tx, cash.currency, sourceAsOf));
+        componentIls.push(ils);
+        crossCurrency(cash.currency, ils);
+      }
       const totalRate = await ilsRate(
         tx,
         account.brokerTotal.currency,
@@ -496,14 +603,49 @@ async function promote(
       const totalIls = new Decimal(account.brokerTotal.amount).mul(totalRate);
       if (slackIls.isPositive())
         slackIls = slackIls.plus(halfUlp(account.brokerTotal.amount).mul(totalRate));
-      const reconciliationState = componentIls
+      // A cross-currency holding is the one place the two sides of this
+      // comparison were not built by the same arithmetic: the broker converted
+      // it with its own rate at its own mark time, Moni converts it with BOI's
+      // representative rate. Demanding they agree exactly asks two independent
+      // FX authorities to publish the same number, so this account would report
+      // "mismatch" on every sync forever.
+      const fxSlackIls = crossCurrencyIls.mul(FX_CROSS_SOURCE_TOLERANCE);
+      slackIls = slackIls.plus(fxSlackIls);
+      const componentSum = componentIls
         .reduce((total, item) => total.plus(item), new Decimal(0))
-        .toDecimalPlaces(2)
-        .minus(totalIls.toDecimalPlaces(2))
-        .abs()
-        .lte(slackIls.toDecimalPlaces(2))
+        .toDecimalPlaces(2);
+      const delta = componentSum.minus(totalIls.toDecimalPlaces(2));
+      const reconciliationState = delta.abs().lte(slackIls.toDecimalPlaces(2))
         ? "matched"
         : "mismatch";
+      // Deliberately relative, not absolute: basis points say whether a
+      // mismatch is an FX spread (tens of bps, because the broker converted
+      // its own NAV at its own rate while Moni converts components at BOI's)
+      // or a genuinely missing component (thousands) — without putting the
+      // portfolio's value in a log line.
+      syncLog("promotion.reconciliation", {
+        source: envelope.source,
+        state: reconciliationState,
+        totalCurrency: account.brokerTotal.currency,
+        componentCurrencies: [
+          ...new Set([
+            ...positionRows.map((row) => row.currency),
+            ...account.cash.map((cash) => cash.currency),
+          ]),
+        ]
+          .sort()
+          .join(","),
+        deltaBps: totalIls.isZero()
+          ? null
+          : delta.div(totalIls).mul(10_000).toDecimalPlaces(1).toFixed(),
+        slackBps: totalIls.isZero()
+          ? null
+          : slackIls.div(totalIls).mul(10_000).toDecimalPlaces(1).toFixed(),
+        // Split out so a mismatch says which allowance was too small.
+        fxSlackBps: totalIls.isZero()
+          ? null
+          : fxSlackIls.div(totalIls).mul(10_000).toDecimalPlaces(1).toFixed(),
+      });
       const parentId = randomUUID();
       const detailId = randomUUID();
       await tx.insert(accountBalanceSnapshots).values({
@@ -529,7 +671,7 @@ async function promote(
         brokerTotalCt: encText(dataKey, account.brokerTotal.amount, detailId, "broker_total_ct", 1),
         brokerTotalCurrency: account.brokerTotal.currency,
         reconciliationState,
-        validationVersion: 1,
+        validationVersion: VALIDATION_VERSION,
       });
       for (const row of positionRows) {
         const id = randomUUID();
@@ -574,7 +716,7 @@ async function promote(
       source: envelope.source,
       sourceAsOf,
       sourceAsOfPrecision: envelope.sourceAsOf.precision,
-      validationVersion: 1,
+      validationVersion: VALIDATION_VERSION,
       positionRowCount: account.positions.length,
       cashRowCount: account.cash.length,
       qualityCodes: [],
@@ -587,6 +729,18 @@ async function promote(
     positions,
     cashBalances,
   };
+  // "unchanged" is the state that looked exactly like a failed sync from the
+  // UI: the run succeeds, the counts are non-zero, and yet not a single row
+  // moves because the source re-served an identical statement.
+  syncLog("promotion.outcome", {
+    source: envelope.source,
+    outcome: result.outcome,
+    sourceAsOf: envelope.sourceAsOf.value,
+    weekStart: week,
+    accounts: result.accounts,
+    positions: result.positions,
+    cashBalances: result.cashBalances,
+  });
   await tx
     .update(connections)
     .set({ status: "active", lastSyncAt: new Date() })
@@ -623,6 +777,11 @@ export async function promoteInvestmentSnapshot(input: {
     // exception and must not borrow that code, or a database fault reads as a
     // deliberate guard.
     const promotion = error instanceof InvestmentPromotionError;
+    syncLog("promotion.failed", {
+      source: input.envelope.source,
+      code: promotion ? error.code : "promotion_failed",
+      error: promotion ? undefined : errorLabel(error),
+    });
     if (!promotion) reportPromotionFault(error);
     const safe = promotion ? error.code : "promotion_failed";
     await markSyncRunFailed(input.userId, input.syncRunId, safe);

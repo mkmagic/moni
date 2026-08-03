@@ -132,6 +132,61 @@ describe("snaptrade promotion", () => {
   });
 });
 
+// An account whose broker total is stated in a different currency from the
+// holdings inside it — the IBKR shape: USD positions, an ILS-denominated NAV.
+// Live data put these 6.2 bps apart, and the rounding slack was 0, so this
+// account reported "reconciliation mismatch" on every single sync.
+function crossCurrencyEnvelope(brokerTotalIls: string): InvestmentSyncEnvelope {
+  const envelope = snaptradeEnvelope();
+  envelope.accounts[0].baseCurrency = "ILS";
+  envelope.accounts[0].brokerTotal = {
+    amount: brokerTotalIls,
+    currency: "ILS",
+    asOf: envelope.accounts[0].brokerTotal.asOf,
+  };
+  return envelope;
+}
+
+describe("cross-currency reconciliation", () => {
+  afterAll(async () => cleanupOwners(users));
+
+  // 518.4274 x 368.21 + 252.18 USD at the fixture's 3.5 rate is 668,998.17 ILS.
+  it("tolerates the broker and BOI disagreeing on the rate", async () => {
+    const f = await fixture();
+    // 20 bps above what BOI's rate produces: an ordinary gap between two FX
+    // authorities pricing the same day, not a missing holding.
+    await promoteInvestmentSnapshot({ ...f, envelope: crossCurrencyEnvelope("670336.16") });
+    await withUser(f.userId, async (tx) => {
+      const [detail] = await tx.select().from(schema.investmentSnapshotDetails);
+      expect(detail.reconciliationState).toBe("matched");
+    });
+  });
+
+  it("still catches a real gap across currencies", async () => {
+    // 200 bps out — four times the FX allowance, so the tolerance must not
+    // swallow it.
+    const f = await fixture();
+    await promoteInvestmentSnapshot({ ...f, envelope: crossCurrencyEnvelope("682378.13") });
+    await withUser(f.userId, async (tx) => {
+      const [detail] = await tx.select().from(schema.investmentSnapshotDetails);
+      expect(detail.reconciliationState).toBe("mismatch");
+    });
+  });
+
+  it("does not widen the allowance when everything is in the broker's currency", async () => {
+    // Same 20 bps, but with a USD total against USD holdings there is no FX
+    // conversion to be generous about.
+    const f = await fixture();
+    const envelope = snaptradeEnvelope();
+    envelope.accounts[0].brokerTotal.amount = "191524.61";
+    await promoteInvestmentSnapshot({ ...f, envelope });
+    await withUser(f.userId, async (tx) => {
+      const [detail] = await tx.select().from(schema.investmentSnapshotDetails);
+      expect(detail.reconciliationState).toBe("mismatch");
+    });
+  });
+});
+
 describe("snaptrade instrument metadata", () => {
   afterAll(async () => cleanupOwners(users));
 
