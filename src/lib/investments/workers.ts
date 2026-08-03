@@ -2,6 +2,7 @@ import Decimal from "decimal.js";
 import { parse } from "csv-parse/sync";
 import { XMLParser } from "fast-xml-parser";
 import { normalizeIbkrFlexXml, normalizeSchwabPositionsCsv, type InvestmentSyncEnvelope } from ".";
+import { errorLabel, logFetch, syncLog } from "@/lib/sync-log";
 
 export const IBKR_FLEX_URL =
   "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService";
@@ -138,7 +139,10 @@ export async function fetchIbkrFlexXml(
     sendUrl.searchParams.set("t", token.toString("ascii"));
     sendUrl.searchParams.set("q", queryId.toString("ascii"));
     sendUrl.searchParams.set("v", "3");
-    const sendBody = await fetchIbkrResponse(sendUrl, fetcher);
+    // The query id and token live in the URL, so only the endpoint is logged.
+    const sendBody = await logFetch("ibkr.send.fetch", {}, () =>
+      fetchIbkrResponse(sendUrl, fetcher),
+    );
     let status: IbkrStatus | null;
     try {
       status = ibkrStatus(sendBody);
@@ -155,11 +159,23 @@ export async function fetchIbkrFlexXml(
     statementUrl.searchParams.set("t", token.toString("ascii"));
     statementUrl.searchParams.set("q", status.referenceCode);
     statementUrl.searchParams.set("v", "3");
+    syncLog("ibkr.send.accepted", { waitMs: IBKR_INITIAL_REPORT_WAIT_MS });
     await wait(IBKR_INITIAL_REPORT_WAIT_MS);
     for (let attempt = 1; attempt <= IBKR_MAX_REPORT_ATTEMPTS; attempt += 1) {
-      const body = await fetchIbkrResponse(statementUrl, fetcher);
+      const body = await logFetch("ibkr.statement.fetch", { attempt }, () =>
+        fetchIbkrResponse(statementUrl, fetcher),
+      );
       const statementStatus = ibkrStatus(body);
-      if (!statementStatus) return body;
+      // A body with no status envelope IS the report.
+      if (!statementStatus) {
+        syncLog("ibkr.statement.received", { attempt, bytes: body.length });
+        return body;
+      }
+      syncLog("ibkr.statement.pending", {
+        attempt,
+        status: statementStatus.status,
+        errorCode: statementStatus.errorCode,
+      });
       body.fill(0);
       if (
         statementStatus.status === "fail" &&
@@ -249,7 +265,15 @@ export async function fetchBoiRates(
   url.searchParams.set("startPeriod", start.toISOString().slice(0, 10));
   url.searchParams.set("endPeriod", dates.at(-1)!);
   url.searchParams.set("format", "csv");
-  const response = await fetcher(url.toString(), { redirect: "error" });
+  const response = await logFetch(
+    "boi.sdmx.fetch",
+    {
+      startPeriod: url.searchParams.get("startPeriod"),
+      endPeriod: url.searchParams.get("endPeriod"),
+    },
+    () => fetcher(url.toString(), { redirect: "error" }),
+  );
+  syncLog("boi.sdmx.status", { status: response.status });
   if (response.redirected) throw new WorkerSourceError("redirect_rejected");
   if (!response.ok) throw new WorkerSourceError("provider_rejected");
   const csv = await readBoundedResponse(response);
@@ -320,6 +344,15 @@ export async function refreshBoiWithFallback(
   try {
     await refresh(required);
   } catch (error) {
-    if ((await missing(required)).length > 0) throw error;
+    const gaps = await missing(required);
+    // A BOI outage used to be completely silent whenever the cache happened
+    // to cover the request, so nobody could tell that FX had gone stale.
+    syncLog("boi.refresh.fallback", {
+      error: errorLabel(error),
+      required: required.length,
+      missingFromCache: gaps.length,
+      recovered: gaps.length === 0,
+    });
+    if (gaps.length > 0) throw error;
   }
 }

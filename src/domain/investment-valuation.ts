@@ -12,6 +12,7 @@ import {
   investmentSnapshotDetails,
   investmentSnapshotPositions,
 } from "@/db/schema";
+import { syncLog } from "@/lib/sync-log";
 import { decText, encText } from "./fields";
 
 export type ValuationBasis = "broker_source" | "tiingo_estimate" | "mixed";
@@ -68,23 +69,36 @@ export function selectCurrentComponent(input: {
   basis: "broker_source" | "tiingo_estimate";
   quoteDate: string | null;
   fallback: boolean;
+  /** Null when a quote was used. Otherwise the first rule the quote failed. */
+  fallbackReason: string | null;
 } {
   const quote = input.quote;
   const quoteDate = quote ? new Date(`${quote.sourceDate}T00:00:00Z`) : null;
-  const eligible =
-    input.estimateNow &&
-    (input.kind === "stock" || input.kind === "etf") &&
-    input.positionCurrency === "USD" &&
-    input.mappingCurrency === "USD" &&
-    (input.exchange === "NYSE" || input.exchange === "NASDAQ") &&
-    quote?.currency === "USD" &&
-    quote.qualityState === "accepted" &&
-    (quote.splitState === "safe" ||
-      (quote.splitState === "post_split" && quoteDate! <= input.brokerDate)) &&
-    quoteDate &&
-    withinSevenDays(quote.sourceDate, input.now) &&
-    input.brokerDate.getTime() <= quoteDate.getTime() + DAY;
-  if (eligible && quote && quoteDate)
+  // Ordered so the first failing rule is the one reported, which makes
+  // "quote fallback" in the UI traceable to a single named condition.
+  const reason = !input.estimateNow
+    ? "estimates_not_requested"
+    : input.kind !== "stock" && input.kind !== "etf"
+      ? "kind_not_quotable"
+      : input.positionCurrency !== "USD" || input.mappingCurrency !== "USD"
+        ? "currency_not_usd"
+        : input.exchange !== "NYSE" && input.exchange !== "NASDAQ"
+          ? "exchange_not_eligible"
+          : !quote || !quoteDate
+            ? "no_quote"
+            : quote.currency !== "USD"
+              ? "quote_currency_not_usd"
+              : quote.qualityState !== "accepted"
+                ? "quote_not_accepted"
+                : quote.splitState !== "safe" &&
+                    !(quote.splitState === "post_split" && quoteDate <= input.brokerDate)
+                  ? "split_unsafe"
+                  : !withinSevenDays(quote.sourceDate, input.now)
+                    ? "quote_older_than_seven_days"
+                    : input.brokerDate.getTime() > quoteDate.getTime() + DAY
+                      ? "broker_value_is_newer"
+                      : null;
+  if (reason === null && quote && quoteDate)
     return {
       value: new Decimal(input.quantity).mul(quote.price).toFixed(),
       currency: "USD",
@@ -92,6 +106,7 @@ export function selectCurrentComponent(input: {
       basis: "tiingo_estimate",
       quoteDate: quote.sourceDate,
       fallback: false,
+      fallbackReason: null,
     };
   return {
     value: input.brokerValue,
@@ -100,6 +115,7 @@ export function selectCurrentComponent(input: {
     basis: "broker_source",
     quoteDate: null,
     fallback: input.estimateNow,
+    fallbackReason: reason,
   };
 }
 
@@ -292,6 +308,13 @@ export async function valueInvestmentSnapshot(
     } else if (selected.fallback) {
       fallback += 1;
       qualities.add("quote_fallback");
+      syncLog("valuation.quote_fallback", {
+        instrumentId: position.instrumentId,
+        reason: selected.fallbackReason,
+        exchange,
+        brokerDate: israelDate(sourceDate),
+        quoteDate: quote?.sourceDate,
+      });
     }
     if (!usedTiingo) anyBroker = true;
     nativeByCurrency.set(currency, (nativeByCurrency.get(currency) ?? new Decimal(0)).plus(value));
@@ -470,20 +493,45 @@ export async function listTiingoQuoteTargets(
   for (const position of [...positions].sort((a, b) =>
     a.instrumentId.localeCompare(b.instrumentId),
   )) {
-    if (!snapshots.has(position.snapshotId) || position.currency !== "USD") continue;
+    if (!snapshots.has(position.snapshotId)) continue;
+    // Every `continue` below silently costs a holding its quote. Naming the
+    // reason is the only way to tell "Tiingo is broken" from "this holding was
+    // never eligible" — the exact confusion that hid the missing IBKR
+    // exchange for as long as it did.
+    const skip = (reason: string, detail?: Record<string, string | null | undefined>) =>
+      syncLog("quotes.target.skipped", {
+        instrumentId: position.instrumentId,
+        reason,
+        ...detail,
+      });
+    if (position.currency !== "USD") {
+      skip("currency_not_usd", { currency: position.currency });
+      continue;
+    }
     const instrument = instrumentById.get(position.instrumentId);
-    if (!instrument || (instrument.kind !== "stock" && instrument.kind !== "etf")) continue;
-    const mapping = mappingRows
-      .filter(
-        (row) =>
-          row.instrumentId === position.instrumentId &&
-          row.provider !== "tiingo" &&
-          row.currency === "USD" &&
-          row.providerSymbolCt &&
-          row.exchangeCt,
-      )
+    if (!instrument || (instrument.kind !== "stock" && instrument.kind !== "etf")) {
+      skip("kind_not_quotable", { kind: instrument?.kind });
+      continue;
+    }
+    const candidates = mappingRows.filter(
+      (row) => row.instrumentId === position.instrumentId && row.provider !== "tiingo",
+    );
+    const mapping = candidates
+      .filter((row) => row.currency === "USD" && row.providerSymbolCt && row.exchangeCt)
       .sort((a, b) => a.id.localeCompare(b.id))[0];
-    if (!mapping) continue;
+    if (!mapping) {
+      skip("no_usable_source_mapping", {
+        providers: candidates.map((row) => row.provider).join(",") || null,
+        // The IBKR normalizer read the wrong XML attribute and left this null,
+        // which made the holding permanently unquotable and invisibly so.
+        missing: candidates.every((row) => !row.exchangeCt)
+          ? "exchange"
+          : candidates.every((row) => !row.providerSymbolCt)
+            ? "symbol"
+            : "currency",
+      });
+      continue;
+    }
     const exchange = decText(
       dataKey,
       mapping.exchangeCt,
@@ -498,7 +546,10 @@ export async function listTiingoQuoteTargets(
       "provider_symbol_ct",
       mapping.version,
     );
-    if ((exchange !== "NYSE" && exchange !== "NASDAQ") || !symbol) continue;
+    if ((exchange !== "NYSE" && exchange !== "NASDAQ") || !symbol) {
+      skip(symbol ? "exchange_not_eligible" : "no_symbol", { exchange });
+      continue;
+    }
     if (!result.has(instrument.id))
       result.set(instrument.id, { instrumentId: instrument.id, mappingId: mapping.id, symbol });
   }

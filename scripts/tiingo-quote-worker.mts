@@ -4,6 +4,7 @@ import {
   replaceTiingoQuoteForUser,
 } from "@/domain/investment-valuation";
 import { readChildStdin } from "@/lib/connectors";
+import { errorLabel, syncLog } from "@/lib/sync-log";
 import {
   fetchTiingoEodQuote,
   refreshTiingoQuotes,
@@ -28,6 +29,7 @@ async function main(): Promise<void> {
   });
 }
 
-main().catch(() => {
+main().catch((error) => {
+  syncLog("worker.failed", { script: "tiingo-quote-worker.mts", error: errorLabel(error) });
   process.exitCode = 1;
 });

@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { markSyncRunFailed } from "@/domain/sync-promotion";
 import { encodeBinaryChildFrame } from "@/lib/connectors";
+import { errorLabel, syncLog, syncLogEnabled } from "@/lib/sync-log";
 
 export const WORKER_TIMEOUT_MS = 5 * 60 * 1000;
 const KILL_GRACE_MS = 5_000;
@@ -43,12 +44,14 @@ function start(script: string, frame: Buffer, captureStdout = false): ReturnType
       stdio: [
         "pipe",
         captureStdout ? "pipe" : "ignore",
-        process.env.MONI_IBKR_DIAGNOSTIC === "1" || process.env.MONI_SYNC_DIAGNOSTIC === "1"
-          ? "inherit"
-          : "ignore",
+        // Inheriting is what puts a worker's diagnostics in the same terminal
+        // as the route that spawned it. Without it the child's stderr — every
+        // provider status, every failure — went nowhere.
+        process.env.MONI_IBKR_DIAGNOSTIC === "1" || syncLogEnabled() ? "inherit" : "ignore",
       ],
     },
   );
+  syncLog("worker.spawn", { script });
   // A conditional stdio entry costs the literal-tuple overload that used to
   // prove stdin is a pipe. Both callers already treat a throw here as a failed
   // start and wipe the frame themselves.
@@ -91,12 +94,14 @@ export async function spawnInvestmentSyncWorker(input: {
   const failed = () => {
     void markSyncRunFailed(input.userId, input.syncRunId, "source_worker_failed");
   };
-  child.once("close", (_code, signal) => {
+  child.once("close", (code, signal) => {
     finish();
-    if (_code !== 0 || signal) failed();
+    syncLog("worker.exit", { script: input.script, code, signal });
+    if (code !== 0 || signal) failed();
   });
-  child.once("error", () => {
+  child.once("error", (error) => {
     finish();
+    syncLog("worker.exit", { script: input.script, error: errorLabel(error) });
     failed();
   });
   return true;
@@ -140,9 +145,20 @@ export async function runTiingoWorker(input: {
       settled = true;
       clearTimeout(term);
       if (kill && !preserveKill) clearTimeout(kill);
-      resolve({ ok, ...(ok ? parseTiingoRefreshCounts(output) : { attempted: 0, updated: 0 }) });
+      const counts = ok ? parseTiingoRefreshCounts(output) : { attempted: 0, updated: 0 };
+      syncLog("quotes.refresh.done", { ok, ...counts });
+      resolve({ ok, ...counts });
     };
-    child.once("close", (code, signal) => done(code === 0 && !signal));
-    child.once("error", () => done(false));
+    child.once("close", (code, signal) => {
+      syncLog("worker.exit", { script: "tiingo-quote-worker.mts", code, signal });
+      done(code === 0 && !signal);
+    });
+    child.once("error", (error) => {
+      syncLog("worker.exit", {
+        script: "tiingo-quote-worker.mts",
+        error: errorLabel(error),
+      });
+      done(false);
+    });
   });
 }

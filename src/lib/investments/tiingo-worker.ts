@@ -1,5 +1,6 @@
 import type { TiingoQuoteTarget } from "@/domain/investment-valuation";
 import { decodeBinaryChildFrame } from "@/lib/connectors";
+import { logFetch, syncLog } from "@/lib/sync-log";
 import type { FetchAdapter } from "./workers";
 import type { TiingoEodQuote } from "./tiingo";
 
@@ -43,19 +44,31 @@ export async function refreshTiingoQuotes(
   } & TiingoQuoteRefreshDependencies,
 ): Promise<{ attempted: number; updated: number }> {
   const targets = await input.listTargets(input.dataKey);
+  syncLog("quotes.targets", {
+    count: targets.length,
+    symbols: targets.map((target) => target.symbol).join(","),
+  });
   let updated = 0;
   for (const target of targets) {
     const token = Buffer.from(input.token);
     try {
-      const quote = await input.fetchQuote(target.symbol, token, input.fetcher);
+      const quote = await logFetch("quotes.tiingo.fetch", { symbol: target.symbol }, () =>
+        input.fetchQuote(target.symbol, token, input.fetcher),
+      );
       await input.replaceQuote(input.dataKey, {
         ...target,
         ...quote,
         fetchedAt: (input.now ?? (() => new Date()))(),
       });
+      syncLog("quotes.stored", {
+        symbol: target.symbol,
+        sourceDate: quote.sourceDate,
+        splitState: quote.splitState,
+      });
       updated += 1;
     } catch {
       // Individual provider failures are non-fatal and retain the last quote.
+      // logFetch already reported which symbol failed and why.
     } finally {
       token.fill(0);
     }

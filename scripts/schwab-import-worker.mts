@@ -6,6 +6,7 @@ import { completeSourceRefresh, importSchwabCsv, refreshBoiWithFallback } from "
 import { promoteInvestmentSnapshot } from "@/domain/investment-promotion";
 import { missingBoiFxPairs } from "@/domain/fx-rates";
 import { wipe } from "@/lib/crypto";
+import { errorLabel, syncLog, syncLogEnabled } from "@/lib/sync-log";
 
 async function cacheBoi(required: Array<{ currency: string; date: string }>): Promise<void> {
   await refreshBoiWithFallback(
@@ -14,7 +15,7 @@ async function cacheBoi(required: Array<{ currency: string; date: string }>): Pr
       const child = spawn(
         join(process.cwd(), "node_modules/.bin/tsx"),
         [join(process.cwd(), "scripts/boi-worker.mts")],
-        { stdio: ["pipe", "ignore", "ignore"] },
+        { stdio: ["pipe", "ignore", syncLogEnabled() ? "inherit" : "ignore"] },
       );
       child.stdin.write(encodeBinaryChildFrame({ required: pairs }, []));
       child.stdin.end();
@@ -60,6 +61,7 @@ async function main(): Promise<void> {
     wipe(frame);
   }
 }
-main().catch(() => {
+main().catch((error) => {
+  syncLog("worker.failed", { script: "schwab-import-worker.mts", error: errorLabel(error) });
   process.exitCode = 1;
 });
