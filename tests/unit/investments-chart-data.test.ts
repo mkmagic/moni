@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { compositionCoordinates, weekEnding } from "@/app/(app)/investments/chart-data";
+import { valuationCoordinates, weekEnding } from "@/app/(app)/investments/chart-data";
 
 describe("investment chart coordinates", () => {
-  it("keeps exact money strings outside Recharts and converts only unitless ratios", () => {
-    const points = compositionCoordinates({
+  it("plots the ILS valuation and keeps the exact money strings beside it", () => {
+    const points = valuationCoordinates({
       points: [
         {
           week: "2026-07-26",
@@ -21,9 +21,11 @@ describe("investment chart coordinates", () => {
       week: "2026-07-26",
       total: "3.3",
       exact: { a: "1.1", b: "2.2" },
-      values: { a: expect.any(Number), b: expect.any(Number) },
+      values: { a: 1.1, b: 2.2 },
     });
-    expect(points[0].values.a + points[0].values.b).toBeCloseTo(100);
+    // The stack's top edge is the week's total worth, so the plotted bands
+    // have to sum to it rather than to a ratio.
+    expect(points[0].values.a + points[0].values.b).toBeCloseTo(3.3);
     expect(weekEnding("2026-07-26")).toBe("2026-08-01");
   });
 

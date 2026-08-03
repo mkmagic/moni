@@ -696,6 +696,11 @@ export async function getPortfolioHistory(
         const detail = candidates.sort((a, b) => b.weekStart.localeCompare(a.weekStart))[0];
         if (detail) used.push({ detail, carried: detail.weekStart !== week });
       }
+      // A week before the first snapshot is an absence of evidence, not an
+      // observation of zero. Plotted as a money value it claims the portfolio
+      // was worth nothing then, and it makes the change since the start of the
+      // range read as the whole portfolio appearing out of nowhere.
+      if (used.length === 0 && points.length === 0) continue;
       const components: PortfolioHolding[] = [];
       for (const { detail, carried } of used)
         components.push(...(await rowsForSnapshot(tx, session.dataKey, all, detail, carried)));

@@ -431,9 +431,11 @@ Rewrite selected Variant A in this order:
 2. One collapsed card per actual connection, with recognizable local IBKR/Schwab
    marks, ILS valuation, cash, account/position counts, mode, freshness, and per-
    connection action. Expanded cards group accounts and show holding tables.
-3. Historical composition graph with Holding/Account switch, presets and draggable
+3. Historical valuation graph with Holding/Account switch, presets and draggable
    bounds, valuation change beside the graph, solid broker history, and optional
-   dotted Estimated now.
+   dotted Estimated now. The y-axis is ILS value, not a percentage: the stack's
+   top edge is what the portfolio was worth that week and the bands below it say
+   where that worth sat.
 
 Donut identity is canonical instrument across accounts/connections; cash slices are
 separate by currency. Hover shows identity, ILS value, percentage, native

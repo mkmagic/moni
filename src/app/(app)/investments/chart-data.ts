@@ -1,24 +1,25 @@
-import Decimal from "decimal.js";
 import type { PortfolioHistory } from "@/domain/investments";
 
-export interface CompositionChartPoint {
+export interface ValuationChartPoint {
   week: string;
   total: string;
   values: Record<string, number>;
   exact: Record<string, string>;
 }
 
-/** Recharts receives only unitless composition ratios. Exact values remain in `exact`. */
-export function compositionCoordinates(history: PortfolioHistory): CompositionChartPoint[] {
+/**
+ * Recharts plots the ILS valuation itself, so the stack's top edge is the
+ * portfolio's worth that week and the bands below it say where that worth sat.
+ * Only these plotted numbers are floats; `total` and `exact` stay exact for
+ * anything that renders as money.
+ */
+export function valuationCoordinates(history: PortfolioHistory): ValuationChartPoint[] {
   return history.points.map((point) => {
-    const total = new Decimal(point.ilsValue);
     const exact: Record<string, string> = {};
     const values: Record<string, number> = {};
     for (const item of point.composition) {
       exact[item.id] = item.ilsValue;
-      values[item.id] = total.isZero()
-        ? 0
-        : new Decimal(item.ilsValue).div(total).mul(100).toNumber();
+      values[item.id] = Number(item.ilsValue);
     }
     return { week: point.week, total: point.ilsValue, values, exact };
   });

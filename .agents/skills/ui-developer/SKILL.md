@@ -42,6 +42,27 @@ new feedback lands.
 
 ## Feedback log (newest first — append, don't overwrite)
 
+### 2026-08-03 (later) — the history graph (issue #37): a share of a portfolio is not a portfolio's worth
+
+- **"How did my money change" is a money axis, not a percentage axis.** The graph was a 0–100%
+  stacked composition and the owner called it *"completely wrong"*. A 100%-stacked chart has a flat
+  top edge by construction, so the one question the screen exists to answer — what is this worth,
+  and is it going up — was the one thing it could not show. Plotting the ILS value instead keeps
+  every other affordance (the Holding/Account switch, the stack, the brush, the tooltip) and simply
+  makes the stack's top edge the portfolio's worth. **When a chart is "wrong" but the numbers are
+  right, suspect the axis before the data.**
+- **The y-axis label and the tooltip are different jobs.** An axis has room for `₪800K`, not for
+  `₪689,366` — `Intl.NumberFormat` with `notation: "compact"` on the ticks, exact strings in the
+  tooltip and the summary. The `width={64}` on `<YAxis>` is needed or the ticks clip.
+- **A week before the first snapshot is not a week worth ₪0.** As percentages, the year of empty
+  weeks ahead of the first sync was invisible; as money it drew a flat line along zero and made
+  "valuation change" read `+₪689,366 · 0%` — the whole portfolio appearing from nothing.
+  `getPortfolioHistory` now skips leading weeks with no evidence at all. **Changing how a value is
+  drawn can expose a data-shape bug that the old encoding was hiding.**
+- **Re-screenshot a Recharts area before believing it.** Twice this session the first frame showed a
+  sliver at the left edge that looks exactly like a broken dataset; it is the grow animation. Same
+  note as the donut on 2026-08-01.
+
 ### 2026-08-03 — accounts & investments follow-ups (issue #37): a pipe is not a brokerage
 
 - **Never show the user a connector id.** The Accounts page rendered "snaptrade (EE23)" and

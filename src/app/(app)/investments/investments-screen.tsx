@@ -45,7 +45,7 @@ import {
 } from "@/lib/sync-client";
 import { syncErrorMessage } from "@/lib/sync-error-message";
 import { cn } from "@/lib/utils";
-import { compositionCoordinates, weekEnding } from "./chart-data";
+import { valuationCoordinates, weekEnding } from "./chart-data";
 
 const COLORS = [
   "var(--color-chart-1)",
@@ -67,6 +67,18 @@ function money(value: string, currency = "ILS") {
     currency,
     maximumFractionDigits: currency === "ILS" ? 0 : 2,
   }).format(Number(value));
+}
+/**
+ * Axis ticks only. An axis has room for a magnitude, not for a money value —
+ * the tooltip and the summary above the chart carry the exact figures.
+ */
+function compactIls(value: number) {
+  return new Intl.NumberFormat("en-IL", {
+    style: "currency",
+    currency: "ILS",
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
 }
 function percent(value: string) {
   return `${new Decimal(value).toDecimalPlaces(1).toFixed()}%`;
@@ -231,7 +243,7 @@ export function InvestmentsScreen({
     }));
   }, [rows, overview.ilsValue]);
   // The Brush windows the chart itself, so it always receives every point.
-  const chart = useMemo(() => (history ? compositionCoordinates(history) : []), [history]);
+  const chart = useMemo(() => (history ? valuationCoordinates(history) : []), [history]);
   const keys = history
     ? [
         ...new Map(
@@ -769,7 +781,7 @@ function History({
   onWeek,
 }: {
   history: PortfolioHistory | null;
-  chart: ReturnType<typeof compositionCoordinates>;
+  chart: ReturnType<typeof valuationCoordinates>;
   keys: Array<[string, string]>;
   range: Range;
   groupBy: GroupBy;
@@ -785,9 +797,10 @@ function History({
     <Card className="p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="text-lg font-semibold">Historical composition</h2>
+          <h2 className="text-lg font-semibold">Historical valuation</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Weekly broker-observed values. Current estimates are separate.
+            Weekly broker-observed ILS value, stacked by{" "}
+            {groupBy === "holding" ? "holding" : "account"}. Current estimates are separate.
           </p>
         </div>
         {history?.valuationChange && (
@@ -858,8 +871,8 @@ function History({
                 tick={{ fill: "var(--color-muted-foreground)", fontSize: 11 }}
               />
               <YAxis
-                domain={[0, 100]}
-                tickFormatter={(value) => `${value}%`}
+                width={64}
+                tickFormatter={compactIls}
                 axisLine={false}
                 tickLine={false}
                 tick={{ fill: "var(--color-muted-foreground)", fontSize: 11 }}
@@ -869,7 +882,7 @@ function History({
                   key={id}
                   type="monotone"
                   dataKey={(point) => point.values[id] ?? 0}
-                  stackId="composition"
+                  stackId="valuation"
                   stroke={COLORS[index % COLORS.length]}
                   fill={COLORS[index % COLORS.length]}
                   fillOpacity={0.35}
@@ -884,7 +897,7 @@ function History({
                   return (
                     <div className="rounded-[var(--radius)] border border-border bg-popover p-3 text-xs">
                       <p className="font-medium">Week ending {weekEnding(point.week)}</p>
-                      <p className="mt-1 tabular-nums">{money(point.total)}</p>
+                      <p className="mt-1 tabular-nums">Total {money(point.total)}</p>
                       {keys.map(
                         ([id, label]) =>
                           point.exact[id] && (
