@@ -26,8 +26,9 @@ export const NEVER_SEND = [
   "bit ",
 ];
 
-export function blocksEgress(matchText: string): boolean {
-  return NEVER_SEND.some((needle) => matchText.includes(needle));
+export function blocksEgress(rawDescription: string): boolean {
+  const lower = rawDescription.toLowerCase();
+  return NEVER_SEND.some((needle) => lower.includes(needle));
 }
 
 /** Every leaf key, with its parent for context. Parents are not offered as
@@ -141,6 +142,7 @@ export async function classifyBatch(
         { role: "user", content: numbered },
       ],
     }),
+    signal: AbortSignal.timeout(15000),
   });
 
   if (!response.ok) {

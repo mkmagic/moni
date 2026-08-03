@@ -15,6 +15,10 @@ describe("external categorization pure functions", () => {
     expect(blocksEgress("ביט העברה מישראל כהן")).toBe(true);
     expect(blocksEgress("פייבוקס העברת כספים")).toBe(true);
     expect(blocksEgress("העברה לישראל כהן")).toBe(true);
+    
+    // Check that it catches prefixes even with spaces (raw unnormalized form)
+    expect(blocksEgress("העברה ל ישראל כהן")).toBe(true);
+    expect(blocksEgress("Paybox Transfer")).toBe(true); // mixed case
 
     expect(blocksEgress("שופרסל דיל")).toBe(false);
     expect(blocksEgress("רמי לוי תקשורת")).toBe(false);

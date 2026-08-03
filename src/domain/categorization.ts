@@ -745,7 +745,7 @@ export async function enrichUnknownMerchants(
     throw new LlmNotConfiguredError();
   }
 
-  return withUser(userId, async (tx) => {
+  const eligibleTexts = await withUser(userId, async (tx) => {
     // 1. Check user smartCategorize setting
     const [userRow] = await tx
       .select({ smartCategorize: users.smartCategorize })
@@ -768,17 +768,24 @@ export async function enrichUnknownMerchants(
       .where(and(isNull(entries.categoryId), eq(entries.excluded, false)));
 
     const candidateTextsSet = new Set<string>();
+    const blockedTextsSet = new Set<string>();
+    
     for (const row of uncategorizedRows) {
-      const matchText = normalizeDescription(
-        decText(dataKey, row.descriptionCt, row.id, "description_ct", row.version) ?? "",
-      );
+      const raw = decText(dataKey, row.descriptionCt, row.id, "description_ct", row.version) ?? "";
+      const matchText = normalizeDescription(raw);
+      
       if (matchText !== "") {
-        candidateTextsSet.add(matchText);
+        // Block on the raw description before normalization strips prefixes
+        if (blocksEgress(raw)) {
+          blockedTextsSet.add(matchText);
+        } else {
+          candidateTextsSet.add(matchText);
+        }
       }
     }
 
     if (candidateTextsSet.size === 0) {
-      return { looked_up: 0, placed: 0 };
+      return [];
     }
 
     // 3. Subtract anything already in merchant_lookups (decrypt once per batch)
@@ -791,8 +798,7 @@ export async function enrichUnknownMerchants(
       }
     }
 
-    // 4. Subtract anything blocksEgress rejects
-    // 5. Subtract anything local engine places above MIN_SUGGESTION_SCORE
+    // 4. Subtract anything local engine places above MIN_SUGGESTION_SCORE
     const examples = await collectLabeledExamples(tx, dataKey);
     const ownCorpus = buildCorpus(examples.filter((e) => e.source !== "builtin"));
     const builtinCorpus = buildCorpus(examples.filter((e) => e.source === "builtin"));
@@ -809,65 +815,77 @@ export async function enrichUnknownMerchants(
       return false;
     }
 
-    const eligibleTexts: string[] = [];
+    const eligible: string[] = [];
     for (const text of candidateTextsSet) {
+      // 5. Subtract anything blocksEgress rejected
+      if (blockedTextsSet.has(text)) continue;
       if (cachedTexts.has(text)) continue;
-      if (blocksEgress(text)) continue;
       if (localPlaces(text)) continue;
-      eligibleTexts.push(text);
+      eligible.push(text);
     }
+    
+    return eligible;
+  });
 
-    // 6. Cap at 100 texts per invocation
-    const toLookup = eligibleTexts.slice(0, 100);
-    if (toLookup.length === 0) {
-      return { looked_up: 0, placed: 0 };
+  // 6. Cap at 100 texts per invocation
+  const toLookup = eligibleTexts.slice(0, 100);
+  if (toLookup.length === 0) {
+    return { looked_up: 0, placed: 0 };
+  }
+
+  let looked_up = 0;
+  let placed = 0;
+  const BATCH_SIZE = 10;
+  const resultsToInsert: { text: string; builtinKey: string | null; answer: any }[] = [];
+
+  for (let start = 0; start < toLookup.length; start += BATCH_SIZE) {
+    if (start > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
+    const slice = toLookup.slice(start, start + BATCH_SIZE);
+    const batchAnswers = await classifyBatch(slice, start, config);
 
-    let looked_up = 0;
-    let placed = 0;
-    const BATCH_SIZE = 10;
+    for (let i = 0; i < slice.length; i++) {
+      const text = slice[i];
+      const index = start + i;
+      const answer = batchAnswers.get(index) ?? {
+        key: UNKNOWN,
+        brand: "",
+        confidence: "low" as const,
+        why: "",
+      };
 
-    for (let start = 0; start < toLookup.length; start += BATCH_SIZE) {
-      if (start > 0) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
-      const slice = toLookup.slice(start, start + BATCH_SIZE);
-      const batchAnswers = await classifyBatch(slice, start, config);
+      const shownKey = guarded(answer);
+      const builtinKey = shownKey === UNKNOWN ? null : shownKey;
 
-      for (let i = 0; i < slice.length; i++) {
-        const text = slice[i];
-        const index = start + i;
-        const answer = batchAnswers.get(index) ?? {
-          key: UNKNOWN,
-          brand: "",
-          confidence: "low" as const,
-          why: "",
-        };
+      resultsToInsert.push({ text, builtinKey, answer });
+    }
+  }
 
-        const shownKey = guarded(answer);
-        const builtinKey = shownKey === UNKNOWN ? null : shownKey;
-
+  if (resultsToInsert.length > 0) {
+    await withUser(userId, async (tx) => {
+      for (const res of resultsToInsert) {
         const id = randomUUID();
         await tx.insert(merchantLookups).values({
           id,
           ownerId: userId,
-          matchTextCt: encText(dataKey, text, id, "match_text_ct", 1),
-          builtinKey,
-          confidence: answer.confidence,
+          matchTextCt: encText(dataKey, res.text, id, "match_text_ct", 1),
+          builtinKey: res.builtinKey,
+          confidence: res.answer.confidence,
           model: config.model,
           promptVersion: PROMPT_VERSION,
           version: 1,
         });
 
         looked_up++;
-        if (builtinKey !== null) {
+        if (res.builtinKey !== null) {
           placed++;
         }
       }
-    }
+    });
+  }
 
-    return { looked_up, placed };
-  });
+  return { looked_up, placed };
 }
 
 /**
