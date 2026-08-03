@@ -42,6 +42,56 @@ new feedback lands.
 
 ## Feedback log (newest first — append, don't overwrite)
 
+### 2026-08-03 — accounts & investments follow-ups (issue #37): a pipe is not a brokerage
+
+- **Never show the user a connector id.** The Accounts page rendered "snaptrade (EE23)" and
+  "ibkr_flex (3443)" because `resolveAccount` named the account `${source} (${last4})` and set
+  `institution` to the source id. The user's words: *"A user doesn't need to see 'Snaptrade' in his
+  accounts — he should see 'Schwab'."* Two halves to the fix: `ConnectorDefinition.institutionLabel`
+  for direct connectors (ibkr_flex → "Interactive Brokers"), and the payload's own
+  `institution_name` for an **aggregator**, which by definition can reach many brokerages and so
+  cannot be named from the registry. `institutionDisplayName(institution, connectorId)` in
+  `lib/connectors/registry.ts` treats any stored value that `isConnectorId()` recognises as unset —
+  that's what corrects rows written before the fix **without waiting for a sync**.
+- **"Connection" and "account" are different nouns and the card has to say so.** The account is the
+  title ("Interactive Brokers"); how Moni reaches it is a muted provenance line ("via Interactive
+  Brokers Flex · •••• 3443"). Suppress the provenance when it would repeat the title — an
+  un-synced SnapTrade account has nothing but the connector name, and "SnapTrade / via SnapTrade"
+  says one thing twice.
+- **"Balance unavailable" was structural, not missing data.** An investment account has no
+  `current_balance_ct` — its worth is derived from holdings — so the card had nothing to read.
+  `listInvestmentAccountValues` gives one ILS figure per account, deliberately narrower than
+  `getPortfolioOverview`. Base currency wins over native: the number has to tie out against the
+  dashboard.
+- **The hover glow was reused exactly as documented** — `.card-link` wrapper + `.card-glow` +
+  `.card-glow-top`, and **only** on investment cards, because they're the only ones with a detail
+  view. `h-full` on the Card, or a linked card in a grid row is shorter than its unlinked neighbour.
+- **A single-select `expanded` state cannot express "Expand all".** It was `useState<string | null>`;
+  the button is only expressible once it's a `Set`. The button also flips to "Collapse all" when
+  everything is open, and hides entirely below two connections.
+- **A hero figure and its own components must not read as siblings.** `Cash ₪1,343 · US$437.54 USD ·
+  ₪6 ILS` was correct arithmetic (the ₪1,343 is the ILS conversion of the other two) and still read
+  as three cash piles. Dropping the converted total fixed it — the portfolio total above already
+  carries that number. **When a line lists parts, don't lead it with the whole.**
+- **Don't offer a control whose dialog would be empty.** "Import statement" showed with no
+  `user_mediated_import` connection configured.
+- **Diagnostics were the actual deliverable.** Three independent silencers hid every provider call:
+  worker stderr was `"ignore"`, the BOI grandchild was `stdio: [...,"ignore","ignore"]`
+  unconditionally, and every worker ended in `main().catch(() => {})` which discarded the error
+  object. `src/lib/sync-log.ts` is on by default in dev, opt-in in production
+  (`MONI_SYNC_DIAGNOSTIC=1`) because the lines name instrument symbols — holdings data this app
+  otherwise encrypts. Reconciliation deltas are logged in **basis points, never shekels**, which
+  distinguishes an FX spread from a missing component without putting the portfolio's value in a log.
+- **Name the reason a rule rejected something, not just that it did.** `selectCurrentComponent`
+  returned a bare `fallback: boolean`; it now returns the first failing rule
+  (`broker_value_is_newer`, `exchange_not_eligible`, …), and `listTiingoQuoteTargets` logs a reason
+  on every `continue`. That is what makes the "quote fallback" badge traceable.
+- **Verification hit a real wall: a sync needs a passkey ceremony I cannot perform.** The 423 →
+  "Unlock with your passkey" path is owner-only, so anything that only takes effect on the next sync
+  (here: the stored account name and the IBKR venue backfill) has to be verified by the owner or
+  designed to correct itself at the display edge. Prefer the latter where the stored value is one
+  Moni derived itself.
+
 ### 2026-08-01 — the investments screen (issue #37): a ticker is the name, and an opaque code is not an error message
 
 - **A holding is identified by its ticker, not its legal name.** The table and the hero donut both
