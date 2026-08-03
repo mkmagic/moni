@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { startSyncRun, waitForSyncRun } from "@/lib/sync-client";
+import { refreshQuotes, startSyncRun, waitForSyncRun } from "@/lib/sync-client";
 import { armWithPasskey } from "@/lib/passkey-client";
 
 /**
@@ -67,6 +67,10 @@ export function useSyncAll(callbacks: SyncAllCallbacks = {}) {
         const run = await waitForSyncRun(started.syncRunId);
         callbacks.onRunFinished?.(id, run.status, run.error);
       }
+      // Broker holdings just moved, so the price estimates layered on top of
+      // them are the stalest thing on screen. Best-effort: a missing Tiingo
+      // token or a provider outage must not turn a good sync into a failure.
+      await refreshQuotes();
       setState({ kind: "idle" });
       callbacks.onChainFinished?.();
     } finally {

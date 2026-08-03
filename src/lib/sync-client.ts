@@ -51,6 +51,36 @@ export async function startConnectionSync(connection: {
   return startSyncRun(connection.id);
 }
 
+export type QuoteRefreshResult =
+  /** The route answered 200 with refreshed:false — no Tiingo token configured. */
+  | { kind: "not_configured" }
+  | { kind: "refreshed"; attempted: number; updated: number }
+  | { kind: "error" };
+
+/**
+ * Refreshes market-price estimates for every eligible holding.
+ *
+ * This lives here rather than on the Investments screen because it used to be
+ * called from exactly one button there, which meant syncing from the dashboard
+ * or Settings left quotes untouched and the portfolio silently valued on
+ * yesterday's broker numbers.
+ */
+export async function refreshQuotes(): Promise<QuoteRefreshResult> {
+  try {
+    const res = await fetch("/api/investments/quotes/refresh", { method: "POST" });
+    if (!res.ok) return { kind: "error" };
+    const body = (await res.json()) as {
+      refreshed?: boolean;
+      attempted?: number;
+      updated?: number;
+    };
+    if (!body.refreshed) return { kind: "not_configured" };
+    return { kind: "refreshed", attempted: body.attempted ?? 0, updated: body.updated ?? 0 };
+  } catch {
+    return { kind: "error" };
+  }
+}
+
 export interface FinishedRun {
   status: "succeeded" | "failed";
   error: string | null;

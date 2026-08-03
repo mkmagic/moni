@@ -37,7 +37,12 @@ import type {
   PortfolioSnapshotPage,
 } from "@/domain/investments";
 import { getConnectorDefinition } from "@/lib/connectors";
-import { startConnectionSync, waitForSyncRun } from "@/lib/sync-client";
+import {
+  refreshQuotes,
+  startConnectionSync,
+  waitForSyncRun,
+  type QuoteRefreshResult,
+} from "@/lib/sync-client";
 import { syncErrorMessage } from "@/lib/sync-error-message";
 import { cn } from "@/lib/utils";
 import { compositionCoordinates, weekEnding } from "./chart-data";
@@ -99,6 +104,21 @@ function quoteUrl(symbol: string) {
   return `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}/`;
 }
 
+/**
+ * A configured-but-absent Tiingo token answers 200 with refreshed:false, so
+ * "the request succeeded" and "quotes were refreshed" are different facts. The
+ * counts separate both from "ran, but nothing was eligible".
+ */
+function quoteNotice(result: QuoteRefreshResult): string {
+  if (result.kind === "error")
+    return " Quote refresh was unavailable; broker values remain included.";
+  if (result.kind === "not_configured")
+    return " Quote estimates are not configured; broker values remain included.";
+  if (!result.attempted)
+    return " No holdings were eligible for a quote estimate; broker values remain included.";
+  return ` Quote estimates refreshed for ${result.updated} of ${result.attempted} holdings.`;
+}
+
 export function InvestmentsScreen({
   initialOverview,
   connections,
@@ -110,7 +130,8 @@ export function InvestmentsScreen({
   const [rows, setRows] = useState<PortfolioPage | null>(null);
   const [history, setHistory] = useState<PortfolioHistory | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
+  // A set rather than a single id, so "Expand all" is expressible at all.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [groupBy, setGroupBy] = useState<GroupBy>("holding");
   const [range, setRange] = useState<Range>("1Y");
   // Indices into the loaded history points; the chart's Brush owns this window.
@@ -159,6 +180,11 @@ export function InvestmentsScreen({
   }, [week]);
 
   const hasData = overview.connections.length > 0;
+  // Statement import is only reachable through a connection configured for it;
+  // with none, the button leads to an empty dialog.
+  const importConnections = connections.filter((item) => item.mode === "user_mediated_import");
+  const allExpanded =
+    overview.connections.length > 0 && overview.connections.every((view) => expanded.has(view.id));
   const rowsByConnection = useMemo(
     () =>
       new Map(
@@ -247,24 +273,7 @@ export function InvestmentsScreen({
           `${connection.displayName ?? "Connection"}: ${syncErrorMessage(finished.error)}`,
         );
     }
-    const quotes = await fetch("/api/investments/quotes/refresh", { method: "POST" }).catch(
-      () => null,
-    );
-    // A configured-but-absent Tiingo token answers 200 with refreshed:false, so
-    // response.ok alone reported success for a refresh that never ran. The
-    // counts separate that again from "ran, but nothing was eligible".
-    const quoteBody = quotes?.ok
-      ? await quotes
-          .json()
-          .catch(() => null as { refreshed?: boolean; attempted?: number; updated?: number } | null)
-      : null;
-    const refreshed = !quotes?.ok
-      ? " Quote refresh was unavailable; broker values remain included."
-      : !quoteBody?.refreshed
-        ? " Quote estimates are not configured; broker values remain included."
-        : !quoteBody.attempted
-          ? " No holdings were eligible for a quote estimate; broker values remain included."
-          : ` Quote estimates refreshed for ${quoteBody.updated} of ${quoteBody.attempted} holdings.`;
+    const refreshed = quoteNotice(await refreshQuotes());
     setNotice(
       `${files.length ? `${files.join(", ")} need a statement file.` : ""}${failures.join(" ")}${refreshed}`.trim(),
     );
@@ -284,10 +293,16 @@ export function InvestmentsScreen({
     else if (outcome.kind === "error") setError(outcome.message);
     else {
       const done = await waitForSyncRun(outcome.syncRunId);
-      if (done.status === "succeeded") setNotice("Connection updated.");
+      if (done.status === "succeeded")
+        // Holdings just moved, so the estimates layered on them are now the
+        // stalest thing on screen.
+        setNotice(`Connection updated.${quoteNotice(await refreshQuotes())}`);
       else setError(`${syncErrorMessage(done.error)} The last accepted snapshot remains included.`);
     }
     setBusy(false);
+    const next = await json<PortfolioOverview>("/api/investments/overview").catch(() => null);
+    if (next) setOverview(next);
+    await loadRows().catch(() => undefined);
   }
   async function finishImport(message: string) {
     setImportOpen(false);
@@ -315,7 +330,7 @@ export function InvestmentsScreen({
         <ImportDialog
           open={importOpen}
           onClose={() => setImportOpen(false)}
-          connections={connections.filter((item) => item.mode === "user_mediated_import")}
+          connections={importConnections}
           onDone={(message) => void finishImport(message)}
         />
       </>
@@ -347,11 +362,17 @@ export function InvestmentsScreen({
             <p className="mt-2 text-4xl font-bold tracking-tight tabular-nums">
               {money(overview.ilsValue)}
             </p>
+            {/* One figure per currency the user actually holds cash in. The
+                ILS-converted grand total used to lead this line, which read as
+                a third cash pile next to the USD and ILS ones it was the sum
+                of. The portfolio total above already carries it. */}
             <p className="mt-2 text-sm text-muted-foreground">
-              Cash {money(overview.cashIlsValue)} ·{" "}
-              {overview.cashByCurrency
-                .map((item) => `${money(item.nativeValue, item.currency)} ${item.currency}`)
-                .join(" · ")}
+              Cash{" "}
+              {overview.cashByCurrency.length
+                ? overview.cashByCurrency
+                    .map((item) => money(item.nativeValue, item.currency))
+                    .join(" · ")
+                : money("0")}
             </p>
           </div>
           <p className="text-xs text-muted-foreground">
@@ -364,25 +385,48 @@ export function InvestmentsScreen({
               <RefreshCw className={cn("h-4 w-4", busy && "animate-spin")} />
               Refresh all
             </Button>
-            <Button variant="outline" onClick={() => setImportOpen(true)}>
-              <FileUp className="h-4 w-4" />
-              Import statement
-            </Button>
+            {importConnections.length > 0 && (
+              <Button variant="outline" onClick={() => setImportOpen(true)}>
+                <FileUp className="h-4 w-4" />
+                Import statement
+              </Button>
+            )}
           </div>
         </div>
         <Donut slices={slices} selected={selected} onSelect={setSelected} />
       </Card>
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Accounts</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold">Accounts</h2>
+          {overview.connections.length > 1 && (
+            <Button
+              variant="outline"
+              className="h-8 px-3 text-xs"
+              onClick={() =>
+                setExpanded(
+                  allExpanded ? new Set() : new Set(overview.connections.map((view) => view.id)),
+                )
+              }
+            >
+              {allExpanded ? "Collapse all" : "Expand all"}
+            </Button>
+          )}
+        </div>
         {overview.connections.map((view) => (
           <ConnectionCard
             key={view.id}
             view={view}
             connection={connections.find((item) => item.id === view.id)}
             rows={rowsByConnection.get(view.id) ?? []}
-            expanded={expanded === view.id}
+            expanded={expanded.has(view.id)}
             selected={selected}
-            onExpand={() => setExpanded(expanded === view.id ? null : view.id)}
+            onExpand={() =>
+              setExpanded((prior) => {
+                const next = new Set(prior);
+                if (!next.delete(view.id)) next.add(view.id);
+                return next;
+              })
+            }
             onRefresh={() => {
               const connection = connections.find((item) => item.id === view.id);
               if (connection) void refreshConnection(connection);
@@ -407,7 +451,7 @@ export function InvestmentsScreen({
       <ImportDialog
         open={importOpen}
         onClose={() => setImportOpen(false)}
-        connections={connections.filter((item) => item.mode === "user_mediated_import")}
+        connections={importConnections}
         onDone={(message) => void finishImport(message)}
       />
     </div>
@@ -558,7 +602,8 @@ function ConnectionCard({
   onImport: () => void;
 }) {
   const broker = connection?.connectorId === "ibkr_flex" ? "interactivebrokers" : "schwab";
-  const label = connection?.connectorId === "ibkr_flex" ? "Interactive Brokers" : "Charles Schwab";
+  const definition = connection ? getConnectorDefinition(connection.connectorId) : undefined;
+  const label = definition?.institutionLabel ?? definition?.label ?? "Connection";
   return (
     <Card>
       <div className="flex flex-wrap items-center justify-between gap-4 p-5">
