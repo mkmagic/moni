@@ -97,6 +97,7 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
   ibkr_flex: {
     id: "ibkr_flex",
     label: "Interactive Brokers Flex",
+    institutionLabel: "Interactive Brokers",
     kind: "investment",
     mode: "credentialed_fetch",
     loginFields: [
@@ -107,6 +108,7 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
   schwab_positions_csv: {
     id: "schwab_positions_csv",
     label: "Schwab Positions CSV",
+    institutionLabel: "Charles Schwab",
     kind: "investment",
     mode: "user_mediated_import",
     loginFields: [],
@@ -131,4 +133,21 @@ export function getConnectorDefinition(id: string): ConnectorDefinition | undefi
 
 export function isConnectorId(id: string): id is ConnectorId {
   return Object.prototype.hasOwnProperty.call(CONNECTOR_REGISTRY, id);
+}
+
+/**
+ * The brokerage or bank to show a user for an account.
+ *
+ * A stored institution of "snaptrade" is Moni's own source id leaking through
+ * — accounts created before the promotion learned the real name still carry
+ * one, and a raw id is never the answer to "where is my money". Treat it as
+ * unset and let the connector name its institution instead.
+ */
+export function institutionDisplayName(
+  institution: string | null | undefined,
+  connectorId: string | null | undefined,
+): string | null {
+  if (institution && !isConnectorId(institution)) return institution;
+  const definition = connectorId ? getConnectorDefinition(connectorId) : undefined;
+  return definition?.institutionLabel ?? definition?.label ?? institution ?? null;
 }

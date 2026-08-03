@@ -3,7 +3,7 @@
 // exact decimal strings (Money) — never formatted, never a float.
 import { and, eq } from "drizzle-orm";
 import { withUser } from "@/db/client";
-import { accounts } from "@/db/schema";
+import { accounts, connections } from "@/db/schema";
 import type { Money } from "@/lib/money";
 import type { Session } from "@/lib/auth/session-store";
 import { decText } from "./fields";
@@ -16,6 +16,13 @@ export interface AccountView {
   name: string;
   last4: string | null;
   currency: string;
+  /**
+   * The connector this account arrives through, if any. The UI shows it as
+   * provenance ("via SnapTrade") — the connection is how Moni reaches the
+   * account, not the account itself, and conflating the two is what made an
+   * account read as "snaptrade".
+   */
+  connectorId: string | null;
   /** Latest known native balance (from the cached snapshot). Null if unknown. */
   balance: Money | null;
   status: string;
@@ -42,11 +49,16 @@ export async function archiveAccount(userId: string, accountId: string): Promise
 export async function listAccounts(session: Session): Promise<AccountView[]> {
   const { userId, dataKey } = session;
   return withUser(userId, async (tx) => {
-    const rows = await tx.select().from(accounts).orderBy(accounts.createdAt);
-    return rows.map((a): AccountView => {
+    const rows = await tx
+      .select({ account: accounts, connectorId: connections.connectorId })
+      .from(accounts)
+      .leftJoin(connections, eq(connections.id, accounts.connectionId))
+      .orderBy(accounts.createdAt);
+    return rows.map(({ account: a, connectorId }): AccountView => {
       const balance = decText(dataKey, a.currentBalanceCt, a.id, "current_balance_ct", a.version);
       return {
         id: a.id,
+        connectorId,
         accountType: a.accountType,
         classification: a.classification,
         institution: a.institution,

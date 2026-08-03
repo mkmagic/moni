@@ -50,8 +50,15 @@ export type ConnectorId =
 
 export interface ConnectorDefinition {
   id: ConnectorId;
-  /** Human-readable institution name — used for UI and default account naming. */
+  /** Human-readable name of the connector itself, e.g. "Interactive Brokers Flex". */
   label: string;
+  /**
+   * The institution an account reached through this connector actually belongs
+   * to — "Charles Schwab", not "Schwab Positions CSV". Undefined for an
+   * aggregator like SnapTrade, which can reach many brokerages and therefore
+   * reports the institution per account instead.
+   */
+  institutionLabel?: string;
   kind: ConnectorKind;
   mode: ConnectorMode;
   /** Ordered to match the scraper's expected credentials-object key order. */

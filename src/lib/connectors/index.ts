@@ -13,6 +13,7 @@ export {
   CONNECTOR_REGISTRY,
   CONNECTOR_LIST,
   getConnectorDefinition,
+  institutionDisplayName,
   isConnectorId,
 } from "./registry";
 export {

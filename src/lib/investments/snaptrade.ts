@@ -6,6 +6,7 @@ import { decimalText } from "./decimal";
 import { asOf, checked, code, currencySchema, nonblankSchema, requireLimit } from "./shared";
 import { InvestmentNormalizationError, type InvestmentSyncEnvelope } from "./types";
 import { readBoundedResponse, WorkerSourceError, type FetchAdapter } from "./workers";
+import { logFetch, syncLog } from "@/lib/sync-log";
 
 export const SNAPTRADE_API_ORIGIN = "https://api.snaptrade.com";
 const ACCOUNTS_PATH = "/accounts";
@@ -177,21 +178,34 @@ export async function fetchSnaptradeHoldings(
     const id = clientId.toString("utf8");
     const accounts = checked(
       z.array(accountSchema),
-      await get(ACCOUNTS_PATH, id, consumerKey, fetcher),
+      await logFetch("snaptrade.accounts.fetch", {}, () =>
+        get(ACCOUNTS_PATH, id, consumerKey, fetcher),
+      ),
     );
     requireLimit(accounts.length, 100);
     if (!accounts.length) throw new InvestmentNormalizationError("incomplete_coverage");
     const payloads: SnaptradeAccountPayload[] = [];
     for (const account of accounts) {
       const base = `${ACCOUNTS_PATH}/${encodeURIComponent(account.id)}`;
-      payloads.push({
-        account,
-        balances: checked(balancesSchema, await get(`${base}/balances`, id, consumerKey, fetcher)),
-        positions: checked(
-          positionsSchema,
-          await get(`${base}/positions/all`, id, consumerKey, fetcher),
+      const balances = checked(
+        balancesSchema,
+        await logFetch("snaptrade.balances.fetch", {}, () =>
+          get(`${base}/balances`, id, consumerKey, fetcher),
         ),
+      );
+      const positions = checked(
+        positionsSchema,
+        await logFetch("snaptrade.positions.fetch", {}, () =>
+          get(`${base}/positions/all`, id, consumerKey, fetcher),
+        ),
+      );
+      syncLog("snaptrade.account", {
+        institution: account.institution_name,
+        positions: positions.results.length,
+        asOf: positions.data_freshness.as_of,
+        lastSync: account.sync_status.holdings.last_successful_sync,
       });
+      payloads.push({ account, balances, positions });
     }
     return payloads;
   } finally {
@@ -271,6 +285,7 @@ export function normalizeSnaptradeHoldings(
       }
       return {
         sourceAccountRef: account.institution_account_id ?? account.id,
+        institutionName: account.institution_name?.trim() || undefined,
         baseCurrency: account.balance.total.currency,
         positions: rows,
         cash: balances

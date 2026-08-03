@@ -14,6 +14,7 @@ import {
   investmentSnapshotPositions,
 } from "@/db/schema";
 import type { Session } from "@/lib/auth/session-store";
+import { institutionDisplayName } from "@/lib/connectors";
 import { decText } from "./fields";
 import {
   selectCurrentComponent,
@@ -466,6 +467,28 @@ function page(
   };
 }
 
+/**
+ * Current ILS value of each investment account, keyed by account id.
+ *
+ * The Accounts page needs a number per card and nothing else, so this is
+ * deliberately narrower than getPortfolioOverview: an investment account has no
+ * `current_balance_ct` to read (its worth is derived from holdings), which is
+ * why those cards used to say "Balance unavailable".
+ */
+export async function listInvestmentAccountValues(session: Session): Promise<Map<string, string>> {
+  return withUser(session.userId, async (tx) => {
+    const all = await structural(tx);
+    const result = new Map<string, string>();
+    for (const detail of latestByAccount(all).values()) {
+      const value = await valueInvestmentSnapshot(tx, session.dataKey, detail.id, {
+        estimateNow: true,
+      });
+      result.set(detail.accountId, value.ilsValue);
+    }
+    return result;
+  });
+}
+
 export async function getPortfolioOverview(session: Session): Promise<PortfolioOverview> {
   return withUser(session.userId, async (tx) => {
     const all = await structural(tx);
@@ -516,9 +539,27 @@ export async function getPortfolioOverview(session: Session): Promise<PortfolioO
     const connectionViews = [...new Set(accountViews.map((row) => row.connectionId))].map((id) => {
       const accountRows = accountViews.filter((row) => row.connectionId === id);
       const holdings = currentRows.filter((row) => row.connectionId === id);
+      // Name the card after the brokerage the money is actually at, not the
+      // pipe it arrives through — but only when the connection reaches exactly
+      // one. An aggregator spanning two brokerages has no single institution,
+      // so it falls back to naming the connector.
+      const institutions = [
+        ...new Set(
+          accountRows
+            .map((row) =>
+              institutionDisplayName(
+                accountById.get(row.id)?.institution,
+                connectionById.get(id)?.connectorId,
+              ),
+            )
+            .filter((value): value is string => !!value),
+        ),
+      ];
       return {
         id,
-        name: connectionById.get(id)?.displayName ?? null,
+        name:
+          connectionById.get(id)?.displayName ??
+          (institutions.length === 1 ? institutions[0] : null),
         mode: connectionById.get(id)!.mode,
         accountCount: accountRows.length,
         positionCount: holdings.filter((row) => row.kind === "position").length,

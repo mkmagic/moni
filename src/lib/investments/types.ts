@@ -7,6 +7,14 @@ export interface InvestmentSyncEnvelope {
   sourceAsOf: { value: string; precision: "date" | "timestamp" };
   accounts: Array<{
     sourceAccountRef: string;
+    /**
+     * The brokerage this account is held at, when the source names it. Only an
+     * aggregator knows this: SnapTrade reaches many brokerages, so "Charles
+     * Schwab" has to come from the payload rather than from the connector.
+     * Direct connectors leave it unset and the connector's own
+     * `institutionLabel` names the broker.
+     */
+    institutionName?: string;
     baseCurrency: string;
     positions: Array<{
       sourceSecurityId: string;
