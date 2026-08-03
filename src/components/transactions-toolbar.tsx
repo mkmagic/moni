@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 // From `lib`, never from `@/domain/transactions`: importing a runtime value
 // out of the domain layer pulls `pg` into the client bundle.
+import { SmartCategorizeButton } from "@/components/smart-categorize-button";
 import { NO_CATEGORY } from "@/lib/transactions/filters";
 import type { CategoryView } from "@/domain/categorization";
 import type { TableControls } from "@/lib/transactions/table-view";
@@ -25,6 +26,8 @@ interface TransactionsToolbarProps {
   serverFilters: ServerFilters;
   controls: TableControls;
   onControlsChange: (next: TableControls) => void;
+  smartCategorizeEnabled?: boolean;
+  unplacedCount?: number;
 }
 
 // Only the <select> needs this: there is no Select primitive yet, and the
@@ -49,6 +52,8 @@ export function TransactionsToolbar({
   serverFilters,
   controls,
   onControlsChange,
+  smartCategorizeEnabled = false,
+  unplacedCount = 0,
 }: TransactionsToolbarProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -132,12 +137,15 @@ export function TransactionsToolbar({
           </Field>
         </div>
 
-        {anyActive && (
-          <Button variant="ghost" onClick={clearAll} className="ml-auto px-3">
-            <X className="h-4 w-4" />
-            {"Clear"}
-          </Button>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          {anyActive && (
+            <Button variant="ghost" onClick={clearAll} className="px-3">
+              <X className="h-4 w-4" />
+              {"Clear"}
+            </Button>
+          )}
+          {smartCategorizeEnabled && <SmartCategorizeButton count={unplacedCount} />}
+        </div>
       </div>
 
       <div className="flex flex-wrap items-end gap-3">

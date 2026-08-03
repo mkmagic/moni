@@ -61,6 +61,8 @@ const MIGRATION_FILES = [
   "0017_enum-ownership-repair.sql",
   "0018_snaptrade_source.sql",
   "0019_snaptrade_sync_run_check.sql",
+  "0020_thin_umar.sql",
+  "0021_merchant_lookups_rls_and_roles.sql",
 ];
 
 /** Bookkeeping for which of MIGRATION_FILES this database has already seen.

@@ -101,6 +101,7 @@ export const OWNER_SCOPED_TABLES_DELETE_ORDER = [
   "investment_snapshot_details",
   "instrument_source_mappings",
   "instruments",
+  "merchant_lookups",
   "category_rejections",
   "entry_field_changelog",
   "entry_transactions",

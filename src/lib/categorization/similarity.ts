@@ -29,7 +29,7 @@
 
 /** Where a labeled example came from. Surfaced to the user as evidence, so a
  * suggestion can always be traced back to something they can go and change. */
-export type ExampleSource = "entry" | "rule" | "builtin";
+export type ExampleSource = "entry" | "rule" | "builtin" | "external";
 
 export interface LabeledExample {
   /** Already through `normalizeDescription` — this module never normalizes. */
@@ -83,7 +83,7 @@ function tokenize(matchText: string): string[] {
 /** Which source wins when one text carries labels from several. A rule the
  * user wrote is a stronger statement of intent than a transaction they filed,
  * which in turn beats something Moni shipped. */
-const SOURCE_RANK: Record<ExampleSource, number> = { rule: 0, entry: 1, builtin: 2 };
+const SOURCE_RANK: Record<ExampleSource, number> = { rule: 0, entry: 1, builtin: 2, external: 3 };
 
 interface Label {
   source: ExampleSource;

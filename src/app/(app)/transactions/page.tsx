@@ -1,5 +1,6 @@
 import { requireSession } from "@/domain/auth";
 import { requireOnboarded } from "@/domain/onboarding";
+import { getProfile } from "@/domain/profile";
 import { listEntries } from "@/domain/transactions";
 import { NO_CATEGORY } from "@/lib/transactions/filters";
 import { listCategories, suggestCategories } from "@/domain/categorization";
@@ -48,9 +49,10 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
   // One row past the window, so "there is more behind this" is something the
   // page knows rather than infers: a user with exactly WINDOW_SIZE matching
   // entries would otherwise be told to narrow a range that hides nothing.
-  const [window, categories] = await Promise.all([
+  const [window, categories, profile] = await Promise.all([
     listEntries(session, { ...filters, limit: WINDOW_SIZE + 1 }),
     listCategories(session),
+    getProfile(session.userId),
   ]);
   const capped = window.length > WINDOW_SIZE;
   const entries = capped ? window.slice(0, WINDOW_SIZE) : window;
@@ -76,6 +78,7 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
       }}
       windowSize={WINDOW_SIZE}
       capped={capped}
+      smartCategorizeEnabled={Boolean(profile?.smartCategorize)}
     />
   );
 }

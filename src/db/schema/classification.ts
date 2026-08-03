@@ -161,6 +161,27 @@ export const categoryRejections = pgTable(
   ],
 );
 
+export const merchantLookups = pgTable(
+  "merchant_lookups",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => users.id),
+    /** Tier-1. AAD-bound to this row's own id/column/version. */
+    matchTextCt: bytea("match_text_ct").notNull(),
+    /** A `builtin_key` from default-categories.ts, or null for "asked, and
+     * the model did not recognize it". Plaintext Tier-2 enum string. */
+    builtinKey: text("builtin_key"),
+    confidence: text("confidence").notNull(),
+    model: text("model").notNull(),
+    promptVersion: integer("prompt_version").notNull(),
+    version: integer("version").notNull().default(1),
+    ...timestamps,
+  },
+  (table) => [unique("merchant_lookups_owner_id_id_unique").on(table.ownerId, table.id)],
+);
+
 export const rules = pgTable(
   "rules",
   {

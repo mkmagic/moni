@@ -122,7 +122,12 @@ export default async function DashboardPage() {
         />
       </div>
 
-      <NeedsReviewCard entries={needsReview} categories={categories} suggestions={suggestions} />
+      <NeedsReviewCard
+        entries={needsReview}
+        categories={categories}
+        suggestions={suggestions}
+        smartCategorizeEnabled={Boolean(profile?.smartCategorize)}
+      />
 
       <Card>
         <CardHeader>

@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Money } from "@/components/money";
 import { CategorizeDialog } from "@/components/categorize-dialog";
 import { SuggestionChip } from "@/components/suggestion-chip";
+import { SmartCategorizeButton } from "@/components/smart-categorize-button";
 import type { CategoryView, SuggestionView } from "@/domain/categorization";
 import type { EntryView } from "@/domain/transactions";
 
@@ -13,6 +14,7 @@ interface NeedsReviewCardProps {
   categories: CategoryView[];
   /** Entry id -> proposed category. Rows without one just show no chip. */
   suggestions: Record<string, SuggestionView>;
+  smartCategorizeEnabled?: boolean;
 }
 
 /**
@@ -20,8 +22,18 @@ interface NeedsReviewCardProps {
  * clickable elements, so the card itself gets no hover glow — in this UI the
  * glow means "this card is a link" (docs/design/ui-and-feel.md).
  */
-export function NeedsReviewCard({ entries, categories, suggestions }: NeedsReviewCardProps) {
+export function NeedsReviewCard({
+  entries,
+  categories,
+  suggestions,
+  smartCategorizeEnabled = false,
+}: NeedsReviewCardProps) {
   const [selected, setSelected] = useState<EntryView | null>(null);
+
+  // Distinct uncategorized match texts that currently have no suggestion chip
+  const unplacedCount = new Set(
+    entries.filter((e) => !suggestions[e.id] && e.matchText !== "").map((e) => e.matchText),
+  ).size;
 
   // Actionable rows first. This card is a work queue, not a ledger — a row
   // you can clear in one click outranks one that needs the dialog. `sort` is
@@ -48,9 +60,12 @@ export function NeedsReviewCard({ entries, categories, suggestions }: NeedsRevie
   return (
     <>
       <Card>
-        <CardHeader className="flex-row items-baseline justify-between pt-6">
-          <CardTitle>Needs categorizing</CardTitle>
-          <span className="text-sm tabular-nums text-foreground">{entries.length}</span>
+        <CardHeader className="flex-row items-center justify-between pt-6">
+          <div className="flex items-center gap-3">
+            <CardTitle>Needs categorizing</CardTitle>
+            <span className="text-sm tabular-nums text-foreground">{entries.length}</span>
+          </div>
+          {smartCategorizeEnabled && <SmartCategorizeButton count={unplacedCount} />}
         </CardHeader>
         <CardContent className="px-0">
           <ul className="max-h-[22rem] divide-y divide-border overflow-y-auto">

@@ -33,6 +33,8 @@ export const users = pgTable("users", {
    * name predates the term — this is the "sync reminder" of CONTEXT.md, and
    * it never syncs anything on its own. */
   autoSyncOnLogin: boolean("auto_sync_on_login").notNull().default(false),
+  /** Opt-in: send unrecognized merchant names to an LLM model to suggest categories. */
+  smartCategorize: boolean("smart_categorize").notNull().default(false),
   /** Previous successful login — the gap that `autoSyncOnLogin` measures. */
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
   ...timestamps,

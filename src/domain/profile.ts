@@ -12,12 +12,14 @@ export interface UserProfile {
   displayName: string | null;
   baseCurrency: string;
   autoSyncOnLogin: boolean;
+  smartCategorize: boolean;
 }
 
 export interface ProfileUpdate {
   /** Trimmed; an empty string clears the name back to null. */
   displayName?: string | null;
   autoSyncOnLogin?: boolean;
+  smartCategorize?: boolean;
 }
 
 /** Reads the caller's own profile. RLS scopes this to their row. */
@@ -29,6 +31,7 @@ export async function getProfile(userId: string): Promise<UserProfile | null> {
         displayName: users.displayName,
         baseCurrency: users.baseCurrency,
         autoSyncOnLogin: users.autoSyncOnLogin,
+        smartCategorize: users.smartCategorize,
       })
       .from(users)
       .where(eq(users.id, userId))
@@ -47,12 +50,17 @@ export async function getProfile(userId: string): Promise<UserProfile | null> {
  * `credentials_ct` must bump the version; docs plan §E.2.)
  */
 export async function updateProfile(userId: string, update: ProfileUpdate): Promise<void> {
-  const patch: { displayName?: string | null; autoSyncOnLogin?: boolean } = {};
+  const patch: {
+    displayName?: string | null;
+    autoSyncOnLogin?: boolean;
+    smartCategorize?: boolean;
+  } = {};
   if (update.displayName !== undefined) {
     const trimmed = update.displayName?.trim() ?? "";
     patch.displayName = trimmed === "" ? null : trimmed;
   }
   if (update.autoSyncOnLogin !== undefined) patch.autoSyncOnLogin = update.autoSyncOnLogin;
+  if (update.smartCategorize !== undefined) patch.smartCategorize = update.smartCategorize;
   if (Object.keys(patch).length === 0) return;
 
   await withUser(userId, async (tx) => {
