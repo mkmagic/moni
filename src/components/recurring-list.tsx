@@ -40,7 +40,9 @@ export function RecurringList({ income, expenses, range }: Props) {
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
-          {"Category totals cover the selected period. Each payment's own figures cover all time."}
+          {
+            "Per-month figures spread each payee over its cadence and cover all time. Category totals cover the selected period."
+          }
         </p>
         <div className="flex gap-1">
           {RECURRING_RANGES.map((key) => (
@@ -63,8 +65,8 @@ export function RecurringList({ income, expenses, range }: Props) {
 
       {/* Income and expenses never share a total: "recurring income minus
           recurring payments" is not a number anyone wants. */}
-      <Section title="Recurring payments" groups={expenses} tone="negative" />
-      <Section title="Recurring income" groups={income} tone="positive" />
+      <Section title="Recurring payments" groups={expenses} tone="negative" range={range} />
+      <Section title="Recurring income" groups={income} tone="positive" range={range} />
 
       {income.length === 0 && expenses.length === 0 && (
         <Card className="px-5 pb-5 pt-6">
@@ -83,12 +85,15 @@ function Section({
   title,
   groups,
   tone,
+  range,
 }: {
   title: string;
   groups: RecurringGroup[];
   tone: "positive" | "negative";
+  range: RecurringRange;
 }) {
   if (groups.length === 0) return null;
+  const rangeLabel = RANGE_LABELS[range];
 
   return (
     <section className="flex flex-col gap-3">
@@ -97,10 +102,22 @@ function Section({
         <Card key={group.categoryId} className="flex flex-col gap-3 px-5 pb-4 pt-6">
           <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border pb-3">
             <bdi className="font-medium text-foreground">{group.categoryName}</bdi>
-            <Money
-              value={group.total}
-              className={cn("text-sm", tone === "positive" ? "text-positive" : "text-negative")}
-            />
+            {/* The per-month figure leads: it is what a budget is set from,
+                and unlike the range total it does not change when the range
+                control does. */}
+            <div className="flex items-baseline gap-3">
+              <span
+                className={cn("text-sm", tone === "positive" ? "text-positive" : "text-negative")}
+              >
+                {group.monthlyAverageIsEstimate && "≈ "}
+                <Money value={group.monthlyAverage} />
+                {" / mo"}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                <Money value={group.total} />
+                {` over ${rangeLabel.toLowerCase()}`}
+              </span>
+            </div>
           </div>
           <div className="flex flex-col divide-y divide-border">
             {group.rows.map((row) => (
@@ -165,6 +182,17 @@ function Row({ row, tone }: { row: RecurringRow; tone: "positive" | "negative" }
             {"avg "}
             <Money value={row.averageOfLast3} />
           </span>
+          {/* Only where it says something new. Compared on the amounts rather
+              than on the cadence: a monthly payee is the obvious case, but a
+              lone payment with an unknown cadence lands on the same figure
+              too, and that row was printing one number three times. */}
+          {row.monthlyAverage.amount !== row.averageOfLast3.amount && (
+            <span className="text-xs text-muted-foreground">
+              {row.monthlyAverageIsEstimate && "≈ "}
+              <Money value={row.monthlyAverage} />
+              {" / mo"}
+            </span>
+          )}
         </div>
       </button>
 

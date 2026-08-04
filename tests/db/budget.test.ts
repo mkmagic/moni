@@ -369,7 +369,6 @@ describe("getBudgetMonth", () => {
 
     expect((await getBudgetMonth(fx.session, MONTH)).pace).toBeNull();
 
-    const thisMonth = currentMonth();
     const live = await getBudgetMonth(fx.session, currentMonth());
     expect(live.pace).toBeGreaterThan(0);
     expect(live.pace).toBeLessThanOrEqual(1);
