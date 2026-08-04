@@ -60,13 +60,10 @@ export function BudgetScreen({
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-xl font-semibold text-foreground">Budget</h1>
-          <p className="text-sm text-muted-foreground">
-            {"What you meant to spend, against what you did."}
-          </p>
-        </div>
+      {/* The page title lives in the layout, beside the tabs. This row is the
+          month picker's own, so it stays right-aligned with nothing to its
+          left rather than sitting under an empty heading. */}
+      <div className="flex flex-wrap items-start justify-end gap-4">
         <div className="flex items-center gap-2">
           <MonthPicker
             monthLabel={monthLabel}
@@ -252,12 +249,6 @@ function Headline({ view, onEditIncome }: { view: BudgetMonthView; onEditIncome:
               {view.daysLeft === 0
                 ? "Last day of the month"
                 : `${view.daysLeft} day${view.daysLeft === 1 ? "" : "s"} left`}
-              {view.projectedSpend && (
-                <>
-                  {" · on track for "}
-                  <Money value={view.projectedSpend} />
-                </>
-              )}
             </span>
           )}
         </div>
@@ -265,8 +256,8 @@ function Headline({ view, onEditIncome }: { view: BudgetMonthView; onEditIncome:
         {/* No pace marker here, for the same reason Fixed rows don't get one:
             this total includes rent, which is 100% spent on the 1st by
             design. A marker over it would call every early month alarming.
-            The projection in the caption carries the pace signal instead, and
-            it knows to extrapolate only the everyday half. */}
+            The pace signal lives on the Everyday rows, where it means
+            something — this line states the plain fact and nothing more. */}
         <BudgetBar spent={view.budgetedSpend} available={view.ceilingTotal} pace={null} />
 
         <p className="text-sm text-muted-foreground">

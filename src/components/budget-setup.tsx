@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Money } from "@/components/money";
 import { cn } from "@/lib/utils";
+import { roundCeiling } from "@/lib/budget/round-ceiling";
 import type { BudgetProposal, CeilingSuggestion } from "@/domain/budget";
 
 interface BudgetSetupProps {
@@ -41,19 +42,6 @@ function decimalOrZero(value: string | undefined): Decimal {
   } catch {
     return new Decimal(0);
   }
-}
-
-/**
- * A suggested ceiling, as a number a person would actually choose.
- *
- * The domain layer returns the mean unrounded and must keep doing so — it is
- * forbidden from rounding (money-and-currency.md §3) — but ₪1,242.68333333
- * is not a target anyone sets. Rounding up to the next ₪10 happens here, at
- * the display edge, and up rather than to-nearest because a ceiling rounded
- * down is a ceiling the user's own history already breaks.
- */
-function roundCeiling(amount: string): string {
-  return new Decimal(amount).dividedBy(10).ceil().times(10).toFixed();
 }
 
 const MONTH_LABEL = new Intl.DateTimeFormat("en-GB", { month: "short" });

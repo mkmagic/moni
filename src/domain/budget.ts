@@ -155,16 +155,6 @@ export interface BudgetMonthView {
    * The only figure comparable with `ceilingTotal`, and so the only honest
    * numerator for "how much of my budget is gone". */
   budgetedSpend: Money;
-  /**
-   * What `budgetedSpend` reaches by month end at the current rate. Null for a
-   * finished month, which has no projecting left to do.
-   *
-   * Only **everyday** spending is extrapolated. Fixed costs arrive as lumps on
-   * a date of their own — rent lands on the 1st — so scaling them by the
-   * fraction of the month elapsed says a ₪4,500 rent paid on day 4 is heading
-   * for ₪34,875. They are counted once, at what they have already cost.
-   */
-  projectedSpend: Money | null;
   /** Days remaining in the month, today excluded. Null for a past month. */
   daysLeft: number | null;
   overBudgetCount: number;
@@ -646,21 +636,6 @@ export async function getBudgetMonth(session: Session, month: string): Promise<B
       plannedSavings: plannedIncome ? money(plannedIncome.minus(ceilingTotal), baseCurrency) : null,
       actualSavings: money(actualIncome.minus(spentTotal), baseCurrency),
       budgetedSpend: money(budgetedSpend, baseCurrency),
-      projectedSpend:
-        pace === null
-          ? null
-          : money(
-              // Scaled by the day counts themselves, not by `pace`. `pace` is
-              // a native float for the bar's geometry, and dividing a money
-              // value by 0.12903225806451613 would carry that float's error
-              // into a figure someone reads.
-              new Decimal(fixed.spent.amount).plus(
-                new Decimal(everyday.spent.amount)
-                  .times(daysIn(month))
-                  .dividedBy(Number(today.slice(8, 10))),
-              ),
-              baseCurrency,
-            ),
       daysLeft: pace === null ? null : daysLeftIn(today),
       overBudgetCount,
       pace,
@@ -891,6 +866,236 @@ export async function proposeBudget(
       income: earned.greaterThan(0) ? money(earned.dividedBy(months.length), baseCurrency) : null,
       uncategorized: money(uncategorized.negated().dividedBy(months.length), baseCurrency),
     };
+  });
+}
+
+// --- History ----------------------------------------------------------------
+
+/** Explicit locale, matching `domain/recurring.ts` — the chart is a client
+ * component, so the label has to be finished before it crosses the boundary. */
+const MONTH_LABEL = new Intl.DateTimeFormat("en-GB", { month: "short", year: "numeric" });
+
+/** One complete month, as the history chart draws it. */
+export interface BudgetHistoryPoint {
+  month: string;
+  /** Pre-formatted on the server — a chart is a client component, and one
+   * that called `toLocaleDateString()` would hydrate differently than it
+   * rendered (.agents/skills/ui-developer). */
+  label: string;
+  income: Money;
+  /** Every shekel that left, budgeted or not — the same figure the month
+   * page calls `spentTotal`, so the two screens cannot disagree. */
+  spent: Money;
+  /**
+   * What the budget allowed that month: the ceilings in force, each with
+   * whatever a rollover line had accrued into it. The accrual is the point —
+   * a ₪500/month insurance line that has been saving since January genuinely
+   * *was* allowed ₪6,000 in the month the annual charge landed, and a plan
+   * bar drawn from the bare ceiling would call that month a disaster.
+   */
+  planned: Money;
+}
+
+/** A ceiling that history says is set wrong, and by how much. */
+export interface CeilingVerdict {
+  /** Null is the residual — "everything else". */
+  categoryId: string | null;
+  categoryName: string;
+  color: string | null;
+  icon: string | null;
+  /** The ceiling in force now: the number the suggestion would replace. */
+  ceiling: Money;
+  averageSpend: Money;
+  /** `averageSpend - ceiling`. Positive means the ceiling is too low. */
+  variance: Money;
+  monthsObserved: number;
+  /** Of those months, how many finished over what was available. Kept beside
+   * the average because "over in 5 of 6" and "over in 1 of 6 by a lot" are
+   * different problems and the mean alone cannot tell them apart. */
+  monthsOver: number;
+  rollover: boolean;
+  direction: "under-budgeted" | "over-budgeted";
+}
+
+export interface BudgetHistoryView {
+  currency: string;
+  /** Oldest first. Empty until at least one complete month has been budgeted. */
+  months: BudgetHistoryPoint[];
+  /** Worst divergence first. */
+  verdicts: CeilingVerdict[];
+}
+
+/** How many complete months a line must have been in force before its average
+ * is worth arguing with. */
+const VERDICT_MIN_MONTHS = 3;
+
+/** A rollover line needs more. It exists precisely because its spending is
+ * *not* monthly, so a window shallower than its cycle sees only the quiet
+ * months and would confidently recommend cutting the ceiling that pays for
+ * the charge it cannot see. */
+const VERDICT_MIN_ROLLOVER_MONTHS = 6;
+
+/** How far the average has to sit from the ceiling before it is worth saying
+ * anything, as a fraction of the ceiling. Below this it is ordinary
+ * month-to-month variation, not a ceiling set wrong. */
+const VERDICT_THRESHOLD = new Decimal("0.15");
+
+interface LineMonth {
+  month: string;
+  /** The bare ceiling in force that month. */
+  ceiling: Decimal;
+  /** `ceiling` plus anything a rollover line had accrued — what that month's
+   * spending was actually measured against. */
+  available: Decimal;
+  spent: Decimal;
+}
+
+/**
+ * One ceiling's whole run through the window: what it allowed and what it
+ * cost, in each month it was in force.
+ *
+ * A single forward pass, deliberately reproducing `carriedInto`'s rule rather
+ * than calling it once per month: a month whose ceiling had rollover **off**
+ * contributes nothing to the balance and does not reset it, and a month with
+ * no ceiling at all does neither. Those are the semantics the month page
+ * ships, and a history that used any other rule would restate months the user
+ * has already read.
+ */
+function lineHistory(
+  key: string,
+  months: string[],
+  ceilingRows: CeilingRow[],
+  flows: MonthlyFlows,
+  cats: Map<string, CategoryRow>,
+): LineMonth[] {
+  const out: LineMonth[] = [];
+  let carried = new Decimal(0);
+  for (const month of months) {
+    const inForce = ceilingsInForce(ceilingRows, month).get(key);
+    if (!inForce) continue;
+    // The residual is defined against whatever was budgeted in *that* month,
+    // not today — budgeting Pharmacy now must not rewrite what March's
+    // "everything else" contained.
+    const budgeted = budgetedIdsIn(ceilingRows, month);
+    const spent =
+      key === RESIDUAL_KEY
+        ? residualSpentOn(month, flows, budgeted, cats)
+        : spentOn(key, month, flows, budgeted, cats);
+    const available = inForce.rollover ? inForce.amount.plus(carried) : inForce.amount;
+    out.push({ month, ceiling: inForce.amount, available, spent });
+    if (inForce.rollover) carried = carried.plus(inForce.amount).minus(spent);
+  }
+  return out;
+}
+
+/**
+ * Income, spending and the plan for every complete month a budget governed,
+ * plus a verdict on each ceiling that history says is set wrong.
+ *
+ * The window starts at the first month any ceiling took effect — before that
+ * there is no plan to draw a bar against — and stops at the last **complete**
+ * month. A month still being lived has partial income and partial spending;
+ * drawn beside whole months it reads as a windfall followed by a collapse.
+ */
+export async function getBudgetHistory(session: Session): Promise<BudgetHistoryView> {
+  const { userId, dataKey, baseCurrency } = session;
+
+  return withUser(userId, async (tx) => {
+    const [cats, ceilingRows] = await Promise.all([loadCategories(tx), loadCeilings(tx, dataKey)]);
+
+    // `loadCeilings` orders by `effective_from`, so the first row is the
+    // earliest month any budget existed.
+    const firstMonth = ceilingRows[0]?.effectiveFrom.slice(0, 7);
+    const lastMonth = shiftMonth(currentMonth(), -1);
+    if (!firstMonth || firstMonth > lastMonth) {
+      return { currency: baseCurrency, months: [], verdicts: [] };
+    }
+
+    const months = monthRange(firstMonth, lastMonth);
+    const flows = await loadMonthlyFlows(tx, dataKey, cats, firstMonth, lastMonth);
+
+    // Every ceiling that was in force at any point in the window, each walked
+    // once. Both the chart and the verdicts read these same series, so the
+    // plan bar and the advice underneath it can never disagree.
+    const keys = new Set<string>();
+    for (const month of months) {
+      for (const key of ceilingsInForce(ceilingRows, month).keys()) keys.add(key);
+    }
+    const lines = new Map(
+      [...keys].map((key) => [key, lineHistory(key, months, ceilingRows, flows, cats)]),
+    );
+
+    const planned = new Map(months.map((month) => [month, new Decimal(0)]));
+    const spent = new Map(months.map((month) => [month, new Decimal(0)]));
+    for (const line of lines.values()) {
+      for (const m of line) {
+        planned.set(m.month, planned.get(m.month)!.plus(m.available));
+        spent.set(m.month, spent.get(m.month)!.plus(m.spent));
+      }
+    }
+    // Spending no ceiling reached still left the account. Counted only while
+    // no residual ceiling governs it, or the residual's own line above would
+    // have counted it already.
+    for (const month of months) {
+      if (ceilingsInForce(ceilingRows, month).has(RESIDUAL_KEY)) continue;
+      const uncovered = residualSpentOn(month, flows, budgetedIdsIn(ceilingRows, month), cats);
+      spent.set(month, spent.get(month)!.plus(uncovered));
+    }
+
+    const points: BudgetHistoryPoint[] = months.map((month) => ({
+      month,
+      label: MONTH_LABEL.format(new Date(`${monthStart(month)}T00:00:00Z`)),
+      income: money(flows.income.get(month) ?? new Decimal(0), baseCurrency),
+      spent: money(spent.get(month)!, baseCurrency),
+      planned: money(planned.get(month)!, baseCurrency),
+    }));
+
+    // Only lines still in force are worth a verdict: the fix writes a new
+    // ceiling from this month forward, and there is nothing to re-tune on a
+    // line the user has already stopped budgeting.
+    const live = ceilingsInForce(ceilingRows, currentMonth());
+    const verdicts: CeilingVerdict[] = [];
+
+    for (const [key, ceiling] of live) {
+      if (!ceiling.amount.isPositive()) continue; // no ceiling to take a fraction of
+      const series = lines.get(key) ?? [];
+      const minMonths = ceiling.rollover ? VERDICT_MIN_ROLLOVER_MONTHS : VERDICT_MIN_MONTHS;
+      if (series.length < minMonths) continue;
+      // A rollover line whose window is all quiet months is one whose charge
+      // simply has not landed yet. Saying anything about it would be advice
+      // drawn from the absence of evidence.
+      if (ceiling.rollover && series.every((m) => m.spent.isZero())) continue;
+
+      const category = key === RESIDUAL_KEY ? null : cats.get(key);
+      if (key !== RESIDUAL_KEY && !category) continue; // category deleted under the ceiling
+
+      const total = series.reduce((sum, m) => sum.plus(m.spent), new Decimal(0));
+      const average = total.dividedBy(series.length);
+      const variance = average.minus(ceiling.amount);
+      if (variance.abs().lessThan(ceiling.amount.times(VERDICT_THRESHOLD))) continue;
+
+      verdicts.push({
+        categoryId: key === RESIDUAL_KEY ? null : key,
+        categoryName: category?.name ?? RESIDUAL_NAME,
+        color: category?.color ?? null,
+        icon: category?.icon ?? null,
+        ceiling: money(ceiling.amount, baseCurrency),
+        averageSpend: money(average, baseCurrency),
+        variance: money(variance, baseCurrency),
+        monthsObserved: series.length,
+        monthsOver: series.filter((m) => m.spent.greaterThan(m.available)).length,
+        rollover: ceiling.rollover,
+        direction: variance.isPositive() ? "under-budgeted" : "over-budgeted",
+      });
+    }
+
+    // Worst first — a ₪40 drift on a ₪200 line clears the threshold, and it
+    // is not the line anyone should look at first.
+    verdicts.sort((a, b) =>
+      new Decimal(b.variance.amount).abs().comparedTo(new Decimal(a.variance.amount).abs()),
+    );
+
+    return { currency: baseCurrency, months: points, verdicts };
   });
 }
 

@@ -24,6 +24,7 @@ import {
   createCeilings,
   currentMonth,
   endCeiling,
+  getBudgetHistory,
   getBudgetMonth,
   getBudgetSummary,
   listCeilings,
@@ -910,7 +911,7 @@ describe("the month's headline figures", () => {
     expect(view.spentTotal.amount).toBe("1700");
   });
 
-  it("has no projection or day count for a finished month", async () => {
+  it("has no day count or pace for a finished month", async () => {
     const fx = await freshFixture("headline-past");
     const groceries = await expenseCategory(fx, "Groceries");
     await setCeiling(fx.session, {
@@ -922,13 +923,12 @@ describe("the month's headline figures", () => {
     await addEntry(fx, `${MONTH}-04`, "-1200", groceries);
 
     const view = await getBudgetMonth(fx.session, MONTH);
-    expect(view.projectedSpend).toBeNull();
     expect(view.daysLeft).toBeNull();
     expect(view.pace).toBeNull();
   });
 
-  it("projects the current month's spending forward at the rate so far", async () => {
-    const fx = await freshFixture("headline-projection");
+  it("counts down the days on the current month", async () => {
+    const fx = await freshFixture("headline-current");
     const groceries = await expenseCategory(fx, "Groceries");
     const thisMonth = currentMonth();
     await setCeiling(fx.session, {
@@ -942,30 +942,6 @@ describe("the month's headline figures", () => {
     const view = await getBudgetMonth(fx.session, thisMonth);
     expect(view.pace).not.toBeNull();
     expect(view.daysLeft).not.toBeNull();
-    // Spend divided by the fraction of the month elapsed, so the projection
-    // is never below what has already been spent.
-    expect(Number(view.projectedSpend?.amount)).toBeGreaterThanOrEqual(100);
-  });
-});
-
-describe("the projection", () => {
-  it("counts a fixed cost once instead of extrapolating it", async () => {
-    const fx = await freshFixture("projection-fixed");
-    const rent = await expenseCategory(fx, "Rent");
-    await markRecurring(fx, rent);
-    const thisMonth = currentMonth();
-    await setCeiling(fx.session, {
-      categoryId: rent,
-      amount: "4500",
-      effectiveFrom: thisMonth,
-      rollover: false,
-    });
-    // Paid on the 1st. Scaling it by the fraction of the month elapsed would
-    // say a ₪4,500 rent is heading for tens of thousands.
-    await addEntry(fx, `${thisMonth}-01`, "-4500", rent);
-
-    const view = await getBudgetMonth(fx.session, thisMonth);
-    expect(view.projectedSpend?.amount).toBe("4500");
   });
 });
 
@@ -1165,5 +1141,203 @@ describe("the residual ceiling", () => {
     expect(await listCeilings(fx.session, MONTH)).toHaveLength(0);
     // The month it governed keeps it.
     expect(await listCeilings(fx.session, PRIOR)).toHaveLength(1);
+  });
+});
+
+// The history tab (issue #69 part C): whole months only, a plan bar that
+// knows what a rollover line had saved up, and a verdict on the ceilings
+// whose typical month sits well clear of the number the user set.
+//
+// Every window here is anchored to the wall clock, because the domain layer's
+// is — so the months are derived rather than hardcoded, and these stay true
+// in January.
+describe("getBudgetHistory", () => {
+  /** Every complete month a ceiling set in `from` would be observed over. */
+  const windowFrom = (from: string) => monthRange(from, shiftMonth(currentMonth(), -1));
+
+  /** A window of exactly `count` complete months, ending last month. */
+  const windowOf = (count: number) => shiftMonth(currentMonth(), -count);
+
+  it("has nothing to show before any ceiling existed", async () => {
+    const fx = await freshFixture("history-empty");
+    const view = await getBudgetHistory(fx.session);
+    expect(view.months).toEqual([]);
+    expect(view.verdicts).toEqual([]);
+  });
+
+  it("starts at the first budgeted month and stops before the month being lived", async () => {
+    const fx = await freshFixture("history-window");
+    const groceries = await expenseCategory(fx, "Groceries");
+    await setCeiling(fx.session, {
+      categoryId: groceries,
+      amount: "2000",
+      effectiveFrom: MONTH,
+      rollover: false,
+    });
+
+    const view = await getBudgetHistory(fx.session);
+    expect(view.months.map((m) => m.month)).toEqual(windowFrom(MONTH));
+    // The current month is deliberately absent: it is still being lived, and
+    // its partial spending drawn beside whole months reads as a windfall.
+    expect(view.months.map((m) => m.month)).not.toContain(currentMonth());
+  });
+
+  it("counts what a rollover line has accrued into the month's plan", async () => {
+    const fx = await freshFixture("history-cadence");
+    const insurance = await expenseCategory(fx, "Insurance");
+    await setCeiling(fx.session, {
+      categoryId: insurance,
+      amount: "500",
+      effectiveFrom: MONTH,
+      rollover: true,
+    });
+
+    const view = await getBudgetHistory(fx.session);
+    // Nothing spent, so the accrual is the whole story: the plan grows by the
+    // ceiling every month, which is what makes the month the annual charge
+    // finally lands read as budgeted rather than as a disaster.
+    expect(view.months[0].planned.amount).toBe("500");
+    expect(view.months[1].planned.amount).toBe("1000");
+    expect(view.months[2].planned.amount).toBe("1500");
+  });
+
+  it("agrees with the month page about what a month cost", async () => {
+    const fx = await freshFixture("history-reconciles");
+    const groceries = await expenseCategory(fx, "Groceries");
+    const hobbies = await expenseCategory(fx, "Hobbies");
+    await setCeiling(fx.session, {
+      categoryId: groceries,
+      amount: "2000",
+      effectiveFrom: MONTH,
+      rollover: false,
+    });
+    await addEntry(fx, `${MONTH}-04`, "-1200", groceries);
+    // No ceiling reaches this one, so it is unbudgeted — and it still left
+    // the account, so the expense bar has to include it.
+    await addEntry(fx, `${MONTH}-06`, "-500", hobbies);
+    await addEntry(fx, `${MONTH}-01`, "9000", null);
+
+    const [history, month] = await Promise.all([
+      getBudgetHistory(fx.session),
+      getBudgetMonth(fx.session, MONTH),
+    ]);
+    const point = history.months.find((m) => m.month === MONTH)!;
+    expect(point.spent.amount).toBe(month.spentTotal.amount);
+    expect(point.spent.amount).toBe("1700");
+    expect(point.income.amount).toBe(month.actualIncome.amount);
+    expect(point.planned.amount).toBe("2000");
+  });
+
+  it("flags a ceiling the user reliably overspends, and suggests what they spend", async () => {
+    const fx = await freshFixture("history-too-low");
+    const groceries = await expenseCategory(fx, "Groceries");
+    const from = windowOf(3);
+    await setCeiling(fx.session, {
+      categoryId: groceries,
+      amount: "1000",
+      effectiveFrom: from,
+      rollover: false,
+    });
+    for (const month of windowFrom(from)) await addEntry(fx, `${month}-04`, "-1500", groceries);
+
+    const view = await getBudgetHistory(fx.session);
+    expect(view.verdicts).toHaveLength(1);
+    const [verdict] = view.verdicts;
+    expect(verdict.categoryId).toBe(groceries);
+    expect(verdict.direction).toBe("under-budgeted");
+    expect(verdict.averageSpend.amount).toBe("1500");
+    expect(verdict.variance.amount).toBe("500");
+    expect(verdict.monthsObserved).toBe(3);
+    expect(verdict.monthsOver).toBe(3);
+  });
+
+  it("flags a ceiling nobody comes close to using", async () => {
+    const fx = await freshFixture("history-too-high");
+    const groceries = await expenseCategory(fx, "Groceries");
+    const from = windowOf(3);
+    await setCeiling(fx.session, {
+      categoryId: groceries,
+      amount: "1000",
+      effectiveFrom: from,
+      rollover: false,
+    });
+    for (const month of windowFrom(from)) await addEntry(fx, `${month}-04`, "-400", groceries);
+
+    const view = await getBudgetHistory(fx.session);
+    expect(view.verdicts).toHaveLength(1);
+    expect(view.verdicts[0].direction).toBe("over-budgeted");
+    expect(view.verdicts[0].variance.amount).toBe("-600");
+    expect(view.verdicts[0].monthsOver).toBe(0);
+  });
+
+  it("stays quiet about ordinary month-to-month variation", async () => {
+    const fx = await freshFixture("history-within-threshold");
+    const groceries = await expenseCategory(fx, "Groceries");
+    const from = windowOf(3);
+    await setCeiling(fx.session, {
+      categoryId: groceries,
+      amount: "1000",
+      effectiveFrom: from,
+      rollover: false,
+    });
+    // 10% over on average — inside the 15% band, so it is variation rather
+    // than a ceiling set wrong, and saying something would be noise.
+    for (const month of windowFrom(from)) await addEntry(fx, `${month}-04`, "-1100", groceries);
+
+    const view = await getBudgetHistory(fx.session);
+    expect(view.verdicts).toEqual([]);
+  });
+
+  it("says nothing about a line it has barely seen", async () => {
+    const fx = await freshFixture("history-thin");
+    const groceries = await expenseCategory(fx, "Groceries");
+    const from = windowOf(2);
+    await setCeiling(fx.session, {
+      categoryId: groceries,
+      amount: "1000",
+      effectiveFrom: from,
+      rollover: false,
+    });
+    for (const month of windowFrom(from)) await addEntry(fx, `${month}-04`, "-5000", groceries);
+
+    const view = await getBudgetHistory(fx.session);
+    // Two months cannot tell a habit from a coincidence.
+    expect(view.verdicts).toEqual([]);
+  });
+
+  it("does not tell a user to cut a rollover line whose charge has not landed", async () => {
+    const fx = await freshFixture("history-rollover-quiet");
+    const insurance = await expenseCategory(fx, "Insurance");
+    await setCeiling(fx.session, {
+      categoryId: insurance,
+      amount: "500",
+      effectiveFrom: windowOf(6),
+      rollover: true,
+    });
+
+    // Six quiet months look exactly like a ceiling set far too high, and the
+    // advice — "lower it" — would break the very month it is saving for.
+    const view = await getBudgetHistory(fx.session);
+    expect(view.verdicts).toEqual([]);
+  });
+
+  it("leaves a line the user has stopped budgeting out of the verdicts", async () => {
+    const fx = await freshFixture("history-ended");
+    const groceries = await expenseCategory(fx, "Groceries");
+    const from = windowOf(4);
+    await setCeiling(fx.session, {
+      categoryId: groceries,
+      amount: "1000",
+      effectiveFrom: from,
+      rollover: false,
+    });
+    for (const month of windowFrom(from)) await addEntry(fx, `${month}-04`, "-1500", groceries);
+    await endCeiling(fx.session, groceries, currentMonth());
+
+    const view = await getBudgetHistory(fx.session);
+    // The chart still shows the months it governed — they happened — but
+    // there is no ceiling left to re-tune.
+    expect(view.months.map((m) => m.month)).toEqual(windowFrom(from));
+    expect(view.verdicts).toEqual([]);
   });
 });
