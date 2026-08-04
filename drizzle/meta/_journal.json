@@ -141,6 +141,20 @@
       "when": 1785588190862,
       "tag": "0019_snaptrade_sync_run_check",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1785780453492,
+      "tag": "0020_thin_umar",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1785780457481,
+      "tag": "0021_merchant_lookups_rls_and_roles",
+      "breakpoints": true
     }
   ]
 }

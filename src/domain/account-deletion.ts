@@ -51,6 +51,7 @@ import {
   investmentSnapshotDetails,
   investmentSnapshotPositions,
   investmentSourceEvidence,
+  merchantLookups,
   merchants,
   ruleActions,
   ruleConditions,
@@ -101,6 +102,7 @@ export async function deleteAccount(
     await tx.delete(instrumentSourceMappings).where(eq(instrumentSourceMappings.ownerId, userId));
     await tx.delete(instruments).where(eq(instruments.ownerId, userId));
     await tx.delete(categoryRejections).where(eq(categoryRejections.ownerId, userId));
+    await tx.delete(merchantLookups).where(eq(merchantLookups.ownerId, userId));
     await tx.delete(entryFieldChangelog).where(eq(entryFieldChangelog.ownerId, userId));
     await tx.delete(entryTransactions).where(eq(entryTransactions.ownerId, userId));
     await tx.delete(syncStaging).where(eq(syncStaging.ownerId, userId));

@@ -16,10 +16,11 @@ deployment.
 
 ## How this differs from the egress ADR 0003 already permits
 
-ADR 0003 allows a match text to be sent to an external categorization source.
-That is a **server-side** call, one per distinct merchant string for all time,
-carrying no person, no sum and no timeline — and it is per-user opt-in and off
-by default. Browser-fetched logos invert every one of those properties: they are
+ADR 0003 allows a *merchant* match text to be sent to an external
+categorization source. That is a **server-side** call, one per distinct
+merchant string for all time, carrying no sum and no timeline, under a
+pseudonym the user controls — and it is per-user opt-in and off by default.
+Browser-fetched logos invert every one of those properties: they are
 client-side, per-render rather than per-merchant, they carry the user's own IP,
 and nobody opted into them.
 

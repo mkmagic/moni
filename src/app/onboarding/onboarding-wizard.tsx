@@ -60,7 +60,7 @@ export function OnboardingWizard({ today, hasPasskey }: { today: string; hasPass
     );
   }
 
-  return <SyncReminderStep onFinish={() => router.push("/dashboard")} />;
+  return <AdditionalSettingsStep onFinish={() => router.push("/dashboard")} />;
 }
 
 /**
@@ -137,16 +137,47 @@ function PasskeyStep({ onDone, onSchwab }: { onDone: () => void; onSchwab: () =>
   );
 }
 
+interface SettingOption {
+  key: "autoSyncOnLogin" | "smartCategorize";
+  id: string;
+  title: string;
+  description: string;
+  defaultValue: boolean;
+}
+
+const ADDITIONAL_SETTINGS: SettingOption[] = [
+  {
+    key: "autoSyncOnLogin",
+    id: "onboardingSyncReminder",
+    title: "Remind me to sync when I sign in",
+    description:
+      "After you've been away a while, Moni offers to refresh every connection. You'll still confirm with your password — that's what unlocks your stored bank logins, and it never happens without you.",
+    defaultValue: true,
+  },
+  {
+    key: "smartCategorize",
+    id: "onboardingSmartCategorize",
+    title: "Smart Categorize with AI",
+    description:
+      "Send unrecognized merchant names to an AI model to suggest categories. Merchant names only — never amounts, dates, or accounts. Smart Categorization is triggered manually.",
+    defaultValue: true,
+  },
+];
+
 /**
- * The last onboarding step: opt into the sync reminder. Pre-selected on —
- * it only ever produces an OFFER to sync (never a silent one, and never a use
- * of a stored bank login without the password), so the cost of a default-on
- * is one dismissible card after a long absence.
+ * The last onboarding step: "Additional Settings before we start..."
+ * Modular toggles for initial profile preferences.
  */
-function SyncReminderStep({ onFinish }: { onFinish: () => void }) {
-  const [enabled, setEnabled] = useState(true);
+function AdditionalSettingsStep({ onFinish }: { onFinish: () => void }) {
+  const [settings, setSettings] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(ADDITIONAL_SETTINGS.map((s) => [s.key, s.defaultValue])),
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  function toggle(key: string, value: boolean) {
+    setSettings((prev) => ({ ...prev, [key]: value }));
+  }
 
   async function finish() {
     setSaving(true);
@@ -155,7 +186,7 @@ function SyncReminderStep({ onFinish }: { onFinish: () => void }) {
       const res = await fetch("/api/profile", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ autoSyncOnLogin: enabled }),
+        body: JSON.stringify(settings),
       });
       if (!res.ok) throw new Error();
       onFinish();
@@ -167,32 +198,41 @@ function SyncReminderStep({ onFinish }: { onFinish: () => void }) {
 
   return (
     <Card>
-      <div className="flex flex-col gap-5 p-6">
+      <div className="flex flex-col gap-6 p-6">
         <div>
-          <h2 className="text-base font-semibold text-foreground">One last thing</h2>
+          <h2 className="text-base font-semibold text-foreground">
+            Additional Settings before we start…
+          </h2>
           <p className="text-sm text-muted-foreground">
-            You can change this whenever you like, under Settings.
+            You can change these whenever you like, under Settings.
           </p>
         </div>
-        <div className="flex items-start justify-between gap-6">
-          <div className="flex flex-col gap-1.5">
-            <span id="onboardingSyncReminder" className="text-sm font-medium text-foreground">
-              Remind me to sync when I sign in
-            </span>
-            <span className="text-xs leading-relaxed text-muted-foreground">
-              {
-                "After you've been away a while, Moni offers to refresh every connection. You'll still confirm with your password — that's what unlocks your stored bank logins, and it never happens without you."
-              }
-            </span>
-          </div>
-          <Switch
-            checked={enabled}
-            onCheckedChange={setEnabled}
-            aria-labelledby="onboardingSyncReminder"
-            className="mt-0.5"
-          />
+
+        <div className="flex flex-col gap-6 divide-y divide-border">
+          {ADDITIONAL_SETTINGS.map((item, idx) => (
+            <div key={item.key} className={idx > 0 ? "pt-6" : ""}>
+              <div className="flex items-start justify-between gap-6">
+                <div className="flex flex-col gap-1.5">
+                  <span id={item.id} className="text-sm font-medium text-foreground">
+                    {item.title}
+                  </span>
+                  <span className="text-xs leading-relaxed text-muted-foreground">
+                    {item.description}
+                  </span>
+                </div>
+                <Switch
+                  checked={Boolean(settings[item.key])}
+                  onCheckedChange={(checked) => toggle(item.key, checked)}
+                  aria-labelledby={item.id}
+                  className="mt-0.5"
+                />
+              </div>
+            </div>
+          ))}
         </div>
+
         {error && <p className="text-xs text-negative">{error}</p>}
+
         <Button type="button" onClick={() => void finish()} disabled={saving} className="self-end">
           {saving ? "Saving…" : "Go to dashboard"}
         </Button>

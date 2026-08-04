@@ -213,6 +213,15 @@ async function seedFullOwner(label: string): Promise<OwnerFixture> {
     matchTextCt: ct(`${label}-rejected`),
   });
 
+  await elevatedDb.insert(schema.merchantLookups).values({
+    ownerId: userId,
+    matchTextCt: ct(`${label}-lookup`),
+    builtinKey: "food-groceries",
+    confidence: "high",
+    model: "test-model",
+    promptVersion: 1,
+  });
+
   const [rule] = await elevatedDb
     .insert(schema.rules)
     .values({ ownerId: userId, name: `${label}-rule`, resourceType: "entry" })

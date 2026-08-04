@@ -62,9 +62,11 @@ export function SuggestionChip({ entryId, matchText, suggestion }: SuggestionChi
       ? "matches your rule"
       : suggestion.matchedSource === "builtin"
         ? "looks like"
-        : suggestion.supportCount > 1
-          ? `filed this way ${suggestion.supportCount}× for`
-          : "filed this way for";
+        : suggestion.matchedSource === "external"
+          ? "suggested by AI for"
+          : suggestion.supportCount > 1
+            ? `filed this way ${suggestion.supportCount}× for`
+            : "filed this way for";
 
   return (
     <span

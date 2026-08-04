@@ -20,6 +20,7 @@
 // batch is evaluated against it — the same decrypt-then-compute trade-off
 // already accepted by transactions.ts and dashboard.ts.
 import { randomUUID } from "node:crypto";
+import Decimal from "decimal.js";
 import { and, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { withUser } from "@/db/client";
 import {
@@ -28,12 +29,23 @@ import {
   categoryRejections,
   entries,
   entryFieldChangelog,
+  merchantLookups,
   ruleActions,
   ruleConditions,
   rules,
+  users,
 } from "@/db/schema";
 import type { Session } from "@/lib/auth/session-store";
 import { normalizeDescription } from "@/lib/categorization/normalize";
+import {
+  blocksEgress,
+  classifyBatch,
+  getLlmConfig,
+  guarded,
+  PROMPT_VERSION,
+  UNKNOWN,
+  type Answer,
+} from "@/lib/categorization/external";
 import {
   evaluate,
   evaluateBuiltins,
@@ -107,6 +119,20 @@ export class CategoryHasChildrenError extends Error {
   constructor(count: number) {
     super(`Category still has ${count} subcategor${count === 1 ? "y" : "ies"}`);
     this.name = "CategoryHasChildrenError";
+  }
+}
+
+export class SmartCategorizeDisabledError extends Error {
+  constructor() {
+    super("Smart categorization is disabled in user profile");
+    this.name = "SmartCategorizeDisabledError";
+  }
+}
+
+export class LlmNotConfiguredError extends Error {
+  constructor() {
+    super("No API key configured for smart categorization");
+    this.name = "LlmNotConfiguredError";
   }
 }
 
@@ -589,21 +615,50 @@ export async function suggestCategories(
   const { userId, dataKey } = session;
   return withUser(userId, async (tx) => {
     const examples = await collectLabeledExamples(tx, dataKey);
-    if (examples.length === 0) return {};
-
-    // TWO corpora, tried in order, for the same reason layer 2 runs after
-    // layer 1: the user's own evidence outranks anything Moni shipped.
-    // Merging them would not preserve that, because cosine favours SHORT
-    // corpus texts — the one-token built-in "שופרסל" outscores this
-    // household's own "שופרסל דיל רמת גן" against any query carrying the
-    // brand. Where the two disagree, merging would let a shipped default
-    // overrule how the user has consistently filed the merchant.
+    const { builtinKeyToId } = await loadContext(tx, dataKey);
     const ownCorpus = buildCorpus(examples.filter((e) => e.source !== "builtin"));
     const builtinCorpus = buildCorpus(examples.filter((e) => e.source === "builtin"));
 
     const suppressed = await loadRejections(tx, dataKey);
-    const catRows = await tx.select({ id: categories.id, name: categories.name }).from(categories);
-    const catName = new Map(catRows.map((c) => [c.id, c.name]));
+    const catRows = await tx
+      .select({
+        id: categories.id,
+        name: categories.name,
+        classification: categories.classification,
+      })
+      .from(categories);
+    const catInfo = new Map(catRows.map((c) => [c.id, c]));
+
+    // Load merchant_lookups cache once for the batch
+    const lookupRows = await tx.select().from(merchantLookups);
+    const externalLookups = new Map<string, string | null>();
+    for (const row of lookupRows) {
+      const matchText = decText(dataKey, row.matchTextCt, row.id, "match_text_ct", row.version);
+      if (matchText !== null) {
+        externalLookups.set(matchText, row.builtinKey);
+      }
+    }
+
+    // Pre-query entry amounts for direction guard on external suggestions
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const targetIds = targets.map((t) => t.id).filter((id) => UUID_REGEX.test(id));
+    const targetEntryRows =
+      targetIds.length > 0
+        ? await tx
+            .select({
+              id: entries.id,
+              enteredAmountCt: entries.enteredAmountCt,
+              version: entries.version,
+            })
+            .from(entries)
+            .where(inArray(entries.id, targetIds))
+        : [];
+    const entryAmountIsNegative = new Map<string, boolean>();
+    for (const row of targetEntryRows) {
+      const amountStr =
+        decText(dataKey, row.enteredAmountCt, row.id, "entered_amount_ct", row.version) ?? "0";
+      entryAmountIsNegative.set(row.id, new Decimal(amountStr).isNegative());
+    }
 
     /** The best candidate in one corpus that clears the bar and has not been
      * rejected — a rejected top candidate falls through to the next. */
@@ -611,11 +666,11 @@ export async function suggestCategories(
       for (const candidate of suggest(matchText, corpus)) {
         if (candidate.score < MIN_SUGGESTION_SCORE) break;
         if (suppressed.has(rejectionKey(matchText, candidate.categoryId))) continue;
-        const name = catName.get(candidate.categoryId);
-        if (!name) continue;
+        const info = catInfo.get(candidate.categoryId);
+        if (!info) continue;
         return {
           categoryId: candidate.categoryId,
-          categoryName: name,
+          categoryName: info.name,
           matchedText: candidate.matchedText,
           matchedSource: candidate.matchedSource,
           supportCount: candidate.supportCount,
@@ -624,17 +679,55 @@ export async function suggestCategories(
       return null;
     }
 
-    // Many rows on a page share a match text; score each distinct text once.
-    const byText = new Map<string, SuggestionView | null>();
+    function pickExternal(targetId: string, matchText: string): SuggestionView | null {
+      if (!externalLookups.has(matchText)) return null;
+      const builtinKey = externalLookups.get(matchText);
+      if (!builtinKey) return null; // asked and model returned unknown
+
+      const categoryId = builtinKeyToId.get(builtinKey);
+      if (!categoryId) return null; // builtin_key does not resolve to a category row
+
+      if (suppressed.has(rejectionKey(matchText, categoryId))) return null;
+
+      const info = catInfo.get(categoryId);
+      if (!info) return null;
+
+      // Direction guard
+      const isNegative = entryAmountIsNegative.get(targetId);
+      if (isNegative !== undefined) {
+        if (isNegative && info.classification === "income") return null;
+        if (!isNegative && info.classification === "expense") return null;
+      }
+
+      return {
+        categoryId,
+        categoryName: info.name,
+        matchedText: matchText,
+        matchedSource: "external",
+        supportCount: 0,
+      };
+    }
+
+    // pick() is text-only — same matchText always yields the same result,
+    // so we cache it by matchText to avoid re-running suggest() for every
+    // entry sharing a merchant.  pickExternal depends on the entry's amount
+    // direction, so it runs per-entry (but is O(1) — just a Map lookup).
+    const pickCache = new Map<string, SuggestionView | null>();
     const out: Record<string, SuggestionView> = {};
 
     for (const target of targets) {
       if (target.matchText === "") continue;
 
-      let view = byText.get(target.matchText);
-      if (view === undefined) {
-        view = pick(target.matchText, ownCorpus) ?? pick(target.matchText, builtinCorpus);
-        byText.set(target.matchText, view);
+      if (!pickCache.has(target.matchText)) {
+        pickCache.set(
+          target.matchText,
+          pick(target.matchText, ownCorpus) ?? pick(target.matchText, builtinCorpus),
+        );
+      }
+      let view = pickCache.get(target.matchText) ?? null;
+
+      if (!view) {
+        view = pickExternal(target.id, target.matchText);
       }
 
       if (view) out[target.id] = view;
@@ -642,6 +735,164 @@ export async function suggestCategories(
 
     return out;
   });
+}
+
+/**
+ * Smart Categorization trigger: sends unrecognized merchant strings to an
+ * LLM in batches, caches the response per merchant string, and returns counts.
+ *
+ * Does NOT write `entries.category_id` automatically.
+ */
+export async function enrichUnknownMerchants(
+  session: Session,
+): Promise<{ looked_up: number; placed: number }> {
+  const { userId, dataKey } = session;
+  const config = getLlmConfig();
+  if (!config) {
+    throw new LlmNotConfiguredError();
+  }
+
+  const eligibleTexts = await withUser(userId, async (tx) => {
+    // 1. Check user smartCategorize setting
+    const [userRow] = await tx
+      .select({ smartCategorize: users.smartCategorize })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (!userRow || !userRow.smartCategorize) {
+      throw new SmartCategorizeDisabledError();
+    }
+
+    // 2. Collect candidate match texts from uncategorized non-excluded entries
+    const uncategorizedRows = await tx
+      .select({
+        id: entries.id,
+        descriptionCt: entries.descriptionCt,
+        version: entries.version,
+      })
+      .from(entries)
+      .where(and(isNull(entries.categoryId), eq(entries.excluded, false)));
+
+    const candidateTextsSet = new Set<string>();
+    const blockedTextsSet = new Set<string>();
+
+    for (const row of uncategorizedRows) {
+      const raw = decText(dataKey, row.descriptionCt, row.id, "description_ct", row.version) ?? "";
+      const matchText = normalizeDescription(raw);
+
+      if (matchText !== "") {
+        // Block on the raw description before normalization strips prefixes
+        if (blocksEgress(raw)) {
+          blockedTextsSet.add(matchText);
+        } else {
+          candidateTextsSet.add(matchText);
+        }
+      }
+    }
+
+    if (candidateTextsSet.size === 0) {
+      return [];
+    }
+
+    // 3. Subtract anything already in merchant_lookups (decrypt once per batch)
+    const existingLookups = await tx.select().from(merchantLookups);
+    const cachedTexts = new Set<string>();
+    for (const row of existingLookups) {
+      const matchText = decText(dataKey, row.matchTextCt, row.id, "match_text_ct", row.version);
+      if (matchText !== null) {
+        cachedTexts.add(matchText);
+      }
+    }
+
+    // 4. Subtract anything local engine places above MIN_SUGGESTION_SCORE
+    const examples = await collectLabeledExamples(tx, dataKey);
+    const ownCorpus = buildCorpus(examples.filter((e) => e.source !== "builtin"));
+    const builtinCorpus = buildCorpus(examples.filter((e) => e.source === "builtin"));
+
+    function localPlaces(text: string): boolean {
+      for (const candidate of suggest(text, ownCorpus)) {
+        if (candidate.score >= MIN_SUGGESTION_SCORE) return true;
+        break;
+      }
+      for (const candidate of suggest(text, builtinCorpus)) {
+        if (candidate.score >= MIN_SUGGESTION_SCORE) return true;
+        break;
+      }
+      return false;
+    }
+
+    const eligible: string[] = [];
+    for (const text of candidateTextsSet) {
+      // 5. Subtract anything blocksEgress rejected
+      if (blockedTextsSet.has(text)) continue;
+      if (cachedTexts.has(text)) continue;
+      if (localPlaces(text)) continue;
+      eligible.push(text);
+    }
+
+    return eligible;
+  });
+
+  // 6. Cap at 100 texts per invocation
+  const toLookup = eligibleTexts.slice(0, 100);
+  if (toLookup.length === 0) {
+    return { looked_up: 0, placed: 0 };
+  }
+
+  let looked_up = 0;
+  let placed = 0;
+  const BATCH_SIZE = 10;
+  const resultsToInsert: { text: string; builtinKey: string | null; answer: Answer }[] = [];
+
+  for (let start = 0; start < toLookup.length; start += BATCH_SIZE) {
+    if (start > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    const slice = toLookup.slice(start, start + BATCH_SIZE);
+    const batchAnswers = await classifyBatch(slice, start, config);
+
+    for (let i = 0; i < slice.length; i++) {
+      const text = slice[i];
+      const index = start + i;
+      const answer = batchAnswers.get(index) ?? {
+        key: UNKNOWN,
+        brand: "",
+        confidence: "low" as const,
+        why: "",
+      };
+
+      const shownKey = guarded(answer);
+      const builtinKey = shownKey === UNKNOWN ? null : shownKey;
+
+      resultsToInsert.push({ text, builtinKey, answer });
+    }
+  }
+
+  if (resultsToInsert.length > 0) {
+    await withUser(userId, async (tx) => {
+      for (const res of resultsToInsert) {
+        const id = randomUUID();
+        await tx.insert(merchantLookups).values({
+          id,
+          ownerId: userId,
+          matchTextCt: encText(dataKey, res.text, id, "match_text_ct", 1),
+          builtinKey: res.builtinKey,
+          confidence: res.answer.confidence,
+          model: config.model,
+          promptVersion: PROMPT_VERSION,
+          version: 1,
+        });
+
+        looked_up++;
+        if (res.builtinKey !== null) {
+          placed++;
+        }
+      }
+    });
+  }
+
+  return { looked_up, placed };
 }
 
 /**

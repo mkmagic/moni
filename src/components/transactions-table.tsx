@@ -33,6 +33,7 @@ interface TransactionsTableProps {
   /** True when the server found more entries than the window holds. Decided
    * there by over-fetching one row, not guessed from `entries.length`. */
   capped: boolean;
+  smartCategorizeEnabled?: boolean;
 }
 
 const COLUMNS: { column: SortColumn; label: string; align?: "right" }[] = [
@@ -55,9 +56,20 @@ export function TransactionsTable({
   serverFilters,
   windowSize,
   capped,
+  smartCategorizeEnabled = false,
 }: TransactionsTableProps) {
   const [selected, setSelected] = useState<EntryView | null>(null);
   const [controls, setControls] = useState<TableControls>(DEFAULT_TABLE_CONTROLS);
+
+  const unplacedCount = useMemo(
+    () =>
+      new Set(
+        entries
+          .filter((e) => e.categoryId === null && !suggestions[e.id] && e.matchText !== "")
+          .map((e) => e.matchText),
+      ).size,
+    [entries, suggestions],
+  );
 
   const visible = useMemo(() => applyTableControls(entries, controls), [entries, controls]);
 
@@ -110,6 +122,8 @@ export function TransactionsTable({
         serverFilters={serverFilters}
         controls={controls}
         onControlsChange={setControls}
+        smartCategorizeEnabled={smartCategorizeEnabled}
+        unplacedCount={unplacedCount}
       />
 
       {notes.length > 0 && (
