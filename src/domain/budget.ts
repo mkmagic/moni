@@ -25,7 +25,7 @@
 // (data-model.md §6 tension 1). No persisted rollups.
 import { randomUUID } from "node:crypto";
 import Decimal from "decimal.js";
-import { and, asc, eq, gte, lte } from "drizzle-orm";
+import { and, asc, eq, gte, isNull, lte } from "drizzle-orm";
 import { withUser } from "@/db/client";
 import { budgetCeilings, budgetIncomes, categories, entries } from "@/db/schema";
 import { multiply, type Money } from "@/lib/money";
@@ -33,6 +33,9 @@ import type { Session } from "@/lib/auth/session-store";
 import { decText, encText } from "./fields";
 import { countsAsFlow, loadTransferCategoryIds } from "./flows";
 import { israelDate } from "./investment-valuation";
+import { RESIDUAL_KEY, RESIDUAL_NAME } from "@/lib/budget/residual";
+
+export { RESIDUAL_KEY, RESIDUAL_NAME };
 
 type Tx = Parameters<Parameters<typeof withUser>[1]>[0];
 
@@ -96,7 +99,9 @@ export function monthRange(from: string, to: string): string[] {
 // --- Views ------------------------------------------------------------------
 
 export interface BudgetRowView {
-  categoryId: string;
+  /** Null on the residual row — it stands for every category no other
+   * ceiling reaches, so there is no single one to point at. */
+  categoryId: string | null;
   categoryName: string;
   color: string | null;
   icon: string | null;
@@ -173,7 +178,8 @@ export interface BudgetMonthView {
 }
 
 export interface CeilingView {
-  categoryId: string;
+  /** Null is the residual ceiling. */
+  categoryId: string | null;
   categoryName: string;
   amount: Money;
   effectiveFrom: string;
@@ -212,7 +218,8 @@ export interface CeilingSuggestion {
 // --- Internal row helpers ---------------------------------------------------
 
 interface CeilingRow {
-  categoryId: string;
+  /** Null is the residual ceiling — see `RESIDUAL_KEY`. */
+  categoryId: string | null;
   amount: Decimal;
   effectiveFrom: string;
   rollover: boolean;
@@ -238,7 +245,7 @@ function ceilingsInForce(rows: CeilingRow[], month: string): Map<string, Ceiling
   const cutoff = monthStart(month);
   for (const row of rows) {
     if (row.effectiveFrom > cutoff) continue;
-    inForce.set(row.categoryId, row); // ascending order, so the last wins
+    inForce.set(row.categoryId ?? RESIDUAL_KEY, row); // ascending order, so the last wins
   }
   return inForce;
 }
@@ -401,6 +408,41 @@ function spentOn(
   return total.negated();
 }
 
+/**
+ * Every real category carrying a ceiling in `month`. The residual is
+ * excluded on purpose: it is defined as whatever this set fails to reach, so
+ * including it would make it cover itself.
+ */
+function budgetedIdsIn(rows: CeilingRow[], month: string): Set<string> {
+  const ids = new Set<string>();
+  for (const key of ceilingsInForce(rows, month).keys()) {
+    if (key !== RESIDUAL_KEY) ids.add(key);
+  }
+  return ids;
+}
+
+/**
+ * What "everything else" cost in `month`: uncategorized spending, plus every
+ * category no ceiling in `budgeted` reaches. Returned as a positive
+ * magnitude, like `spentOn`.
+ *
+ * `budgeted` is passed in rather than derived so a rollover replay can hand
+ * it the set that was in force in *that* month — budgeting Pharmacy today
+ * must not change what March's residual contained.
+ */
+function residualSpentOn(
+  month: string,
+  flows: MonthlyFlows,
+  budgeted: Set<string>,
+  cats: Map<string, CategoryRow>,
+): Decimal {
+  let total = flows.uncategorizedSpend.get(month) ?? new Decimal(0);
+  for (const [categoryId, amount] of flows.byCategory.get(month) ?? []) {
+    if (budgetedCategoryOf(categoryId, budgeted, cats) === null) total = total.plus(amount);
+  }
+  return total.negated();
+}
+
 /** Exact, unrounded — rounding to a currency's minor unit happens at the
  * display edge and never here (money-and-currency.md §3). */
 const money = (amount: Decimal, currency: string): Money => ({
@@ -427,12 +469,15 @@ export async function getBudgetMonth(session: Session, month: string): Promise<B
   return withUser(userId, async (tx) => {
     const [cats, ceilingRows] = await Promise.all([loadCategories(tx), loadCeilings(tx, dataKey)]);
     const inForce = ceilingsInForce(ceilingRows, month);
-    const budgeted = new Set(inForce.keys());
+    // Only real categories go in here: it is what decides which category a
+    // given entry is filed under, and the residual is by definition the
+    // ceiling for everything this set does *not* reach.
+    const budgeted = budgetedIdsIn(ceilingRows, month);
 
     // Replay only as far back as a rollover ceiling actually reaches; without
     // one, this month alone is all the aggregation needs to read.
     const rolloverStart = ceilingRows
-      .filter((row) => row.rollover && budgeted.has(row.categoryId))
+      .filter((row) => row.rollover && inForce.has(row.categoryId ?? RESIDUAL_KEY))
       .map((row) => row.effectiveFrom.slice(0, 7))
       .sort()[0];
     const fromMonth = rolloverStart && rolloverStart < month ? rolloverStart : month;
@@ -444,6 +489,8 @@ export async function getBudgetMonth(session: Session, month: string): Promise<B
     let overBudgetCount = 0;
 
     for (const [categoryId, ceiling] of inForce) {
+      if (categoryId === RESIDUAL_KEY) continue; // handled below, once the
+      // per-category rows are known and "everything else" has a meaning
       const category = cats.get(categoryId);
       if (!category) continue; // category deleted out from under the ceiling
       const spent = spentOn(categoryId, month, flows, budgeted, cats);
@@ -486,12 +533,53 @@ export async function getBudgetMonth(session: Session, month: string): Promise<B
     rows.sort((a, b) => a.categoryName.localeCompare(b.categoryName));
 
     // Everything that fell outside a ceiling, so the totals reconcile.
-    let unbudgeted = flows.uncategorizedSpend.get(month) ?? new Decimal(0);
-    for (const [categoryId, amount] of flows.byCategory.get(month) ?? []) {
-      if (budgetedCategoryOf(categoryId, budgeted, cats) === null)
-        unbudgeted = unbudgeted.plus(amount);
+    const residualSpend = residualSpentOn(month, flows, budgeted, cats);
+    const residual = inForce.get(RESIDUAL_KEY);
+
+    if (residual) {
+      // Replayed against the categories that were budgeted in each past
+      // month, not today's — otherwise giving Pharmacy its own ceiling now
+      // would retroactively shrink what the residual carried out of March.
+      let carriedIn: Decimal | null = null;
+      if (residual.rollover) {
+        carriedIn = new Decimal(0);
+        for (const past of monthRange(fromMonth, shiftMonth(month, -1))) {
+          const pastCeiling = ceilingsInForce(ceilingRows, past).get(RESIDUAL_KEY);
+          if (!pastCeiling || !pastCeiling.rollover) continue;
+          carriedIn = carriedIn
+            .plus(pastCeiling.amount)
+            .minus(residualSpentOn(past, flows, budgetedIdsIn(ceilingRows, past), cats));
+        }
+      }
+
+      const available = residual.amount.plus(carriedIn ?? new Decimal(0));
+      const remaining = available.minus(residualSpend);
+      if (remaining.isNegative()) overBudgetCount += 1;
+      ceilingTotal = ceilingTotal.plus(residual.amount);
+      budgetedSpend = budgetedSpend.plus(residualSpend);
+
+      // Last in its section: it is the line every other line is defined
+      // against, so reading it before them says nothing.
+      rows.push({
+        categoryId: null,
+        categoryName: RESIDUAL_NAME,
+        color: null,
+        icon: null,
+        // Never Fixed. A bill you can name is a bill you can budget; what
+        // lands here is by definition the spending you did not itemize.
+        isRecurring: false,
+        ceiling: money(residual.amount, baseCurrency),
+        available: money(available, baseCurrency),
+        spent: money(residualSpend, baseCurrency),
+        remaining: money(remaining, baseCurrency),
+        rollover: residual.rollover,
+        carriedIn: carriedIn ? money(carriedIn, baseCurrency) : null,
+      });
     }
-    const unbudgetedSpend = unbudgeted.negated();
+
+    // Once a residual ceiling exists, this spending is budgeted — counting it
+    // here as well would double it into `spentTotal`.
+    const unbudgetedSpend = residual ? new Decimal(0) : residualSpend;
 
     const actualIncome = flows.income.get(month) ?? new Decimal(0);
     const spentTotal = budgetedSpend.plus(unbudgetedSpend);
@@ -594,7 +682,7 @@ export async function listCeilings(session: Session, month: string): Promise<Cei
     return [...ceilingsInForce(rows, month).values()]
       .map((row) => ({
         categoryId: row.categoryId,
-        categoryName: cats.get(row.categoryId)?.name ?? "",
+        categoryName: row.categoryId ? (cats.get(row.categoryId)?.name ?? "") : RESIDUAL_NAME,
         amount: money(row.amount, baseCurrency),
         effectiveFrom: row.effectiveFrom,
         rollover: row.rollover,
@@ -648,6 +736,17 @@ export interface BudgetProposal {
    * earned. A starting figure for the planned-income step, not a claim about
    * next month. */
   income: Money | null;
+  /**
+   * Average monthly spending that carried **no category at all** — the
+   * starting figure for the residual ("everything else") ceiling.
+   *
+   * History cannot price the rest of what a residual is for. Every category
+   * with spending is about to be proposed as its own line, so what is left
+   * over in the window is only the uncategorized part; the room for
+   * categories that don't exist yet is a forward-looking choice the user
+   * makes by dropping lines or typing a bigger number.
+   */
+  uncategorized: Money;
 }
 
 /**
@@ -730,9 +829,15 @@ export async function proposeBudget(
           : null,
       }));
 
+    const uncategorized = months.reduce(
+      (acc, month) => acc.plus(flows.uncategorizedSpend.get(month) ?? new Decimal(0)),
+      new Decimal(0),
+    );
+
     return {
       ceilings,
       income: earned.greaterThan(0) ? money(earned.dividedBy(months.length), baseCurrency) : null,
+      uncategorized: money(uncategorized.negated().dividedBy(months.length), baseCurrency),
     };
   });
 }
@@ -740,12 +845,21 @@ export async function proposeBudget(
 // --- Writes -----------------------------------------------------------------
 
 export interface SetCeilingInput {
-  categoryId: string;
+  /** Null sets the residual ceiling — "everything else". */
+  categoryId: string | null;
   /** Canonical decimal string, positive — a ceiling is a spending target. */
   amount: string;
   /** The month it takes effect, "YYYY-MM". */
   effectiveFrom: string;
   rollover: boolean;
+}
+
+/** The real categories among a set of ceiling rows — the residual's null is
+ * dropped, since the branch rule only speaks about the category tree. */
+function budgetedIdsOf(rows: { categoryId: string | null }[]): Set<string> {
+  const ids = new Set<string>();
+  for (const row of rows) if (row.categoryId !== null) ids.add(row.categoryId);
+  return ids;
 }
 
 /**
@@ -761,8 +875,12 @@ export interface SetCeilingInput {
 function assertBudgetable(
   cats: Map<string, CategoryRow>,
   budgetedIds: Set<string>,
-  categoryId: string,
+  categoryId: string | null,
 ): void {
+  // The residual ceiling sits outside the category tree, so neither rule
+  // applies: it has no classification to check and no branch to conflict
+  // with. It also cannot duplicate — the unique index is NULLS NOT DISTINCT.
+  if (categoryId === null) return;
   const category = cats.get(categoryId);
   if (!category) throw new BudgetCategoryNotBudgetableError("No such category");
   if (category.classification !== "expense") {
@@ -793,7 +911,7 @@ export async function setCeiling(session: Session, input: SetCeilingInput): Prom
   await withUser(userId, async (tx) => {
     const cats = await loadCategories(tx);
     const existing = await tx.select().from(budgetCeilings);
-    assertBudgetable(cats, new Set(existing.map((row) => row.categoryId)), input.categoryId);
+    assertBudgetable(cats, budgetedIdsOf(existing), input.categoryId);
 
     const effectiveFrom = monthStart(input.effectiveFrom);
     const replaced = existing.find(
@@ -827,9 +945,16 @@ export async function setCeiling(session: Session, input: SetCeilingInput): Prom
 /** Stops budgeting a category entirely, history included — the user is
  * saying "this was never a budget line", not "it ended". Ending a line is
  * `setCeiling` with a new amount from this month forward. */
-export async function deleteCeiling(session: Session, categoryId: string): Promise<void> {
+export async function deleteCeiling(session: Session, categoryId: string | null): Promise<void> {
   await withUser(session.userId, async (tx) => {
-    await tx.delete(budgetCeilings).where(eq(budgetCeilings.categoryId, categoryId));
+    // `= NULL` matches nothing in SQL, so the residual needs `IS NULL`.
+    await tx
+      .delete(budgetCeilings)
+      .where(
+        categoryId === null
+          ? isNull(budgetCeilings.categoryId)
+          : eq(budgetCeilings.categoryId, categoryId),
+      );
   });
 }
 
@@ -872,9 +997,8 @@ export async function createCeilings(session: Session, inputs: SetCeilingInput[]
   const { userId, dataKey } = session;
   return withUser(userId, async (tx) => {
     const cats = await loadCategories(tx);
-    const proposed = new Set(inputs.map((input) => input.categoryId));
     const existing = await tx.select().from(budgetCeilings);
-    const budgetedIds = new Set([...existing.map((row) => row.categoryId), ...proposed]);
+    const budgetedIds = budgetedIdsOf([...existing, ...inputs]);
 
     for (const input of inputs) {
       assertBudgetable(cats, budgetedIds, input.categoryId);

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSessionFromRequest } from "@/domain/auth";
-import { deleteCeiling } from "@/domain/budget";
+import { RESIDUAL_KEY, deleteCeiling } from "@/domain/budget";
 
 /** Stops budgeting a category outright, history included. Ending a budget
  * line while keeping what it was is `POST /api/budget/ceilings` with a new
@@ -15,11 +15,14 @@ export async function DELETE(
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
+  // The residual ceiling has no category to name it in the path, so it is
+  // addressed by the same literal the domain layer uses for its map key.
   const { categoryId } = await params;
-  if (!z.uuid().safeParse(categoryId).success) {
+  const target = categoryId === RESIDUAL_KEY ? null : categoryId;
+  if (target !== null && !z.uuid().safeParse(target).success) {
     return NextResponse.json({ error: "invalid request" }, { status: 400 });
   }
 
-  await deleteCeiling(session, categoryId);
+  await deleteCeiling(session, target);
   return NextResponse.json({ ok: true });
 }

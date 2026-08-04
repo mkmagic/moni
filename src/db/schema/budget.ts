@@ -31,7 +31,18 @@ export const budgetCeilings = pgTable(
     ownerId: uuid("owner_id")
       .notNull()
       .references(() => users.id),
-    categoryId: uuid("category_id").notNull(),
+    /**
+     * NULL is the **residual** ceiling: "everything else", covering all
+     * spending no other ceiling reaches that month.
+     *
+     * It is a budget concept, not a category — a `Miscellaneous` category
+     * would only be accurate if the user recategorized transactions into it,
+     * and "Miscellaneous ₪600" says less than "Pharmacy ₪600, unbudgeted".
+     * Which categories fall inside it is derived per month from the ceilings
+     * in force then, so budgeting Pharmacy today never rewrites what March's
+     * residual contained.
+     */
+    categoryId: uuid("category_id"),
     /** Tier-1. AAD-bound to this row's own id/column/version. */
     amountCt: bytea("amount_ct").notNull(),
     /** First day of the month this ceiling takes effect, as "YYYY-MM-01". */
@@ -50,11 +61,14 @@ export const budgetCeilings = pgTable(
     unique("budget_ceilings_owner_id_id_unique").on(table.ownerId, table.id),
     // One ceiling per category per month — a second edit in the same month
     // replaces the row rather than stacking an ambiguous duplicate.
-    unique("budget_ceilings_owner_category_effective_unique").on(
-      table.ownerId,
-      table.categoryId,
-      table.effectiveFrom,
-    ),
+    //
+    // `nullsNotDistinct` is load-bearing, not tidiness: Postgres treats NULLs
+    // as distinct by default, so without it the residual ceiling (category_id
+    // IS NULL) could stack any number of rows in one month and "everything
+    // else" would have several rival numbers.
+    unique("budget_ceilings_owner_category_effective_unique")
+      .on(table.ownerId, table.categoryId, table.effectiveFrom)
+      .nullsNotDistinct(),
     foreignKey({
       columns: [table.ownerId, table.categoryId],
       foreignColumns: [categories.ownerId, categories.id],

@@ -920,3 +920,199 @@ describe("the projection", () => {
     expect(view.projectedSpend?.amount).toBe("4500");
   });
 });
+
+// The residual ceiling: one row, category_id NULL, meaning "everything no
+// other ceiling reaches this month". The point of it is that the budget's
+// totals stop excluding money nobody itemized.
+describe("the residual ceiling", () => {
+  it("governs everything no other ceiling reaches, and reconciles the totals", async () => {
+    const fx = await freshFixture("residual-basic");
+    const groceries = await expenseCategory(fx, "Groceries");
+    const hobbies = await expenseCategory(fx, "Hobbies");
+    await setCeiling(fx.session, {
+      categoryId: groceries,
+      amount: "2000",
+      effectiveFrom: MONTH,
+      rollover: false,
+    });
+    await setCeiling(fx.session, {
+      categoryId: null,
+      amount: "800",
+      effectiveFrom: MONTH,
+      rollover: false,
+    });
+
+    await addEntry(fx, `${MONTH}-04`, "-1200", groceries);
+    await addEntry(fx, `${MONTH}-06`, "-500", hobbies);
+    await addEntry(fx, `${MONTH}-07`, "-100", null); // never categorized
+
+    const view = await getBudgetMonth(fx.session, MONTH);
+    const residual = view.everyday.rows.find((row) => row.categoryId === null);
+    expect(residual?.categoryName).toBe("Everything else");
+    expect(residual?.spent.amount).toBe("600"); // 500 hobbies + 100 uncategorized
+    expect(residual?.remaining.amount).toBe("200");
+
+    // The whole reason it exists: this money is now budgeted, counted once.
+    expect(view.ceilingTotal.amount).toBe("2800");
+    expect(view.budgetedSpend.amount).toBe("1800");
+    expect(view.spentTotal.amount).toBe("1800");
+    expect(view.unbudgetedSpend.amount).toBe("0");
+  });
+
+  it("leaves unbudgeted spending display-only when there is no residual ceiling", async () => {
+    const fx = await freshFixture("residual-absent");
+    const groceries = await expenseCategory(fx, "Groceries");
+    const hobbies = await expenseCategory(fx, "Hobbies");
+    await setCeiling(fx.session, {
+      categoryId: groceries,
+      amount: "2000",
+      effectiveFrom: MONTH,
+      rollover: false,
+    });
+    await addEntry(fx, `${MONTH}-04`, "-1200", groceries);
+    await addEntry(fx, `${MONTH}-06`, "-500", hobbies);
+
+    const view = await getBudgetMonth(fx.session, MONTH);
+    expect(view.everyday.rows.some((row) => row.categoryId === null)).toBe(false);
+    expect(view.unbudgetedSpend.amount).toBe("500");
+    expect(view.ceilingTotal.amount).toBe("2000");
+  });
+
+  it("shrinks when a category it covered gets a ceiling of its own", async () => {
+    const fx = await freshFixture("residual-narrows");
+    const hobbies = await expenseCategory(fx, "Hobbies");
+    await setCeiling(fx.session, {
+      categoryId: null,
+      amount: "800",
+      effectiveFrom: MONTH,
+      rollover: false,
+    });
+    await addEntry(fx, `${MONTH}-06`, "-500", hobbies);
+
+    const before = await getBudgetMonth(fx.session, MONTH);
+    expect(before.everyday.rows.find((r) => r.categoryId === null)?.spent.amount).toBe("500");
+
+    await setCeiling(fx.session, {
+      categoryId: hobbies,
+      amount: "600",
+      effectiveFrom: MONTH,
+      rollover: false,
+    });
+    const after = await getBudgetMonth(fx.session, MONTH);
+    expect(after.everyday.rows.find((r) => r.categoryId === null)?.spent.amount).toBe("0");
+    expect(after.everyday.rows.find((r) => r.categoryId === hobbies)?.spent.amount).toBe("500");
+  });
+
+  it("keeps a past month's residual on the categories that were budgeted then", async () => {
+    const fx = await freshFixture("residual-past");
+    const hobbies = await expenseCategory(fx, "Hobbies");
+    await setCeiling(fx.session, {
+      categoryId: null,
+      amount: "800",
+      effectiveFrom: PRIOR,
+      rollover: false,
+    });
+    await addEntry(fx, `${PRIOR}-06`, "-500", hobbies);
+
+    // Hobbies gets its own ceiling only from MONTH onward.
+    await setCeiling(fx.session, {
+      categoryId: hobbies,
+      amount: "600",
+      effectiveFrom: MONTH,
+      rollover: false,
+    });
+
+    const past = await getBudgetMonth(fx.session, PRIOR);
+    // In PRIOR, Hobbies had no ceiling, so its spending was the residual's.
+    expect(past.everyday.rows.find((r) => r.categoryId === null)?.spent.amount).toBe("500");
+    expect(past.everyday.rows.some((r) => r.categoryId === hobbies)).toBe(false);
+  });
+
+  it("is never a fixed cost", async () => {
+    const fx = await freshFixture("residual-everyday");
+    await setCeiling(fx.session, {
+      categoryId: null,
+      amount: "800",
+      effectiveFrom: MONTH,
+      rollover: false,
+    });
+    const view = await getBudgetMonth(fx.session, MONTH);
+    expect(view.fixed.rows).toHaveLength(0);
+    expect(view.everyday.rows).toHaveLength(1);
+  });
+
+  it("replaces rather than stacks a second residual in the same month", async () => {
+    const fx = await freshFixture("residual-unique");
+    await setCeiling(fx.session, {
+      categoryId: null,
+      amount: "800",
+      effectiveFrom: MONTH,
+      rollover: false,
+    });
+    await setCeiling(fx.session, {
+      categoryId: null,
+      amount: "950",
+      effectiveFrom: MONTH,
+      rollover: false,
+    });
+
+    const ceilings = await listCeilings(fx.session, MONTH);
+    const residuals = ceilings.filter((c) => c.categoryId === null);
+    expect(residuals).toHaveLength(1);
+    expect(residuals[0].amount.amount).toBe("950");
+  });
+
+  it("takes no branch or classification check, having no place in the tree", async () => {
+    const fx = await freshFixture("residual-guards");
+    const parent = await expenseCategory(fx, "Home");
+    const child = await expenseCategory(fx, "Repairs", parent);
+    await setCeiling(fx.session, {
+      categoryId: parent,
+      amount: "1500",
+      effectiveFrom: MONTH,
+      rollover: false,
+    });
+    // A residual alongside a parent-and-child pair is not a branch conflict:
+    // it is not in the branch at all.
+    await expect(
+      setCeiling(fx.session, {
+        categoryId: null,
+        amount: "800",
+        effectiveFrom: MONTH,
+        rollover: false,
+      }),
+    ).resolves.toBeUndefined();
+    expect(await listCeilings(fx.session, MONTH)).toHaveLength(2);
+    void child;
+  });
+
+  it("carries a balance forward like any other ceiling", async () => {
+    const fx = await freshFixture("residual-rollover");
+    const hobbies = await expenseCategory(fx, "Hobbies");
+    await setCeiling(fx.session, {
+      categoryId: null,
+      amount: "800",
+      effectiveFrom: PRIOR,
+      rollover: true,
+    });
+    await addEntry(fx, `${PRIOR}-06`, "-300", hobbies); // 500 unspent
+
+    const view = await getBudgetMonth(fx.session, MONTH);
+    const residual = view.everyday.rows.find((r) => r.categoryId === null);
+    expect(residual?.carriedIn?.amount).toBe("500");
+    expect(residual?.available.amount).toBe("1300");
+  });
+
+  it("is deleted by its own key, not by a uuid", async () => {
+    const fx = await freshFixture("residual-delete");
+    await setCeiling(fx.session, {
+      categoryId: null,
+      amount: "800",
+      effectiveFrom: MONTH,
+      rollover: false,
+    });
+    expect(await listCeilings(fx.session, MONTH)).toHaveLength(1);
+    await deleteCeiling(fx.session, null);
+    expect(await listCeilings(fx.session, MONTH)).toHaveLength(0);
+  });
+});

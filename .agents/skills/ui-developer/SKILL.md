@@ -42,6 +42,14 @@ new feedback lands.
 
 ## Feedback log (newest first — append, don't overwrite)
 
+### 2026-08-04 (last) — the residual ceiling: a value import from `@/domain` broke the page
+
+- **A `"use client"` component may import *types* from `@/domain`, never *values*.** Adding `import { RESIDUAL_KEY } from "@/domain/budget"` to `budget-screen.tsx` pulled `src/db/client.ts` and then `pg` into the browser bundle, and every request 500'd with `Can't resolve 'util/types'`. Types are erased; runtime constants are not. The fix is the pattern `src/lib/recurring/range.ts` already documents — the constant lives in `src/lib/budget/residual.ts` and the domain re-exports it for server callers. **The import trace in the Next dev log names the exact chain; read it before guessing.**
+- **Money that moves must be seen to move.** Dropping a category in the wizard now adds its amount to the "Everything else" line, so the budgeted total is unchanged by the removal. Watching ₪150 leave Public Transport and arrive in the residual is what makes the residual's purpose obvious without a paragraph explaining it.
+- **Don't show the same money in two places.** Once an "Everything else" ceiling exists it is an ordinary Everyday row, so the standalone "Unbudgeted spending" card is suppressed and the hero's "a further X went to categories with no ceiling" line was deleted outright. That card is now the place the residual is *offered*, not a second display of it.
+- **No link is better than a link that lies.** Every budget row drills into `/transactions?category=…`; the residual has no single category, and no filter expresses "whatever no other ceiling reaches". It renders as plain text with a muted "everything not budgeted above" gloss instead.
+- **Editing a migration in place needs both databases pushed.** Drizzle records migrations as applied by filename, and the test harness (`tests/db/setup-test-db.ts`) keeps its own applied-files table — so an edited `0023` re-runs for neither. `DROP DATABASE moni_test WITH (FORCE)` as the superuser (`TEST_SUPERUSER_URL`, not `DATABASE_URL_MIGRATE` — the app role doesn't own it) rebuilds the test DB; the dev DB needs the ALTERs applied by hand.
+
 ### 2026-08-04 (later) — the budget planner (issue #69): a question with no way to say yes
 
 - **The affordance has to match the question.** The empty state asked *"Create a budget from your existing history?"* and then offered pills labelled `Last 3 months` / `Last 6 months`. Clicking one *was* the yes — and with only three months seeded, exactly one pill rendered beside "Set ceilings manually", so there was visibly nothing to agree to. The owner's report: *"I see 'Create a budget from your existing history?' but nowhere to choose 'yes'."* One primary **Plan my budget** button now answers the question; the window became a detail inside the flow. **When a control's label names a parameter, it cannot also be the answer to a yes/no question.**

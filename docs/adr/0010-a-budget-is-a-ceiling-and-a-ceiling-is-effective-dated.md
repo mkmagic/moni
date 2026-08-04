@@ -50,12 +50,29 @@ good one. Rollover carries surplus and deficit from that ceiling's `effective_fr
 actually had rollover on contribute, so turning it on today never hands back
 history the user did not budget for.
 
+**"Everything else" is a budget line, not a category.** One ceiling per user
+per month with `category_id IS NULL` covers all spending no other ceiling
+reaches. A `Miscellaneous` *category* was rejected: it is only accurate if the
+user recategorizes transactions into it, and "Miscellaneous ₪600" says less
+than "Pharmacy ₪600, unbudgeted". Categories describe what money was **for**;
+the budget decides what is **governed**. Which categories fall inside the
+residual is derived per month from the ceilings in force then, so giving
+Pharmacy its own ceiling today never rewrites what March's residual contained.
+It carries no branch or classification check — it is not in the tree — and its
+uniqueness rests on a `NULLS NOT DISTINCT` index, because Postgres otherwise
+treats every NULL as distinct and would let "everything else" hold several
+rival numbers in one month.
+
 ## Consequences
 
 - **A finished month tells the truth.** March keeps the number that was in
   force in March instead of being restated against today's target. This is the
   whole reason a retrospective view needs no separate screen — a past month is
   the same page with the pace marker dropped.
+- **Planned savings finally reconciles.** Before the residual, `income −
+  ceilings` excluded every shekel the user had not itemized, so the budget
+  claimed more savings than the plan implied. Money can still go unbudgeted —
+  the residual is optional — but there is now a way to say so.
 - **"Over budget" has exactly one answer per shekel**, because one-ceiling-per-
   branch guarantees one authority. This matches the deliberate one-level caps
   already made for categories and rule conditions.

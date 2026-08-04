@@ -15,7 +15,7 @@ import { CategoryIconTile } from "@/components/category-icon";
 import { BudgetBar } from "@/components/budget-bar";
 import { BudgetSetup } from "@/components/budget-setup";
 import { cn } from "@/lib/utils";
-import { isZero } from "@/lib/money";
+import { RESIDUAL_KEY } from "@/lib/budget/residual";
 import type { BudgetMonthView, BudgetRowView, BudgetSectionView } from "@/domain/budget";
 import type { CategoryView } from "@/domain/categorization";
 
@@ -52,7 +52,10 @@ export function BudgetScreen({
   historyMonths,
 }: BudgetScreenProps) {
   const router = useRouter();
-  const [editing, setEditing] = useState<BudgetRowView | "new" | null>(null);
+  const hasResidual = [...view.fixed.rows, ...view.everyday.rows].some(
+    (row) => row.categoryId === null,
+  );
+  const [editing, setEditing] = useState<BudgetRowView | "new" | "residual" | null>(null);
   const [editingIncome, setEditingIncome] = useState(false);
 
   return (
@@ -102,17 +105,31 @@ export function BudgetScreen({
             onEdit={setEditing}
           />
 
-          <Card>
-            <CardContent className="flex items-center justify-between px-5 pb-5 pt-6">
-              <div className="flex flex-col gap-1">
-                <span className="text-sm text-foreground">Unbudgeted spending</span>
-                <span className="text-xs text-muted-foreground">
-                  {"Everything no ceiling covers. Shown so the totals still add up."}
-                </span>
-              </div>
-              <Money value={view.unbudgetedSpend} className="text-sm" />
-            </CardContent>
-          </Card>
+          {/* Only while nothing governs this money: once an "Everything
+              else" ceiling exists, it is an ordinary row in Everyday above
+              and repeating it here would show it twice. */}
+          {!hasResidual && (
+            <Card>
+              <CardContent className="flex flex-wrap items-center justify-between gap-4 px-5 pb-5 pt-6">
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm text-foreground">Unbudgeted spending</span>
+                  <span className="max-w-xl text-xs text-muted-foreground">
+                    {
+                      "Everything no ceiling covers. Shown so the totals still add up — and left out of what this budget plans to save, which is why it is worth giving it a number."
+                    }
+                  </span>
+                </div>
+                <div className="flex items-center gap-4">
+                  <Money value={view.unbudgetedSpend} className="text-sm" />
+                  {isCurrentMonth && (
+                    <Button variant="outline" onClick={() => setEditing("residual")}>
+                      Set a ceiling for it
+                    </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </>
       ) : isCurrentMonth ? (
         <BudgetSetup
@@ -134,9 +151,12 @@ export function BudgetScreen({
 
       {editing && (
         <CeilingDialog
-          row={editing === "new" ? null : editing}
+          row={editing === "new" || editing === "residual" ? null : editing}
+          startAsResidual={editing === "residual"}
           categories={categories}
-          budgetedIds={[...view.fixed.rows, ...view.everyday.rows].map((row) => row.categoryId)}
+          budgetedIds={[...view.fixed.rows, ...view.everyday.rows].map(
+            (row) => row.categoryId ?? RESIDUAL_KEY,
+          )}
           effectiveFrom={view.month}
           onClose={() => setEditing(null)}
           onSaved={() => {
@@ -266,14 +286,6 @@ function Headline({ view, onEditIncome }: { view: BudgetMonthView; onEditIncome:
             {view.plannedIncome ? "Edit" : "Set planned income"}
           </button>
         </p>
-
-        {!isZero(view.unbudgetedSpend) && (
-          <p className="text-xs text-muted-foreground">
-            {"A further "}
-            <Money value={view.unbudgetedSpend} />
-            {" went to categories with no ceiling."}
-          </p>
-        )}
       </CardContent>
     </Card>
   );
@@ -313,7 +325,7 @@ function Section({
       <CardContent className="flex flex-col">
         {section.rows.map((row) => (
           <BudgetRow
-            key={row.categoryId}
+            key={row.categoryId ?? RESIDUAL_KEY}
             row={row}
             monthFrom={monthFrom}
             monthTo={monthTo}
@@ -345,14 +357,26 @@ function BudgetRow({
       <CategoryIconTile icon={row.icon} color={row.color} size="sm" />
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <div className="flex items-baseline justify-between gap-3">
-          <Link
-            href={`/transactions?category=${row.categoryId}&from=${monthFrom}&to=${monthTo}`}
-            className="min-w-0 truncate text-sm text-foreground transition hover:text-primary"
-          >
-            {/* Hebrew category names reorder an adjacent LTR badge unless they
-                are bidi-isolated. */}
-            <bdi>{row.categoryName}</bdi>
-          </Link>
+          {/* The residual covers whatever no other ceiling reaches, which is
+              not a filter the transactions list can express — so it gets no
+              link rather than a link that would lie. */}
+          {row.categoryId ? (
+            <Link
+              href={`/transactions?category=${row.categoryId}&from=${monthFrom}&to=${monthTo}`}
+              className="min-w-0 truncate text-sm text-foreground transition hover:text-primary"
+            >
+              {/* Hebrew category names reorder an adjacent LTR badge unless
+                  they are bidi-isolated. */}
+              <bdi>{row.categoryName}</bdi>
+            </Link>
+          ) : (
+            <span className="min-w-0 truncate text-sm text-foreground">
+              <bdi>{row.categoryName}</bdi>
+              <span className="ml-2 text-xs text-muted-foreground">
+                {"everything not budgeted above"}
+              </span>
+            </span>
+          )}
           <span className="shrink-0 text-xs text-muted-foreground">
             <Money value={row.spent} /> of <Money value={row.ceiling} />
           </span>
@@ -395,6 +419,7 @@ function BudgetRow({
 
 function CeilingDialog({
   row,
+  startAsResidual = false,
   categories,
   budgetedIds,
   effectiveFrom,
@@ -402,13 +427,20 @@ function CeilingDialog({
   onSaved,
 }: {
   row: BudgetRowView | null;
+  /** Opens straight on "everything else" — the unbudgeted card's own action,
+   * which knows what it is asking for. */
+  startAsResidual?: boolean;
   categories: CategoryView[];
   budgetedIds: string[];
   effectiveFrom: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [categoryId, setCategoryId] = useState(row?.categoryId ?? "");
+  // "" is "nothing chosen yet"; RESIDUAL_KEY is the deliberate choice of
+  // "everything else". They are different states and must not collapse.
+  const [categoryId, setCategoryId] = useState<string>(
+    row ? (row.categoryId ?? RESIDUAL_KEY) : startAsResidual ? RESIDUAL_KEY : "",
+  );
   const [amount, setAmount] = useState(row?.ceiling.amount ?? "");
   const [rollover, setRollover] = useState(row?.rollover ?? false);
   const [error, setError] = useState<string | null>(null);
@@ -424,7 +456,12 @@ function CeilingDialog({
     const res = await fetch("/api/budget/ceilings", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ categoryId, amount, effectiveFrom, rollover }),
+      body: JSON.stringify({
+        categoryId: categoryId === RESIDUAL_KEY ? null : categoryId,
+        amount,
+        effectiveFrom,
+        rollover,
+      }),
     });
     if (!res.ok) {
       setError(
@@ -437,6 +474,7 @@ function CeilingDialog({
   }
 
   async function remove() {
+    // RESIDUAL_KEY is also how the route names it, since it has no uuid.
     await fetch(`/api/budget/ceilings/${categoryId}`, { method: "DELETE" });
     onSaved();
   }
@@ -458,6 +496,9 @@ function CeilingDialog({
               className="w-full rounded-[var(--radius)] border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             >
               <option value="">Choose a category…</option>
+              {!budgeted.has(RESIDUAL_KEY) && (
+                <option value={RESIDUAL_KEY}>Everything else (no category of its own)</option>
+              )}
               {available.map((category) => (
                 <option key={category.id} value={category.id}>
                   {/* Leading plain whitespace in an <option> is collapsed, so

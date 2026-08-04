@@ -124,41 +124,41 @@
         "accounts_owner_id_users_id_fk": {
           "name": "accounts_owner_id_users_id_fk",
           "tableFrom": "accounts",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "accounts_owner_id_connection_id_connections_owner_id_id_fk": {
           "name": "accounts_owner_id_connection_id_connections_owner_id_id_fk",
           "tableFrom": "accounts",
+          "tableTo": "connections",
           "columnsFrom": [
             "owner_id",
             "connection_id"
           ],
-          "tableTo": "connections",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "accounts_owner_id_id_unique": {
           "name": "accounts_owner_id_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -226,17 +226,17 @@
         "credit_card_details_owner_id_account_id_accounts_owner_id_id_fk": {
           "name": "credit_card_details_owner_id_account_id_accounts_owner_id_id_fk",
           "tableFrom": "credit_card_details",
+          "tableTo": "accounts",
           "columnsFrom": [
             "owner_id",
             "account_id"
           ],
-          "tableTo": "accounts",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -266,7 +266,7 @@
           "name": "category_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "amount_ct": {
           "name": "amount_ct",
@@ -314,50 +314,50 @@
         "budget_ceilings_owner_id_users_id_fk": {
           "name": "budget_ceilings_owner_id_users_id_fk",
           "tableFrom": "budget_ceilings",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "budget_ceilings_owner_id_category_id_categories_owner_id_id_fk": {
           "name": "budget_ceilings_owner_id_category_id_categories_owner_id_id_fk",
           "tableFrom": "budget_ceilings",
+          "tableTo": "categories",
           "columnsFrom": [
             "owner_id",
             "category_id"
           ],
-          "tableTo": "categories",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "budget_ceilings_owner_id_id_unique": {
           "name": "budget_ceilings_owner_id_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id"
-          ],
-          "nullsNotDistinct": false
+          ]
         },
         "budget_ceilings_owner_category_effective_unique": {
           "name": "budget_ceilings_owner_category_effective_unique",
+          "nullsNotDistinct": true,
           "columns": [
             "owner_id",
             "category_id",
             "effective_from"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -420,34 +420,34 @@
         "budget_incomes_owner_id_users_id_fk": {
           "name": "budget_incomes_owner_id_users_id_fk",
           "tableFrom": "budget_incomes",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "budget_incomes_owner_id_id_unique": {
           "name": "budget_incomes_owner_id_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id"
-          ],
-          "nullsNotDistinct": false
+          ]
         },
         "budget_incomes_owner_effective_unique": {
           "name": "budget_incomes_owner_effective_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "effective_from"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -535,49 +535,49 @@
         "categories_owner_id_users_id_fk": {
           "name": "categories_owner_id_users_id_fk",
           "tableFrom": "categories",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "categories_owner_id_parent_id_categories_owner_id_id_fk": {
           "name": "categories_owner_id_parent_id_categories_owner_id_id_fk",
           "tableFrom": "categories",
+          "tableTo": "categories",
           "columnsFrom": [
             "owner_id",
             "parent_id"
           ],
-          "tableTo": "categories",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "categories_owner_id_id_unique": {
           "name": "categories_owner_id_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id"
-          ],
-          "nullsNotDistinct": false
+          ]
         },
         "categories_owner_id_builtin_key_unique": {
           "name": "categories_owner_id_builtin_key_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "builtin_key"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -640,41 +640,41 @@
         "category_rejections_owner_id_users_id_fk": {
           "name": "category_rejections_owner_id_users_id_fk",
           "tableFrom": "category_rejections",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "category_rejections_owner_id_category_id_categories_owner_id_id_fk": {
           "name": "category_rejections_owner_id_category_id_categories_owner_id_id_fk",
           "tableFrom": "category_rejections",
+          "tableTo": "categories",
           "columnsFrom": [
             "owner_id",
             "category_id"
           ],
-          "tableTo": "categories",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "category_rejections_owner_id_id_unique": {
           "name": "category_rejections_owner_id_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -743,30 +743,30 @@
         "entry_field_changelog_owner_id_users_id_fk": {
           "name": "entry_field_changelog_owner_id_users_id_fk",
           "tableFrom": "entry_field_changelog",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "entry_field_changelog_owner_id_entry_id_entries_owner_id_id_fk": {
           "name": "entry_field_changelog_owner_id_entry_id_entries_owner_id_id_fk",
           "tableFrom": "entry_field_changelog",
+          "tableTo": "entries",
           "columnsFrom": [
             "owner_id",
             "entry_id"
           ],
-          "tableTo": "entries",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -849,26 +849,26 @@
         "merchant_lookups_owner_id_users_id_fk": {
           "name": "merchant_lookups_owner_id_users_id_fk",
           "tableFrom": "merchant_lookups",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "merchant_lookups_owner_id_id_unique": {
           "name": "merchant_lookups_owner_id_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -955,26 +955,26 @@
         "merchants_owner_id_users_id_fk": {
           "name": "merchants_owner_id_users_id_fk",
           "tableFrom": "merchants",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "merchants_owner_id_id_unique": {
           "name": "merchants_owner_id_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -1036,17 +1036,17 @@
         "rule_actions_owner_id_rule_id_rules_owner_id_id_fk": {
           "name": "rule_actions_owner_id_rule_id_rules_owner_id_id_fk",
           "tableFrom": "rule_actions",
+          "tableTo": "rules",
           "columnsFrom": [
             "owner_id",
             "rule_id"
           ],
-          "tableTo": "rules",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1129,43 +1129,43 @@
         "rule_conditions_owner_id_rule_id_rules_owner_id_id_fk": {
           "name": "rule_conditions_owner_id_rule_id_rules_owner_id_id_fk",
           "tableFrom": "rule_conditions",
+          "tableTo": "rules",
           "columnsFrom": [
             "owner_id",
             "rule_id"
           ],
-          "tableTo": "rules",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "rule_conditions_owner_id_parent_id_rule_conditions_owner_id_id_fk": {
           "name": "rule_conditions_owner_id_parent_id_rule_conditions_owner_id_id_fk",
           "tableFrom": "rule_conditions",
+          "tableTo": "rule_conditions",
           "columnsFrom": [
             "owner_id",
             "parent_id"
           ],
-          "tableTo": "rule_conditions",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "rule_conditions_owner_id_id_unique": {
           "name": "rule_conditions_owner_id_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -1234,26 +1234,26 @@
         "rules_owner_id_users_id_fk": {
           "name": "rules_owner_id_users_id_fk",
           "tableFrom": "rules",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "rules_owner_id_id_unique": {
           "name": "rules_owner_id_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -1315,45 +1315,45 @@
         "transfers_owner_id_users_id_fk": {
           "name": "transfers_owner_id_users_id_fk",
           "tableFrom": "transfers",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "transfers_owner_id_inflow_entry_id_entries_owner_id_id_fk": {
           "name": "transfers_owner_id_inflow_entry_id_entries_owner_id_id_fk",
           "tableFrom": "transfers",
+          "tableTo": "entries",
           "columnsFrom": [
             "owner_id",
             "inflow_entry_id"
           ],
-          "tableTo": "entries",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "transfers_owner_id_outflow_entry_id_entries_owner_id_id_fk": {
           "name": "transfers_owner_id_outflow_entry_id_entries_owner_id_id_fk",
           "tableFrom": "transfers",
+          "tableTo": "entries",
           "columnsFrom": [
             "owner_id",
             "outflow_entry_id"
           ],
-          "tableTo": "entries",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1445,26 +1445,26 @@
         "connections_owner_id_users_id_fk": {
           "name": "connections_owner_id_users_id_fk",
           "tableFrom": "connections",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "connections_owner_id_id_unique": {
           "name": "connections_owner_id_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -1569,41 +1569,41 @@
         "sync_runs_owner_id_users_id_fk": {
           "name": "sync_runs_owner_id_users_id_fk",
           "tableFrom": "sync_runs",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "sync_runs_owner_id_connection_id_connections_owner_id_id_fk": {
           "name": "sync_runs_owner_id_connection_id_connections_owner_id_id_fk",
           "tableFrom": "sync_runs",
+          "tableTo": "connections",
           "columnsFrom": [
             "owner_id",
             "connection_id"
           ],
-          "tableTo": "connections",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "sync_runs_owner_id_id_unique": {
           "name": "sync_runs_owner_id_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -1699,60 +1699,60 @@
         "sync_staging_owner_id_users_id_fk": {
           "name": "sync_staging_owner_id_users_id_fk",
           "tableFrom": "sync_staging",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "sync_staging_owner_id_sync_run_id_sync_runs_owner_id_id_fk": {
           "name": "sync_staging_owner_id_sync_run_id_sync_runs_owner_id_id_fk",
           "tableFrom": "sync_staging",
+          "tableTo": "sync_runs",
           "columnsFrom": [
             "owner_id",
             "sync_run_id"
           ],
-          "tableTo": "sync_runs",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "sync_staging_owner_id_account_id_accounts_owner_id_id_fk": {
           "name": "sync_staging_owner_id_account_id_accounts_owner_id_id_fk",
           "tableFrom": "sync_staging",
+          "tableTo": "accounts",
           "columnsFrom": [
             "owner_id",
             "account_id"
           ],
-          "tableTo": "accounts",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "sync_staging_owner_id_promoted_entry_id_entries_owner_id_id_fk": {
           "name": "sync_staging_owner_id_promoted_entry_id_entries_owner_id_id_fk",
           "tableFrom": "sync_staging",
+          "tableTo": "entries",
           "columnsFrom": [
             "owner_id",
             "promoted_entry_id"
           ],
-          "tableTo": "entries",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1836,41 +1836,41 @@
         "account_balance_snapshots_owner_id_users_id_fk": {
           "name": "account_balance_snapshots_owner_id_users_id_fk",
           "tableFrom": "account_balance_snapshots",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "account_balance_snapshots_owner_id_account_id_accounts_owner_id_id_fk": {
           "name": "account_balance_snapshots_owner_id_account_id_accounts_owner_id_id_fk",
           "tableFrom": "account_balance_snapshots",
+          "tableTo": "accounts",
           "columnsFrom": [
             "owner_id",
             "account_id"
           ],
-          "tableTo": "accounts",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "account_balance_snapshots_owner_id_id_unique": {
           "name": "account_balance_snapshots_owner_id_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -1953,36 +1953,36 @@
             }
           ],
           "isUnique": true,
-          "with": {},
-          "method": "btree",
           "where": "\"user_unlock_methods\".\"type\" = 'password-argon2id'",
-          "concurrently": false
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
         "user_unlock_methods_owner_id_users_id_fk": {
           "name": "user_unlock_methods_owner_id_users_id_fk",
           "tableFrom": "user_unlock_methods",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "user_unlock_methods_owner_id_id_unique": {
           "name": "user_unlock_methods_owner_id_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -2060,10 +2060,10 @@
       "uniqueConstraints": {
         "users_email_unique": {
           "name": "users_email_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "email"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -2270,9 +2270,9 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         },
         "entries_owner_category_date_idx": {
           "name": "entries_owner_category_date_idx",
@@ -2297,80 +2297,80 @@
             }
           ],
           "isUnique": false,
-          "with": {},
+          "concurrently": false,
           "method": "btree",
-          "concurrently": false
+          "with": {}
         }
       },
       "foreignKeys": {
         "entries_owner_id_users_id_fk": {
           "name": "entries_owner_id_users_id_fk",
           "tableFrom": "entries",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "entries_owner_id_account_id_accounts_owner_id_id_fk": {
           "name": "entries_owner_id_account_id_accounts_owner_id_id_fk",
           "tableFrom": "entries",
+          "tableTo": "accounts",
           "columnsFrom": [
             "owner_id",
             "account_id"
           ],
-          "tableTo": "accounts",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "entries_owner_id_category_id_categories_owner_id_id_fk": {
           "name": "entries_owner_id_category_id_categories_owner_id_id_fk",
           "tableFrom": "entries",
+          "tableTo": "categories",
           "columnsFrom": [
             "owner_id",
             "category_id"
           ],
-          "tableTo": "categories",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "entries_owner_id_merchant_id_merchants_owner_id_id_fk": {
           "name": "entries_owner_id_merchant_id_merchants_owner_id_id_fk",
           "tableFrom": "entries",
+          "tableTo": "merchants",
           "columnsFrom": [
             "owner_id",
             "merchant_id"
           ],
-          "tableTo": "merchants",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "entries_owner_id_id_unique": {
           "name": "entries_owner_id_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -2463,17 +2463,17 @@
         "entry_transactions_owner_id_entry_id_entries_owner_id_id_fk": {
           "name": "entry_transactions_owner_id_entry_id_entries_owner_id_id_fk",
           "tableFrom": "entry_transactions",
+          "tableTo": "entries",
           "columnsFrom": [
             "owner_id",
             "entry_id"
           ],
-          "tableTo": "entries",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2544,13 +2544,13 @@
       "uniqueConstraints": {
         "fx_rates_from_to_date_source_unique": {
           "name": "fx_rates_from_to_date_source_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "from_currency",
             "to_currency",
             "date",
             "source"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -2650,50 +2650,50 @@
         "instrument_source_mappings_owner_id_users_id_fk": {
           "name": "instrument_source_mappings_owner_id_users_id_fk",
           "tableFrom": "instrument_source_mappings",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "instrument_source_mappings_owner_id_instrument_id_instruments_owner_id_id_fk": {
           "name": "instrument_source_mappings_owner_id_instrument_id_instruments_owner_id_id_fk",
           "tableFrom": "instrument_source_mappings",
+          "tableTo": "instruments",
           "columnsFrom": [
             "owner_id",
             "instrument_id"
           ],
-          "tableTo": "instruments",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "instrument_source_mappings_owner_id_id_unique": {
           "name": "instrument_source_mappings_owner_id_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id"
-          ],
-          "nullsNotDistinct": false
+          ]
         },
         "instrument_source_mappings_owner_id_id_instrument_id_unique": {
           "name": "instrument_source_mappings_owner_id_id_instrument_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id",
             "instrument_id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -2763,26 +2763,26 @@
         "instruments_owner_id_users_id_fk": {
           "name": "instruments_owner_id_users_id_fk",
           "tableFrom": "instruments",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "instruments_owner_id_id_unique": {
           "name": "instruments_owner_id_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -2896,67 +2896,67 @@
         "investment_market_quotes_owner_id_users_id_fk": {
           "name": "investment_market_quotes_owner_id_users_id_fk",
           "tableFrom": "investment_market_quotes",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "investment_market_quotes_owner_id_instrument_id_instruments_owner_id_id_fk": {
           "name": "investment_market_quotes_owner_id_instrument_id_instruments_owner_id_id_fk",
           "tableFrom": "investment_market_quotes",
+          "tableTo": "instruments",
           "columnsFrom": [
             "owner_id",
             "instrument_id"
           ],
-          "tableTo": "instruments",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "investment_market_quotes_owner_id_instrument_source_mapping_id_instrument_id_instrument_source_mappings_owner_id_id_instrument_id_fk": {
           "name": "investment_market_quotes_owner_id_instrument_source_mapping_id_instrument_id_instrument_source_mappings_owner_id_id_instrument_id_fk",
           "tableFrom": "investment_market_quotes",
+          "tableTo": "instrument_source_mappings",
           "columnsFrom": [
             "owner_id",
             "instrument_source_mapping_id",
             "instrument_id"
           ],
-          "tableTo": "instrument_source_mappings",
           "columnsTo": [
             "owner_id",
             "id",
             "instrument_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "investment_market_quotes_owner_id_id_unique": {
           "name": "investment_market_quotes_owner_id_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id"
-          ],
-          "nullsNotDistinct": false
+          ]
         },
         "investment_market_quotes_owner_instrument_provider_unique": {
           "name": "investment_market_quotes_owner_instrument_provider_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "instrument_id",
             "provider"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -3025,50 +3025,50 @@
         "investment_snapshot_cash_balances_owner_id_users_id_fk": {
           "name": "investment_snapshot_cash_balances_owner_id_users_id_fk",
           "tableFrom": "investment_snapshot_cash_balances",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "investment_snapshot_cash_balances_owner_id_snapshot_id_investment_snapshot_details_owner_id_id_fk": {
           "name": "investment_snapshot_cash_balances_owner_id_snapshot_id_investment_snapshot_details_owner_id_id_fk",
           "tableFrom": "investment_snapshot_cash_balances",
+          "tableTo": "investment_snapshot_details",
           "columnsFrom": [
             "owner_id",
             "snapshot_id"
           ],
-          "tableTo": "investment_snapshot_details",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "investment_snapshot_cash_balances_owner_id_id_unique": {
           "name": "investment_snapshot_cash_balances_owner_id_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id"
-          ],
-          "nullsNotDistinct": false
+          ]
         },
         "investment_snapshot_cash_balances_owner_snapshot_currency_unique": {
           "name": "investment_snapshot_cash_balances_owner_snapshot_currency_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "snapshot_id",
             "currency"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -3194,103 +3194,103 @@
         "investment_snapshot_details_owner_id_users_id_fk": {
           "name": "investment_snapshot_details_owner_id_users_id_fk",
           "tableFrom": "investment_snapshot_details",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "investment_snapshot_details_owner_id_account_balance_snapshot_id_account_balance_snapshots_owner_id_id_fk": {
           "name": "investment_snapshot_details_owner_id_account_balance_snapshot_id_account_balance_snapshots_owner_id_id_fk",
           "tableFrom": "investment_snapshot_details",
+          "tableTo": "account_balance_snapshots",
           "columnsFrom": [
             "owner_id",
             "account_balance_snapshot_id"
           ],
-          "tableTo": "account_balance_snapshots",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "investment_snapshot_details_owner_id_account_id_accounts_owner_id_id_fk": {
           "name": "investment_snapshot_details_owner_id_account_id_accounts_owner_id_id_fk",
           "tableFrom": "investment_snapshot_details",
+          "tableTo": "accounts",
           "columnsFrom": [
             "owner_id",
             "account_id"
           ],
-          "tableTo": "accounts",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "investment_snapshot_details_owner_id_connection_id_connections_owner_id_id_fk": {
           "name": "investment_snapshot_details_owner_id_connection_id_connections_owner_id_id_fk",
           "tableFrom": "investment_snapshot_details",
+          "tableTo": "connections",
           "columnsFrom": [
             "owner_id",
             "connection_id"
           ],
-          "tableTo": "connections",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "investment_snapshot_details_owner_id_sync_run_id_sync_runs_owner_id_id_fk": {
           "name": "investment_snapshot_details_owner_id_sync_run_id_sync_runs_owner_id_id_fk",
           "tableFrom": "investment_snapshot_details",
+          "tableTo": "sync_runs",
           "columnsFrom": [
             "owner_id",
             "sync_run_id"
           ],
-          "tableTo": "sync_runs",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "investment_snapshot_details_owner_id_id_unique": {
           "name": "investment_snapshot_details_owner_id_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id"
-          ],
-          "nullsNotDistinct": false
+          ]
         },
         "investment_snapshot_details_owner_id_snapshot_unique": {
           "name": "investment_snapshot_details_owner_id_snapshot_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "account_balance_snapshot_id"
-          ],
-          "nullsNotDistinct": false
+          ]
         },
         "investment_snapshot_details_owner_id_account_week_unique": {
           "name": "investment_snapshot_details_owner_id_account_week_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "account_id",
             "week_start"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -3408,65 +3408,65 @@
         "investment_snapshot_positions_owner_id_users_id_fk": {
           "name": "investment_snapshot_positions_owner_id_users_id_fk",
           "tableFrom": "investment_snapshot_positions",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "investment_snapshot_positions_owner_id_snapshot_id_investment_snapshot_details_owner_id_id_fk": {
           "name": "investment_snapshot_positions_owner_id_snapshot_id_investment_snapshot_details_owner_id_id_fk",
           "tableFrom": "investment_snapshot_positions",
+          "tableTo": "investment_snapshot_details",
           "columnsFrom": [
             "owner_id",
             "snapshot_id"
           ],
-          "tableTo": "investment_snapshot_details",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "investment_snapshot_positions_owner_id_instrument_id_instruments_owner_id_id_fk": {
           "name": "investment_snapshot_positions_owner_id_instrument_id_instruments_owner_id_id_fk",
           "tableFrom": "investment_snapshot_positions",
+          "tableTo": "instruments",
           "columnsFrom": [
             "owner_id",
             "instrument_id"
           ],
-          "tableTo": "instruments",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "investment_snapshot_positions_owner_id_id_unique": {
           "name": "investment_snapshot_positions_owner_id_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id"
-          ],
-          "nullsNotDistinct": false
+          ]
         },
         "investment_snapshot_positions_owner_snapshot_instrument_unique": {
           "name": "investment_snapshot_positions_owner_snapshot_instrument_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "snapshot_id",
             "instrument_id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -3590,80 +3590,80 @@
         "investment_source_evidence_owner_id_users_id_fk": {
           "name": "investment_source_evidence_owner_id_users_id_fk",
           "tableFrom": "investment_source_evidence",
+          "tableTo": "users",
           "columnsFrom": [
             "owner_id"
           ],
-          "tableTo": "users",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "investment_source_evidence_owner_id_connection_id_connections_owner_id_id_fk": {
           "name": "investment_source_evidence_owner_id_connection_id_connections_owner_id_id_fk",
           "tableFrom": "investment_source_evidence",
+          "tableTo": "connections",
           "columnsFrom": [
             "owner_id",
             "connection_id"
           ],
-          "tableTo": "connections",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "investment_source_evidence_owner_id_sync_run_id_sync_runs_owner_id_id_fk": {
           "name": "investment_source_evidence_owner_id_sync_run_id_sync_runs_owner_id_id_fk",
           "tableFrom": "investment_source_evidence",
+          "tableTo": "sync_runs",
           "columnsFrom": [
             "owner_id",
             "sync_run_id"
           ],
-          "tableTo": "sync_runs",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "investment_source_evidence_owner_id_account_id_accounts_owner_id_id_fk": {
           "name": "investment_source_evidence_owner_id_account_id_accounts_owner_id_id_fk",
           "tableFrom": "investment_source_evidence",
+          "tableTo": "accounts",
           "columnsFrom": [
             "owner_id",
             "account_id"
           ],
-          "tableTo": "accounts",
           "columnsTo": [
             "owner_id",
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "investment_source_evidence_owner_id_id_unique": {
           "name": "investment_source_evidence_owner_id_id_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "id"
-          ],
-          "nullsNotDistinct": false
+          ]
         },
         "investment_source_evidence_owner_sync_account_unique": {
           "name": "investment_source_evidence_owner_sync_account_unique",
+          "nullsNotDistinct": false,
           "columns": [
             "owner_id",
             "sync_run_id",
             "account_id"
-          ],
-          "nullsNotDistinct": false
+          ]
         }
       },
       "policies": {},
@@ -3899,10 +3899,10 @@
     }
   },
   "schemas": {},
-  "views": {},
   "sequences": {},
   "roles": {},
   "policies": {},
+  "views": {},
   "_meta": {
     "columns": {},
     "schemas": {},

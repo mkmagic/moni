@@ -82,6 +82,10 @@ export function BudgetSetup({
   const [rollovers, setRollovers] = useState<Record<string, boolean>>({});
   const [dropped, setDropped] = useState<Set<string>>(new Set());
   const [income, setIncome] = useState("");
+  // The residual tracks what the user drops until they type over it — after
+  // that it is their number and must stop moving under them.
+  const [residual, setResidual] = useState("");
+  const [residualEdited, setResidualEdited] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, startTransition] = useTransition();
 
@@ -93,7 +97,12 @@ export function BudgetSetup({
       return;
     }
     const body = (await res.json()) as BudgetProposal & { months: number };
-    setProposal({ ceilings: body.ceilings, income: body.income });
+    setProposal({
+      ceilings: body.ceilings,
+      income: body.income,
+      uncategorized: body.uncategorized,
+    });
+    setResidualEdited(false);
     setMonths(body.months);
     setAmounts(
       Object.fromEntries(body.ceilings.map((c) => [c.categoryId, roundCeiling(c.amount.amount)])),
@@ -107,7 +116,12 @@ export function BudgetSetup({
   async function accept() {
     if (!proposal) return;
     setError(null);
-    const ceilings = proposal.ceilings
+    const ceilings: {
+      categoryId: string | null;
+      amount: string;
+      effectiveFrom: string;
+      rollover: boolean;
+    }[] = proposal.ceilings
       .filter((c) => !dropped.has(c.categoryId))
       .map((c) => ({
         categoryId: c.categoryId,
@@ -115,6 +129,16 @@ export function BudgetSetup({
         effectiveFrom,
         rollover: rollovers[c.categoryId] ?? false,
       }));
+
+    // A residual of zero is not a budget line — it is the absence of one.
+    if (decimalOrZero(residualAmount).greaterThan(0)) {
+      ceilings.push({
+        categoryId: null,
+        amount: residualAmount,
+        effectiveFrom,
+        rollover: false,
+      });
+    }
 
     const res = await fetch("/api/budget/ceilings", {
       method: "POST",
@@ -148,10 +172,24 @@ export function BudgetSetup({
   }
 
   const kept = (proposal?.ceilings ?? []).filter((c) => !dropped.has(c.categoryId));
-  const ceilingTotal = kept.reduce(
-    (acc, c) => acc.plus(decimalOrZero(amounts[c.categoryId])),
-    new Decimal(0),
-  );
+
+  /**
+   * What "everything else" should hold: spending that never had a category,
+   * plus every line the user has dropped. Dropping a category does not make
+   * its spending stop — it makes it unitemized — so the money visibly moves
+   * here rather than vanishing from the plan.
+   */
+  const suggestedResidual = (proposal?.ceilings ?? [])
+    .filter((c) => dropped.has(c.categoryId))
+    .reduce(
+      (acc, c) => acc.plus(new Decimal(c.amount.amount)),
+      decimalOrZero(proposal?.uncategorized.amount),
+    );
+  const residualAmount = residualEdited ? residual : roundCeiling(suggestedResidual.toFixed());
+
+  const ceilingTotal = kept
+    .reduce((acc, c) => acc.plus(decimalOrZero(amounts[c.categoryId])), new Decimal(0))
+    .plus(decimalOrZero(residualAmount));
 
   if (historyMonths < MINIMUM_MONTHS) {
     return (
@@ -238,6 +276,44 @@ export function BudgetSetup({
                 ))}
               </ul>
             )}
+            {/* The residual belongs on the everyday step: it is discretionary
+                by definition, and this is where dropping a line above visibly
+                moves its money into it. */}
+            {step === "everyday" && (
+              <div className="flex flex-col gap-2 rounded-[var(--radius)] bg-muted/40 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-sm text-foreground">Everything else</span>
+                    <span className="max-w-xl text-xs text-muted-foreground">
+                      {
+                        "Room for spending you haven't itemized — categories that don't exist yet, and anything you removed above. Without it, that money is missing from what this budget says you'll save."
+                      }
+                    </span>
+                  </div>
+                  <span className="w-32 shrink-0">
+                    <Input
+                      value={residualAmount}
+                      onChange={(e) => {
+                        setResidualEdited(true);
+                        setResidual(e.target.value);
+                      }}
+                      inputMode="decimal"
+                      aria-label="Monthly ceiling for everything else"
+                    />
+                  </span>
+                </div>
+                {residualEdited && (
+                  <button
+                    type="button"
+                    onClick={() => setResidualEdited(false)}
+                    className="self-start text-xs text-muted-foreground underline underline-offset-2 transition hover:text-foreground"
+                  >
+                    {"Back to what Moni suggests"}
+                  </button>
+                )}
+              </div>
+            )}
+
             {dropped.size > 0 && (
               <button
                 type="button"
@@ -260,6 +336,7 @@ export function BudgetSetup({
             currency={currency}
             fixedCount={fixed.length}
             everydayCount={everyday.length}
+            residualIncluded={decimalOrZero(residualAmount).greaterThan(0)}
           />
         )}
 
@@ -446,6 +523,7 @@ function Verdict({
   currency,
   fixedCount,
   everydayCount,
+  residualIncluded,
 }: {
   income: string;
   onIncome: (next: string) => void;
@@ -454,6 +532,7 @@ function Verdict({
   currency: string;
   fixedCount: number;
   everydayCount: number;
+  residualIncluded: boolean;
 }) {
   const left = decimalOrZero(income).minus(ceilingTotal);
   const hasIncome = decimalOrZero(income).isPositive();
@@ -484,7 +563,9 @@ function Verdict({
       <dl className="flex flex-col gap-2 rounded-[var(--radius)] bg-muted/40 p-4 text-sm">
         <div className="flex items-baseline justify-between gap-3">
           <dt className="text-muted-foreground">
-            {`Budgeted out · ${fixedCount} fixed, ${everydayCount} everyday`}
+            {`Budgeted out · ${fixedCount} fixed, ${everydayCount} everyday${
+              residualIncluded ? ", plus everything else" : ""
+            }`}
           </dt>
           <dd className="text-foreground">
             <Money value={{ amount: ceilingTotal.toFixed(), currency }} />

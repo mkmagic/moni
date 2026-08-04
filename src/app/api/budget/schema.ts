@@ -18,7 +18,9 @@ const PositiveAmount = z
 const Month = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "not a YYYY-MM month");
 
 export const CeilingBodySchema = z.object({
-  categoryId: z.uuid(),
+  /** Null is the residual ceiling — "everything else", the one budget line
+   * that is not a category (src/domain/budget.ts `RESIDUAL_KEY`). */
+  categoryId: z.uuid().nullable(),
   amount: PositiveAmount,
   effectiveFrom: Month,
   rollover: z.boolean(),

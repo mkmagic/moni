@@ -266,7 +266,7 @@
           "name": "category_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "amount_ct": {
           "name": "amount_ct",
@@ -352,7 +352,7 @@
         },
         "budget_ceilings_owner_category_effective_unique": {
           "name": "budget_ceilings_owner_category_effective_unique",
-          "nullsNotDistinct": false,
+          "nullsNotDistinct": true,
           "columns": [
             "owner_id",
             "category_id",
