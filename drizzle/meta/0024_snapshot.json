@@ -272,7 +272,7 @@
           "name": "amount_ct",
           "type": "bytea",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "effective_from": {
           "name": "effective_from",

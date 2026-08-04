@@ -23,7 +23,7 @@ import {
   BudgetCategoryNotBudgetableError,
   createCeilings,
   currentMonth,
-  deleteCeiling,
+  endCeiling,
   getBudgetMonth,
   getBudgetSummary,
   listCeilings,
@@ -697,8 +697,8 @@ describe("setup from history", () => {
 });
 
 describe("deleteCeiling and the dashboard summary", () => {
-  it("stops budgeting a category, history included", async () => {
-    const fx = await freshFixture("budget-delete");
+  it("ends a budget line from this month on, leaving earlier months alone", async () => {
+    const fx = await freshFixture("budget-end");
     const groceries = await expenseCategory(fx, "Groceries");
     await setCeiling(fx.session, {
       categoryId: groceries,
@@ -706,9 +706,57 @@ describe("deleteCeiling and the dashboard summary", () => {
       effectiveFrom: PRIOR,
       rollover: false,
     });
-    await deleteCeiling(fx.session, groceries);
+    await addEntry(fx, `${PRIOR}-08`, "-1400", groceries); // over budget then
 
+    await endCeiling(fx.session, groceries, MONTH);
+
+    // From MONTH on there is no ceiling...
     expect((await getBudgetMonth(fx.session, MONTH)).hasBudget).toBe(false);
+    // ...but PRIOR still reads exactly as it was lived. Deleting the history
+    // would have made a finished month stop being over budget because of
+    // something the user did later.
+    const past = await getBudgetMonth(fx.session, PRIOR);
+    expect(past.hasBudget).toBe(true);
+    expect(past.ceilingTotal.amount).toBe("1000");
+    expect(past.overBudgetCount).toBe(1);
+  });
+
+  it("leaves no row at all when a line is ended in the month it began", async () => {
+    const fx = await freshFixture("budget-end-same-month");
+    const groceries = await expenseCategory(fx, "Groceries");
+    await setCeiling(fx.session, {
+      categoryId: groceries,
+      amount: "1000",
+      effectiveFrom: MONTH,
+      rollover: false,
+    });
+    // Nothing was ever in force, so there is no history to protect and no
+    // end-marker worth keeping.
+    await endCeiling(fx.session, groceries, MONTH);
+    expect(await listCeilings(fx.session, MONTH)).toHaveLength(0);
+    expect((await getBudgetMonth(fx.session, MONTH)).hasBudget).toBe(false);
+  });
+
+  it("can start budgeting a category again after ending it", async () => {
+    const fx = await freshFixture("budget-end-restart");
+    const groceries = await expenseCategory(fx, "Groceries");
+    await setCeiling(fx.session, {
+      categoryId: groceries,
+      amount: "1000",
+      effectiveFrom: shiftMonth(PRIOR, -1),
+      rollover: false,
+    });
+    await endCeiling(fx.session, groceries, PRIOR);
+    expect((await getBudgetMonth(fx.session, PRIOR)).hasBudget).toBe(false);
+
+    await setCeiling(fx.session, {
+      categoryId: groceries,
+      amount: "1200",
+      effectiveFrom: MONTH,
+      rollover: false,
+    });
+    expect((await getBudgetMonth(fx.session, MONTH)).ceilingTotal.amount).toBe("1200");
+    // The gap month stays a gap.
     expect((await getBudgetMonth(fx.session, PRIOR)).hasBudget).toBe(false);
   });
 
@@ -1103,16 +1151,19 @@ describe("the residual ceiling", () => {
     expect(residual?.available.amount).toBe("1300");
   });
 
-  it("is deleted by its own key, not by a uuid", async () => {
-    const fx = await freshFixture("residual-delete");
+  it("is ended by its own key, not by a uuid", async () => {
+    const fx = await freshFixture("residual-end");
     await setCeiling(fx.session, {
       categoryId: null,
       amount: "800",
-      effectiveFrom: MONTH,
+      effectiveFrom: PRIOR,
       rollover: false,
     });
-    expect(await listCeilings(fx.session, MONTH)).toHaveLength(1);
-    await deleteCeiling(fx.session, null);
+    expect(await listCeilings(fx.session, PRIOR)).toHaveLength(1);
+
+    await endCeiling(fx.session, null, MONTH);
     expect(await listCeilings(fx.session, MONTH)).toHaveLength(0);
+    // The month it governed keeps it.
+    expect(await listCeilings(fx.session, PRIOR)).toHaveLength(1);
   });
 });

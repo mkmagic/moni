@@ -474,8 +474,11 @@ function CeilingDialog({
   }
 
   async function remove() {
-    // RESIDUAL_KEY is also how the route names it, since it has no uuid.
-    await fetch(`/api/budget/ceilings/${categoryId}`, { method: "DELETE" });
+    // Ends the line from this month forward rather than erasing it —
+    // RESIDUAL_KEY is also how the route names the residual, having no uuid.
+    await fetch(`/api/budget/ceilings/${categoryId}?month=${effectiveFrom}`, {
+      method: "DELETE",
+    });
     onSaved();
   }
 

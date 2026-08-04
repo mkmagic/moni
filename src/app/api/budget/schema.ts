@@ -5,6 +5,7 @@
 // crossing this boundary is the one thing the money invariant forbids
 // outright, so the schema refuses it rather than coercing.
 import { z } from "zod";
+import Decimal from "decimal.js";
 import { DECIMAL_STRING_PATTERN } from "@/lib/money";
 
 /** A positive decimal string. A ceiling of zero is expressed by removing the
@@ -12,7 +13,12 @@ import { DECIMAL_STRING_PATTERN } from "@/lib/money";
 const PositiveAmount = z
   .string()
   .regex(DECIMAL_STRING_PATTERN, "not a decimal string")
-  .refine((value) => !value.startsWith("-") && Number.parseFloat(value) > 0, "must be positive");
+  // Compared as a decimal, not a float. The pattern above already rules out
+  // anything `parseFloat` would mangle, but "never a JS float for money, not
+  // even transiently" (AGENTS.md) has no carve-out for comparisons — and the
+  // pattern and this check would have to be kept in step forever to keep the
+  // exception safe.
+  .refine((value) => new Decimal(value).greaterThan(0), "must be positive");
 
 /** "YYYY-MM". */
 const Month = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "not a YYYY-MM month");

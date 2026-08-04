@@ -2,7 +2,7 @@ CREATE TABLE "budget_ceilings" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"owner_id" uuid NOT NULL,
 	"category_id" uuid,
-	"amount_ct" "bytea" NOT NULL,
+	"amount_ct" "bytea",
 	"effective_from" date NOT NULL,
 	"rollover" boolean DEFAULT false NOT NULL,
 	"version" integer DEFAULT 1 NOT NULL,

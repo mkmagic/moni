@@ -63,6 +63,14 @@ uniqueness rests on a `NULLS NOT DISTINCT` index, because Postgres otherwise
 treats every NULL as distinct and would let "everything else" hold several
 rival numbers in one month.
 
+**Stopping a budget line ends it; it never erases it.** A row with no
+`amount_ct` from month M means "not budgeted from M forward". Deleting the
+history instead would restate every finished month against a budget that no
+longer exists — March would stop being over budget because of something the
+user did in August — which is the exact failure effective-dating exists to
+prevent. A line ended in the month it began leaves no row at all: nothing was
+ever in force, so there is no history to protect.
+
 ## Consequences
 
 - **A finished month tells the truth.** March keeps the number that was in

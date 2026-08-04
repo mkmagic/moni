@@ -43,8 +43,16 @@ export const budgetCeilings = pgTable(
      * residual contained.
      */
     categoryId: uuid("category_id"),
-    /** Tier-1. AAD-bound to this row's own id/column/version. */
-    amountCt: bytea("amount_ct").notNull(),
+    /**
+     * Tier-1. AAD-bound to this row's own id/column/version.
+     *
+     * NULL **ends the line** from this row's month forward: the category
+     * stops being budgeted, without touching the months it was. Deleting the
+     * rows instead would restate every past month against a budget that no
+     * longer exists, and a finished month telling the truth is the whole
+     * reason these rows are effective-dated.
+     */
+    amountCt: bytea("amount_ct"),
     /** First day of the month this ceiling takes effect, as "YYYY-MM-01". */
     effectiveFrom: date("effective_from").notNull(),
     /**

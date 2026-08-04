@@ -220,7 +220,9 @@ export interface CeilingSuggestion {
 interface CeilingRow {
   /** Null is the residual ceiling — see `RESIDUAL_KEY`. */
   categoryId: string | null;
-  amount: Decimal;
+  /** Null ends the line from `effectiveFrom` — this category stops being
+   * budgeted, and the months before it keep the numbers they had. */
+  amount: Decimal | null;
   effectiveFrom: string;
   rollover: boolean;
 }
@@ -229,7 +231,9 @@ async function loadCeilings(tx: Tx, dataKey: Uint8Array): Promise<CeilingRow[]> 
   const rows = await tx.select().from(budgetCeilings).orderBy(asc(budgetCeilings.effectiveFrom));
   return rows.map((row) => ({
     categoryId: row.categoryId,
-    amount: new Decimal(decText(dataKey, row.amountCt, row.id, "amount_ct", row.version) ?? "0"),
+    amount: row.amountCt
+      ? new Decimal(decText(dataKey, row.amountCt, row.id, "amount_ct", row.version) ?? "0")
+      : null,
     effectiveFrom: row.effectiveFrom,
     rollover: row.rollover,
   }));
@@ -239,16 +243,25 @@ async function loadCeilings(tx: Tx, dataKey: Uint8Array): Promise<CeilingRow[]> 
  * The ceiling in force for each category in `month` — the latest row whose
  * `effective_from` is not in the future. `rows` must be ordered by
  * `effective_from` ascending.
+ *
+ * A row with no amount ends the line, so it *removes* the entry rather than
+ * replacing it. A later row can start the category budgeting again, which is
+ * why this is a delete-and-continue and not a stop.
  */
-function ceilingsInForce(rows: CeilingRow[], month: string): Map<string, CeilingRow> {
-  const inForce = new Map<string, CeilingRow>();
+function ceilingsInForce(rows: CeilingRow[], month: string): Map<string, InForceCeiling> {
+  const inForce = new Map<string, InForceCeiling>();
   const cutoff = monthStart(month);
   for (const row of rows) {
     if (row.effectiveFrom > cutoff) continue;
-    inForce.set(row.categoryId ?? RESIDUAL_KEY, row); // ascending order, so the last wins
+    const key = row.categoryId ?? RESIDUAL_KEY;
+    if (row.amount === null) inForce.delete(key);
+    else inForce.set(key, { ...row, amount: row.amount }); // ascending, so the last wins
   }
   return inForce;
 }
+
+/** A ceiling that is actually in force, so its amount is known to exist. */
+type InForceCeiling = CeilingRow & { amount: Decimal };
 
 interface CategoryRow {
   id: string;
@@ -443,6 +456,38 @@ function residualSpentOn(
   return total.negated();
 }
 
+/**
+ * The surplus (or deficit) a rollover ceiling carries into `month`, replayed
+ * from `fromMonth`.
+ *
+ * One function for both a category's ceiling and the residual's, because the
+ * rules are identical and must stay identical: both signs carry, and a past
+ * month contributes only if the ceiling in force *then* had rollover on — so
+ * switching rollover on today never hands back history the user never
+ * budgeted for. They differ only in what "spent" means, which is the
+ * `spentIn` argument.
+ *
+ * Returns null when this ceiling does not roll over, so the caller can tell
+ * "carried nothing" from "does not carry".
+ */
+function carriedInto(
+  key: string,
+  month: string,
+  fromMonth: string,
+  ceilingRows: CeilingRow[],
+  rollsOver: boolean,
+  spentIn: (month: string) => Decimal,
+): Decimal | null {
+  if (!rollsOver) return null;
+  let carried = new Decimal(0);
+  for (const past of monthRange(fromMonth, shiftMonth(month, -1))) {
+    const pastCeiling = ceilingsInForce(ceilingRows, past).get(key);
+    if (!pastCeiling || !pastCeiling.rollover) continue;
+    carried = carried.plus(pastCeiling.amount).minus(spentIn(past));
+  }
+  return carried;
+}
+
 /** Exact, unrounded — rounding to a currency's minor unit happens at the
  * display edge and never here (money-and-currency.md §3). */
 const money = (amount: Decimal, currency: string): Money => ({
@@ -495,19 +540,14 @@ export async function getBudgetMonth(session: Session, month: string): Promise<B
       if (!category) continue; // category deleted out from under the ceiling
       const spent = spentOn(categoryId, month, flows, budgeted, cats);
 
-      // Both surplus and deficit carry, and only from months that were
-      // themselves rollover months.
-      let carriedIn: Decimal | null = null;
-      if (ceiling.rollover) {
-        carriedIn = new Decimal(0);
-        for (const past of monthRange(fromMonth, shiftMonth(month, -1))) {
-          const pastCeiling = ceilingsInForce(ceilingRows, past).get(categoryId);
-          if (!pastCeiling || !pastCeiling.rollover) continue;
-          carriedIn = carriedIn
-            .plus(pastCeiling.amount)
-            .minus(spentOn(categoryId, past, flows, budgeted, cats));
-        }
-      }
+      const carriedIn = carriedInto(
+        categoryId,
+        month,
+        fromMonth,
+        ceilingRows,
+        ceiling.rollover,
+        (past) => spentOn(categoryId, past, flows, budgeted, cats),
+      );
 
       const available = ceiling.amount.plus(carriedIn ?? new Decimal(0));
       const remaining = available.minus(spent);
@@ -540,17 +580,14 @@ export async function getBudgetMonth(session: Session, month: string): Promise<B
       // Replayed against the categories that were budgeted in each past
       // month, not today's — otherwise giving Pharmacy its own ceiling now
       // would retroactively shrink what the residual carried out of March.
-      let carriedIn: Decimal | null = null;
-      if (residual.rollover) {
-        carriedIn = new Decimal(0);
-        for (const past of monthRange(fromMonth, shiftMonth(month, -1))) {
-          const pastCeiling = ceilingsInForce(ceilingRows, past).get(RESIDUAL_KEY);
-          if (!pastCeiling || !pastCeiling.rollover) continue;
-          carriedIn = carriedIn
-            .plus(pastCeiling.amount)
-            .minus(residualSpentOn(past, flows, budgetedIdsIn(ceilingRows, past), cats));
-        }
-      }
+      const carriedIn = carriedInto(
+        RESIDUAL_KEY,
+        month,
+        fromMonth,
+        ceilingRows,
+        residual.rollover,
+        (past) => residualSpentOn(past, flows, budgetedIdsIn(ceilingRows, past), cats),
+      );
 
       const available = residual.amount.plus(carriedIn ?? new Decimal(0));
       const remaining = available.minus(residualSpend);
@@ -613,8 +650,14 @@ export async function getBudgetMonth(session: Session, month: string): Promise<B
         pace === null
           ? null
           : money(
+              // Scaled by the day counts themselves, not by `pace`. `pace` is
+              // a native float for the bar's geometry, and dividing a money
+              // value by 0.12903225806451613 would carry that float's error
+              // into a figure someone reads.
               new Decimal(fixed.spent.amount).plus(
-                new Decimal(everyday.spent.amount).dividedBy(new Decimal(pace)),
+                new Decimal(everyday.spent.amount)
+                  .times(daysIn(month))
+                  .dividedBy(Number(today.slice(8, 10))),
               ),
               baseCurrency,
             ),
@@ -645,18 +688,19 @@ function section(rows: BudgetRowView[], currency: string): BudgetSectionView {
  * 8th of a 31-day month is 8/31, not 7/31, because today's money is already
  * at risk. */
 function paceOf(today: string): number {
-  const day = Number(today.slice(8, 10));
-  const days = Number(monthEnd(today.slice(0, 7)).slice(8, 10));
-  return day / days;
+  return Number(today.slice(8, 10)) / daysIn(today.slice(0, 7));
+}
+
+/** How many days the month has. */
+function daysIn(month: string): number {
+  return Number(monthEnd(month).slice(8, 10));
 }
 
 /** Days still to come this month, today excluded — today is already counted
  * as spent by `paceOf`, and counting it twice would say the month has one
  * more day of room than it does. */
 function daysLeftIn(today: string): number {
-  const day = Number(today.slice(8, 10));
-  const days = Number(monthEnd(today.slice(0, 7)).slice(8, 10));
-  return days - day;
+  return daysIn(today.slice(0, 7)) - Number(today.slice(8, 10));
 }
 
 async function plannedIncomeFor(
@@ -704,8 +748,16 @@ export async function availableHistoryMonths(session: Session): Promise<number> 
       .orderBy(asc(entries.date))
       .limit(1);
     if (!earliest) return 0;
-    const months = monthRange(earliest.date.slice(0, 7), shiftMonth(currentMonth(), -1)).length;
-    return Math.min(months, 12);
+
+    // A month the user only joined partway through is not a month of
+    // history: averaging a three-day May in as if it were a whole one drags
+    // every suggestion down. It counts only if the first entry lands on the
+    // 1st; otherwise history starts the month after.
+    const firstFull =
+      earliest.date.endsWith("-01") ? earliest.date.slice(0, 7) : shiftMonth(earliest.date.slice(0, 7), 1); // prettier-ignore
+    const lastComplete = shiftMonth(currentMonth(), -1);
+    if (firstFull > lastComplete) return 0;
+    return Math.min(monthRange(firstFull, lastComplete).length, 12);
   });
 }
 
@@ -942,20 +994,79 @@ export async function setCeiling(session: Session, input: SetCeilingInput): Prom
   });
 }
 
-/** Stops budgeting a category entirely, history included — the user is
- * saying "this was never a budget line", not "it ended". Ending a line is
- * `setCeiling` with a new amount from this month forward. */
-export async function deleteCeiling(session: Session, categoryId: string | null): Promise<void> {
-  await withUser(session.userId, async (tx) => {
+/**
+ * Stops budgeting a category from `effectiveFrom` forward, leaving every
+ * earlier month exactly as it was lived.
+ *
+ * Written as an ordinary effective-dated row with no amount, not as a
+ * DELETE. Deleting the history would restate every finished month against a
+ * budget that no longer exists — March would stop being over budget because
+ * of something the user did in August — and a past month telling the truth is
+ * the entire reason these rows are effective-dated (ADR 0010).
+ *
+ * Ending a line that was never in force in an earlier month is therefore a
+ * no-op rather than an error: there is nothing to end and nothing to keep.
+ */
+export async function endCeiling(
+  session: Session,
+  categoryId: string | null,
+  effectiveFrom: string,
+): Promise<void> {
+  const { userId } = session;
+  await withUser(userId, async (tx) => {
+    const from = monthStart(effectiveFrom);
     // `= NULL` matches nothing in SQL, so the residual needs `IS NULL`.
-    await tx
-      .delete(budgetCeilings)
-      .where(
-        categoryId === null
-          ? isNull(budgetCeilings.categoryId)
-          : eq(budgetCeilings.categoryId, categoryId),
-      );
+    const sameCategory =
+      categoryId === null
+        ? isNull(budgetCeilings.categoryId)
+        : eq(budgetCeilings.categoryId, categoryId);
+
+    const [replaced] = await tx
+      .select()
+      .from(budgetCeilings)
+      .where(and(sameCategory, eq(budgetCeilings.effectiveFrom, from)));
+
+    // A ceiling set this month and ended this month leaves no row at all:
+    // the month never had one in force, so there is no history to protect.
+    if (replaced) {
+      await tx.delete(budgetCeilings).where(eq(budgetCeilings.id, replaced.id));
+    }
+
+    const stillBudgeted = ceilingsInForce(await loadCeilingRowsFor(tx), effectiveFrom).has(
+      categoryId ?? RESIDUAL_KEY,
+    );
+    if (!stillBudgeted) return;
+
+    await tx.insert(budgetCeilings).values({
+      id: randomUUID(),
+      ownerId: userId,
+      categoryId,
+      amountCt: null,
+      effectiveFrom: from,
+      rollover: false,
+    });
   });
+}
+
+/** The ceiling rows, structural columns only — enough for `ceilingsInForce`,
+ * which never looks at an amount, and so needs no data key. */
+async function loadCeilingRowsFor(tx: Tx): Promise<CeilingRow[]> {
+  const rows = await tx
+    .select({
+      categoryId: budgetCeilings.categoryId,
+      amountCt: budgetCeilings.amountCt,
+      effectiveFrom: budgetCeilings.effectiveFrom,
+      rollover: budgetCeilings.rollover,
+    })
+    .from(budgetCeilings)
+    .orderBy(asc(budgetCeilings.effectiveFrom));
+  return rows.map((row) => ({
+    categoryId: row.categoryId,
+    // Only presence matters here, so the ciphertext is never opened.
+    amount: row.amountCt ? new Decimal(0) : null,
+    effectiveFrom: row.effectiveFrom,
+    rollover: row.rollover,
+  }));
 }
 
 /** Sets planned monthly income from `effectiveFrom` forward, same shape and
@@ -1037,10 +1148,7 @@ export async function getBudgetSummary(session: Session): Promise<{
     month,
     // The card is about the budget, so it shows budgeted spend against the
     // ceilings — not `spentTotal`, which includes money no ceiling governs.
-    spent: money(
-      new Decimal(view.spentTotal.amount).minus(view.unbudgetedSpend.amount),
-      view.currency,
-    ),
+    spent: view.budgetedSpend,
     ceilingTotal: view.ceilingTotal,
     overBudgetCount: view.overBudgetCount,
   };

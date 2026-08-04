@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { MonthQuerySchema } from "../../schema";
 import { getSessionFromRequest } from "@/domain/auth";
-import { RESIDUAL_KEY, deleteCeiling } from "@/domain/budget";
+import { RESIDUAL_KEY, endCeiling } from "@/domain/budget";
 
-/** Stops budgeting a category outright, history included. Ending a budget
- * line while keeping what it was is `POST /api/budget/ceilings` with a new
- * amount from this month forward. */
+/** Stops budgeting a category from the given month forward. Earlier months
+ * keep the ceilings they had — nothing is erased, so a finished month still
+ * reads as it was lived. */
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ categoryId: string }> },
@@ -23,6 +24,11 @@ export async function DELETE(
     return NextResponse.json({ error: "invalid request" }, { status: 400 });
   }
 
-  await deleteCeiling(session, target);
+  const month = req.nextUrl.searchParams.get("month");
+  if (!month || !MonthQuerySchema.safeParse(month).success) {
+    return NextResponse.json({ error: "invalid request" }, { status: 400 });
+  }
+
+  await endCeiling(session, target, month);
   return NextResponse.json({ ok: true });
 }
