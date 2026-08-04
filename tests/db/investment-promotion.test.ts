@@ -553,8 +553,11 @@ describe("promoteInvestmentSnapshot", () => {
       .values({
         id: randomUUID(),
         fromCurrency: "JPY",
+        // 23:59Z on 07-31 is already 08-01 in Jerusalem, and the window is
+        // counted in Israeli calendar days (investment-valuation.ts's
+        // withinSevenDays), so 07-25 — not 07-24 — is the seventh day back.
         toCurrency: "ILS",
-        date: "2026-07-24",
+        date: "2026-07-25",
         rate: "0.02",
         source: "boi",
       })

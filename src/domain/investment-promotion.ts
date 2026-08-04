@@ -22,6 +22,7 @@ import {
 import { getConnectorDefinition } from "@/lib/connectors";
 import { errorLabel, syncLog } from "@/lib/sync-log";
 import { decText, encText } from "./fields";
+import { israelDate } from "./investment-valuation";
 import { markSyncRunFailed } from "./sync-promotion";
 
 type Tx = UserTransaction;
@@ -382,8 +383,15 @@ async function resolveInstrument(
   return instrumentId;
 }
 
+// BOI publishes a rate per Israeli calendar day, and every other investment
+// date in the domain is bucketed with `israelDate` (investment-valuation.ts
+// resolves FX for the same observation that way). Ceiling this lookup on the
+// UTC date instead put an evening-UTC observation — 21:00–24:00Z, already the
+// next day in Jerusalem — a day behind its own rate, so the only rate that
+// could serve it sorted out of range.
 async function ilsRate(tx: Tx, currency: string, asOf: Date): Promise<Decimal> {
   if (currency === "ILS") return new Decimal(1);
+  const target = israelDate(asOf);
   const rows = await tx
     .select()
     .from(fxRates)
@@ -391,7 +399,7 @@ async function ilsRate(tx: Tx, currency: string, asOf: Date): Promise<Decimal> {
       and(
         eq(fxRates.fromCurrency, currency),
         eq(fxRates.toCurrency, "ILS"),
-        lte(fxRates.date, isoDate(asOf)),
+        lte(fxRates.date, target),
       ),
     )
     .orderBy(desc(fxRates.date))
@@ -400,8 +408,7 @@ async function ilsRate(tx: Tx, currency: string, asOf: Date): Promise<Decimal> {
   if (
     !row ||
     row.source !== "boi" ||
-    (Date.parse(`${isoDate(asOf)}T00:00:00Z`) - Date.parse(`${row.date}T00:00:00Z`)) / 86_400_000 >
-      7
+    (Date.parse(`${target}T00:00:00Z`) - Date.parse(`${row.date}T00:00:00Z`)) / 86_400_000 > 7
   )
     fail("missing_fx");
   return new Decimal(row.rate);
