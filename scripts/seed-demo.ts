@@ -418,9 +418,48 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
       excluded?: boolean;
       kind: "standard" | "transfer";
       notes?: string;
+      /** One payment of an installment deal. `enteredAmount` above is that
+       * payment alone and `date` is when it is charged; the deal's own sum
+       * and purchase date live here (issue #69 part A). */
+      installment?: {
+        number: number;
+        total: number;
+        dealAmount: string;
+        dealCurrency: string;
+        purchaseDate: string;
+      };
     }
 
     const entryDefs: EntryDef[] = [];
+
+    // A ₪12,000 appliance bought on the card in 12 payments. Only the first
+    // three have been charged inside the seeded window — the rest arrive in
+    // months the demo doesn't cover yet, which is exactly how a real card
+    // reports one: twelve independent charges, ₪1,000 each, one per month.
+    for (const [index, month] of ENTRY_DATES_MONTHS.entries()) {
+      entryDefs.push({
+        date: `${month}-10`,
+        description: "Electric appliances",
+        accountId: creditCardId,
+        categoryId: categoryIds.entertainment,
+        enteredAmount: "-1000",
+        enteredCurrency: "ILS",
+        accountAmount: "-1000",
+        accountCurrency: "ILS",
+        fxRate: "1",
+        fxStatus: "locked",
+        fxSource: "identity",
+        source: "scrape",
+        kind: "standard",
+        installment: {
+          number: index + 1,
+          total: 12,
+          dealAmount: "-12000",
+          dealCurrency: "ILS",
+          purchaseDate: `${ENTRY_DATES_MONTHS[0]}-08`,
+        },
+      });
+    }
 
     for (const month of ENTRY_DATES_MONTHS) {
       // Salary — income, into checking, on the 25th (or the 24th for the
@@ -660,6 +699,13 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
         entryId: id,
         ownerId: userId,
         kind: def.kind,
+        installmentNumber: def.installment?.number ?? null,
+        totalInstallments: def.installment?.total ?? null,
+        installmentTotalAmountCt: def.installment
+          ? enc(dataKey, id, "installment_total_amount_ct", def.installment.dealAmount)
+          : null,
+        installmentTotalCurrency: def.installment?.dealCurrency ?? null,
+        installmentPurchaseDate: def.installment?.purchaseDate ?? null,
       });
       counts.entryTransactions++;
     }

@@ -21,6 +21,7 @@ function entry(over: Partial<EntryView> & Pick<EntryView, "id">): EntryView {
     categoryLocked: false,
     isTransfer: false,
     merchantName: null,
+    installmentLabel: null,
     amount: { amount: "-100", currency: "ILS" },
     fxPending: false,
     excluded: false,

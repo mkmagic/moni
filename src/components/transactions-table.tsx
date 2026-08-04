@@ -233,6 +233,9 @@ export function TransactionsTable({
                     {/* Hebrew payee names reorder an adjacent LTR badge unless
                         they are bidi-isolated. */}
                     <bdi>{payeeOf(entry)}</bdi>
+                    {entry.installmentLabel && (
+                      <Badge className="ml-2">{entry.installmentLabel}</Badge>
+                    )}
                     {entry.excluded && <Badge className="ml-2">transfer</Badge>}
                   </td>
                   <td className="whitespace-nowrap border-b border-border px-5 py-3 text-right">

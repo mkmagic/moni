@@ -81,4 +81,21 @@ describe("computeImportKey", () => {
       computeImportKey({ ...base, identifier: "123" }),
     );
   });
+
+  // Isracard/Amex give every slice of one deal the SAME identifier
+  // (voucherNumberRatz), the same purchase date and the same dealSum — so
+  // without the slice number all twelve payments hash to one key and collapse
+  // into a single entry (base-isracard-amex.js:96-110). Max escapes this only
+  // because it appends the slice number to the identifier itself.
+  it("distinguishes the slices of one installment deal", () => {
+    const slice1 = computeImportKey({ ...base, installmentNumber: 1 });
+    const slice2 = computeImportKey({ ...base, installmentNumber: 2 });
+    expect(slice1).not.toBe(slice2);
+  });
+
+  it("leaves a non-installment charge's key unchanged", () => {
+    // A null slice number must hash exactly as an absent one, so ordinary
+    // charges keep the key they already have in the database.
+    expect(computeImportKey({ ...base, installmentNumber: null })).toBe(computeImportKey(base));
+  });
 });

@@ -63,6 +63,7 @@ const MIGRATION_FILES = [
   "0019_snaptrade_sync_run_check.sql",
   "0020_thin_umar.sql",
   "0021_merchant_lookups_rls_and_roles.sql",
+  "0022_installment_total_currency.sql",
 ];
 
 /** Bookkeeping for which of MIGRATION_FILES this database has already seen.
