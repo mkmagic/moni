@@ -44,6 +44,7 @@ import {
   guarded,
   PROMPT_VERSION,
   UNKNOWN,
+  type Answer,
 } from "@/lib/categorization/external";
 import {
   evaluate,
@@ -707,20 +708,26 @@ export async function suggestCategories(
       };
     }
 
-    const byTextAndEntry = new Map<string, SuggestionView | null>();
+    // pick() is text-only — same matchText always yields the same result,
+    // so we cache it by matchText to avoid re-running suggest() for every
+    // entry sharing a merchant.  pickExternal depends on the entry's amount
+    // direction, so it runs per-entry (but is O(1) — just a Map lookup).
+    const pickCache = new Map<string, SuggestionView | null>();
     const out: Record<string, SuggestionView> = {};
 
     for (const target of targets) {
       if (target.matchText === "") continue;
 
-      const cacheKey = `${target.id}:${target.matchText}`;
-      let view = byTextAndEntry.get(cacheKey);
-      if (view === undefined) {
-        view =
-          pick(target.matchText, ownCorpus) ??
-          pick(target.matchText, builtinCorpus) ??
-          pickExternal(target.id, target.matchText);
-        byTextAndEntry.set(cacheKey, view);
+      if (!pickCache.has(target.matchText)) {
+        pickCache.set(
+          target.matchText,
+          pick(target.matchText, ownCorpus) ?? pick(target.matchText, builtinCorpus),
+        );
+      }
+      let view = pickCache.get(target.matchText) ?? null;
+
+      if (!view) {
+        view = pickExternal(target.id, target.matchText);
       }
 
       if (view) out[target.id] = view;
@@ -769,11 +776,11 @@ export async function enrichUnknownMerchants(
 
     const candidateTextsSet = new Set<string>();
     const blockedTextsSet = new Set<string>();
-    
+
     for (const row of uncategorizedRows) {
       const raw = decText(dataKey, row.descriptionCt, row.id, "description_ct", row.version) ?? "";
       const matchText = normalizeDescription(raw);
-      
+
       if (matchText !== "") {
         // Block on the raw description before normalization strips prefixes
         if (blocksEgress(raw)) {
@@ -823,7 +830,7 @@ export async function enrichUnknownMerchants(
       if (localPlaces(text)) continue;
       eligible.push(text);
     }
-    
+
     return eligible;
   });
 
@@ -836,7 +843,7 @@ export async function enrichUnknownMerchants(
   let looked_up = 0;
   let placed = 0;
   const BATCH_SIZE = 10;
-  const resultsToInsert: { text: string; builtinKey: string | null; answer: any }[] = [];
+  const resultsToInsert: { text: string; builtinKey: string | null; answer: Answer }[] = [];
 
   for (let start = 0; start < toLookup.length; start += BATCH_SIZE) {
     if (start > 0) {

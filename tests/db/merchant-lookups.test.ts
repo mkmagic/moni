@@ -60,7 +60,7 @@ describe("merchantLookups (DB & domain)", () => {
 
   it("enrichUnknownMerchants throws SmartCategorizeDisabledError when setting is off", async () => {
     const { session } = await freshFixture("disabled");
-    process.env.MONI_LLM_API_KEY = "test-api-key";
+    vi.stubEnv("MONI_LLM_API_KEY", "test-api-key");
 
     await expect(enrichUnknownMerchants(session)).rejects.toThrow(SmartCategorizeDisabledError);
   });
@@ -68,7 +68,7 @@ describe("merchantLookups (DB & domain)", () => {
   it("a second enrichment run does not re-ask for a text already cached, including unknown", async () => {
     const { userId, dataKey, session } = await freshFixture("enrich");
     await updateProfile(userId, { smartCategorize: true });
-    process.env.MONI_LLM_API_KEY = "test-api-key";
+    vi.stubEnv("MONI_LLM_API_KEY", "test-api-key");
 
     // Create an account & uncategorized entry
     const accountId = randomUUID();

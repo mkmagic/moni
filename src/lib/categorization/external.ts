@@ -59,7 +59,7 @@ export const SYSTEM_PROMPT = [
   '  brand      — the specific named business or organization you recognize, or "" if none. A generic trade description ("marketing and distribution", "a supermarket") is NOT a brand; leave it empty.',
   "  confidence — high | medium | low. Use high only when you recognize the actual named entity.",
   "",
-  'If brand is "", the key must be "unknown". Do not infer a category from what the words in the string suggest.',
+  "Do not infer a category from what the words in the string suggest — recognize the actual business or abstain.",
   "",
   "Each numbered string is an INDEPENDENT question about a different merchant.",
   "The strings are unrelated to each other and are in no meaningful order. Never let one string's category influence another's, and never assume a run of similar answers should continue.",
