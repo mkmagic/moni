@@ -146,6 +146,22 @@ export interface BudgetMonthView {
   plannedSavings: Money | null;
   /** `actualIncome - spentTotal`. */
   actualSavings: Money;
+  /** Spending that a ceiling governs — `spentTotal` minus `unbudgetedSpend`.
+   * The only figure comparable with `ceilingTotal`, and so the only honest
+   * numerator for "how much of my budget is gone". */
+  budgetedSpend: Money;
+  /**
+   * What `budgetedSpend` reaches by month end at the current rate. Null for a
+   * finished month, which has no projecting left to do.
+   *
+   * Only **everyday** spending is extrapolated. Fixed costs arrive as lumps on
+   * a date of their own — rent lands on the 1st — so scaling them by the
+   * fraction of the month elapsed says a ₪4,500 rent paid on day 4 is heading
+   * for ₪34,875. They are counted once, at what they have already cost.
+   */
+  projectedSpend: Money | null;
+  /** Days remaining in the month, today excluded. Null for a past month. */
+  daysLeft: number | null;
   overBudgetCount: number;
   /**
    * How far through the month today is, 0..1 — the pace marker. Null for any
@@ -167,8 +183,30 @@ export interface CeilingView {
 export interface CeilingSuggestion {
   categoryId: string;
   categoryName: string;
-  /** The category's average monthly spend over the chosen window. */
+  /** The category's average monthly spend over the chosen window — the
+   * recommended ceiling, and what the wizard pre-fills. */
   amount: Money;
+  /** Which step of the wizard this belongs in, on the same `is_recurring`
+   * reading (parent included) that splits the budget page's two sections. A
+   * fixed cost is near-certain and is confirmed; everyday spending is a
+   * judgement the user has to make. */
+  kind: "fixed" | "everyday";
+  /** What the category actually cost in each month of the window, oldest
+   * first and including the months it cost nothing. This is what lets the
+   * wizard show whether ₪1,900 is typical or one bad month — a mean alone
+   * cannot be argued with. */
+  history: { month: string; amount: Money }[];
+  /** The cheapest and dearest months in the window. Offered as the two
+   * alternatives to the mean, so "tight" and "roomy" are numbers the user
+   * genuinely lived through rather than a percentage we invented. */
+  lowest: Money;
+  highest: Money;
+  /** Whether to switch rollover on. True only for spending that does not
+   * arrive every month — see `looksLumpy`. */
+  rollover: boolean;
+  /** One sentence naming why, or null when rollover is not recommended.
+   * A recommendation the user cannot interrogate is just a default. */
+  rolloverReason: string | null;
 }
 
 // --- Internal row helpers ---------------------------------------------------
@@ -458,19 +496,23 @@ export async function getBudgetMonth(session: Session, month: string): Promise<B
     const actualIncome = flows.income.get(month) ?? new Decimal(0);
     const spentTotal = budgetedSpend.plus(unbudgetedSpend);
     const plannedIncome = await plannedIncomeFor(tx, dataKey, month);
+    const pace = month === currentMonth() ? paceOf(today) : null;
+
+    const fixed = section(
+      rows.filter((row) => row.isRecurring),
+      baseCurrency,
+    );
+    const everyday = section(
+      rows.filter((row) => !row.isRecurring),
+      baseCurrency,
+    );
 
     return {
       month,
       currency: baseCurrency,
       hasBudget: rows.length > 0,
-      fixed: section(
-        rows.filter((row) => row.isRecurring),
-        baseCurrency,
-      ),
-      everyday: section(
-        rows.filter((row) => !row.isRecurring),
-        baseCurrency,
-      ),
+      fixed,
+      everyday,
       unbudgetedSpend: money(unbudgetedSpend, baseCurrency),
       ceilingTotal: money(ceilingTotal, baseCurrency),
       spentTotal: money(spentTotal, baseCurrency),
@@ -478,8 +520,19 @@ export async function getBudgetMonth(session: Session, month: string): Promise<B
       actualIncome: money(actualIncome, baseCurrency),
       plannedSavings: plannedIncome ? money(plannedIncome.minus(ceilingTotal), baseCurrency) : null,
       actualSavings: money(actualIncome.minus(spentTotal), baseCurrency),
+      budgetedSpend: money(budgetedSpend, baseCurrency),
+      projectedSpend:
+        pace === null
+          ? null
+          : money(
+              new Decimal(fixed.spent.amount).plus(
+                new Decimal(everyday.spent.amount).dividedBy(new Decimal(pace)),
+              ),
+              baseCurrency,
+            ),
+      daysLeft: pace === null ? null : daysLeftIn(today),
       overBudgetCount,
-      pace: month === currentMonth() ? paceOf(today) : null,
+      pace,
     };
   });
 }
@@ -507,6 +560,15 @@ function paceOf(today: string): number {
   const day = Number(today.slice(8, 10));
   const days = Number(monthEnd(today.slice(0, 7)).slice(8, 10));
   return day / days;
+}
+
+/** Days still to come this month, today excluded — today is already counted
+ * as spent by `paceOf`, and counting it twice would say the month has one
+ * more day of room than it does. */
+function daysLeftIn(today: string): number {
+  const day = Number(today.slice(8, 10));
+  const days = Number(monthEnd(today.slice(0, 7)).slice(8, 10));
+  return days - day;
 }
 
 async function plannedIncomeFor(
@@ -560,23 +622,51 @@ export async function availableHistoryMonths(session: Session): Promise<number> 
 }
 
 /**
- * A starting ceiling per category, from what the user actually spent: the
- * category's total over the last `windowMonths` complete months divided by
- * how many months that is.
+ * Whether a category's monthly spending arrives in lumps rather than every
+ * month — the only case where rollover should be switched on for the user.
+ *
+ * Read straight off the months: a bill charged every two months, or once a
+ * year, is simply zero in the months between. Groceries never are. That is a
+ * better signal than the payee's cadence, because a category collects several
+ * payees and it is the *category* that carries the ceiling.
+ *
+ * Requires a zero month **and** at least one month of real spending, so a
+ * category with a single month of history — which is all zeroes but one, by
+ * construction — does not get rollover on the strength of having no history.
+ */
+function looksLumpy(series: Decimal[]): boolean {
+  if (series.length < 3) return false;
+  const quiet = series.filter((m) => m.isZero()).length;
+  return quiet > 0 && quiet < series.length;
+}
+
+/** What the wizard is handed: a proposed ceiling per category, and a planned
+ * income to check them against. */
+export interface BudgetProposal {
+  ceilings: CeilingSuggestion[];
+  /** Average monthly income over the same window, or null if none was
+   * earned. A starting figure for the planned-income step, not a claim about
+   * next month. */
+  income: Money | null;
+}
+
+/**
+ * A whole proposed budget, from what the user actually spent and earned over
+ * the last `windowMonths` complete months.
  *
  * Suggested at the level entries are filed on — the leaf — so accepting the
  * whole set can never violate one-ceiling-per-branch. Nothing is written
  * until the user accepts, the same posture as categorization suggestions.
  *
- * A non-monthly category (annual insurance, ארנונה) comes out wrong here and
- * is meant to be set by hand: a 3-month window suggests ₪0 for a charge that
- * lands in month 7, and a user who backfilled shallowly has no better number
- * available. Accepted, not worked around.
+ * A non-monthly category (annual insurance, ארנונה) still comes out low if
+ * the window is shallower than its period: a 3-month window cannot see a
+ * charge that lands in month 7, and no amount of arithmetic recovers it. What
+ * the window *can* see, it flags — see `looksLumpy`.
  */
-export async function suggestCeilings(
+export async function proposeBudget(
   session: Session,
   windowMonths: number,
-): Promise<CeilingSuggestion[]> {
+): Promise<BudgetProposal> {
   const { userId, dataKey, baseCurrency } = session;
   return withUser(userId, async (tx) => {
     const cats = await loadCategories(tx);
@@ -585,30 +675,65 @@ export async function suggestCeilings(
     const months = monthRange(fromMonth, lastComplete);
     const flows = await loadMonthlyFlows(tx, dataKey, cats, fromMonth, lastComplete);
 
-    const totals = new Map<string, Decimal>();
+    // Per category, what it cost in every month of the window — including
+    // the months it cost nothing, which is the whole signal `looksLumpy`
+    // reads and which a running total would have thrown away.
+    const perMonth = new Map<string, Decimal[]>();
     for (const month of months) {
-      for (const [categoryId, amount] of flows.byCategory.get(month) ?? []) {
-        totals.set(categoryId, (totals.get(categoryId) ?? new Decimal(0)).plus(amount));
+      const monthTotals = flows.byCategory.get(month);
+      for (const categoryId of new Set([...(monthTotals?.keys() ?? []), ...perMonth.keys()])) {
+        const spent = (monthTotals?.get(categoryId) ?? new Decimal(0)).negated();
+        const series = perMonth.get(categoryId) ?? months.map(() => new Decimal(0));
+        series[months.indexOf(month)] = spent.isPositive() ? spent : new Decimal(0);
+        perMonth.set(categoryId, series);
       }
     }
 
-    return (
-      [...totals]
-        .map(([categoryId, total]) => ({
+    const earned = months.reduce(
+      (acc, month) => acc.plus(flows.income.get(month) ?? new Decimal(0)),
+      new Decimal(0),
+    );
+
+    const ceilings = [...perMonth]
+      .map(([categoryId, series]) => {
+        const total = series.reduce((acc, m) => acc.plus(m), new Decimal(0));
+        const lumpy = looksLumpy(series);
+        return {
           categoryId,
           categoryName: cats.get(categoryId)?.name ?? "",
-          average: total.negated().dividedBy(months.length),
-        }))
-        // A category whose window nets out to nothing spent is not a budget
-        // line worth proposing.
-        .filter((row) => row.average.isPositive())
-        .sort((a, b) => b.average.comparedTo(a.average))
-        .map((row) => ({
-          categoryId: row.categoryId,
-          categoryName: row.categoryName,
-          amount: money(row.average, baseCurrency),
-        }))
-    );
+          kind: isRecurringWithInheritance(categoryId, cats)
+            ? ("fixed" as const)
+            : ("everyday" as const),
+          average: total.dividedBy(months.length),
+          series,
+          lumpy,
+        };
+      })
+      // A category whose window nets out to nothing spent is not a budget
+      // line worth proposing.
+      .filter((row) => row.average.greaterThan(0))
+      .sort((a, b) => b.average.comparedTo(a.average))
+      .map((row) => ({
+        categoryId: row.categoryId,
+        categoryName: row.categoryName,
+        kind: row.kind,
+        amount: money(row.average, baseCurrency),
+        history: months.map((month, i) => ({
+          month,
+          amount: money(row.series[i], baseCurrency),
+        })),
+        lowest: money(Decimal.min(...row.series), baseCurrency),
+        highest: money(Decimal.max(...row.series), baseCurrency),
+        rollover: row.lumpy,
+        rolloverReason: row.lumpy
+          ? "This does not arrive every month, so an unspent month should pay for the month it lands in."
+          : null,
+      }));
+
+    return {
+      ceilings,
+      income: earned.greaterThan(0) ? money(earned.dividedBy(months.length), baseCurrency) : null,
+    };
   });
 }
 

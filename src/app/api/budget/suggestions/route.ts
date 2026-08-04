@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSessionFromRequest } from "@/domain/auth";
-import { availableHistoryMonths, suggestCeilings } from "@/domain/budget";
+import { availableHistoryMonths, proposeBudget } from "@/domain/budget";
 
 /** The three windows the empty state offers. Capped server-side at the
  * history that actually exists, so a user who backfilled three months can't
@@ -28,8 +28,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const available = await availableHistoryMonths(session);
   const months = Math.min(parsed.data, available);
   if (months < 1) {
-    return NextResponse.json({ months: 0, suggestions: [] });
+    return NextResponse.json({ months: 0, ceilings: [], income: null });
   }
 
-  return NextResponse.json({ months, suggestions: await suggestCeilings(session, months) });
+  const proposal = await proposeBudget(session, months);
+  return NextResponse.json({ months, ...proposal });
 }

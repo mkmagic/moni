@@ -15,6 +15,7 @@ import { CategoryIconTile } from "@/components/category-icon";
 import { BudgetBar } from "@/components/budget-bar";
 import { BudgetSetup } from "@/components/budget-setup";
 import { cn } from "@/lib/utils";
+import { isZero } from "@/lib/money";
 import type { BudgetMonthView, BudgetRowView, BudgetSectionView } from "@/domain/budget";
 import type { CategoryView } from "@/domain/categorization";
 
@@ -198,46 +199,81 @@ function MonthPicker({
   );
 }
 
-/** Planned savings against actual savings — a verdict on the strategy, not
- * just a spend total. */
+/**
+ * How much of the budget is gone, and whether that is ahead of the month.
+ *
+ * This deliberately replaced a Planned-vs-Actual savings pair. Those two
+ * figures were not comparable — "planned" assumed every ceiling was spent to
+ * the brim and covered only budgeted categories, while "actual" counted
+ * everything that left — and comparing a part-finished month against a whole
+ * month's plan reads euphoric on the 4th and grim on the 28th. Spend against
+ * budget, with the pace marker the rows already use, is the question this
+ * page exists to answer. Savings is the quieter line underneath.
+ */
 function Headline({ view, onEditIncome }: { view: BudgetMonthView; onEditIncome: () => void }) {
   return (
     <Card>
-      <CardContent className="grid gap-6 px-6 pb-6 pt-7 sm:grid-cols-2">
-        <div className="flex flex-col gap-2">
-          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Planned
-          </span>
-          {view.plannedSavings ? (
-            <Money value={view.plannedSavings} className="text-3xl font-bold" signColor />
+      <CardContent className="flex flex-col gap-4 px-6 pb-6 pt-7">
+        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Spent this month
+            </span>
+            <span className="flex items-baseline gap-2">
+              <Money value={view.budgetedSpend} className="text-3xl font-bold" />
+              <span className="text-sm text-muted-foreground">
+                {"of "}
+                <Money value={view.ceilingTotal} />
+              </span>
+            </span>
+          </div>
+          {view.daysLeft !== null && (
+            <span className="text-sm text-muted-foreground">
+              {view.daysLeft === 0
+                ? "Last day of the month"
+                : `${view.daysLeft} day${view.daysLeft === 1 ? "" : "s"} left`}
+              {view.projectedSpend && (
+                <>
+                  {" · on track for "}
+                  <Money value={view.projectedSpend} />
+                </>
+              )}
+            </span>
+          )}
+        </div>
+
+        {/* No pace marker here, for the same reason Fixed rows don't get one:
+            this total includes rent, which is 100% spent on the 1st by
+            design. A marker over it would call every early month alarming.
+            The projection in the caption carries the pace signal instead, and
+            it knows to extrapolate only the everyday half. */}
+        <BudgetBar spent={view.budgetedSpend} available={view.ceilingTotal} pace={null} />
+
+        <p className="text-sm text-muted-foreground">
+          {view.plannedIncome ? (
+            <>
+              <Money value={view.plannedIncome} /> planned in, so this budget leaves{" "}
+              <Money value={view.plannedSavings ?? view.actualSavings} signColor /> a month.{" "}
+            </>
           ) : (
-            <Button variant="outline" className="self-start" onClick={onEditIncome}>
-              Set planned income
-            </Button>
+            "Set what you expect to earn and Moni can say what this budget leaves you. "
           )}
-          {view.plannedIncome && (
-            <p className="text-sm text-muted-foreground">
-              <Money value={view.plannedIncome} /> planned in, <Money value={view.ceilingTotal} />{" "}
-              budgeted out.{" "}
-              <button
-                type="button"
-                onClick={onEditIncome}
-                className="underline underline-offset-2 transition hover:text-foreground"
-              >
-                Edit
-              </button>
-            </p>
-          )}
-        </div>
-        <div className="flex flex-col gap-2">
-          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Actual
-          </span>
-          <Money value={view.actualSavings} className="text-3xl font-bold" signColor />
-          <p className="text-sm text-muted-foreground">
-            <Money value={view.actualIncome} /> in, <Money value={view.spentTotal} /> out.
+          <button
+            type="button"
+            onClick={onEditIncome}
+            className="underline underline-offset-2 transition hover:text-foreground"
+          >
+            {view.plannedIncome ? "Edit" : "Set planned income"}
+          </button>
+        </p>
+
+        {!isZero(view.unbudgetedSpend) && (
+          <p className="text-xs text-muted-foreground">
+            {"A further "}
+            <Money value={view.unbudgetedSpend} />
+            {" went to categories with no ceiling."}
           </p>
-        </div>
+        )}
       </CardContent>
     </Card>
   );

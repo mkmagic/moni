@@ -39,8 +39,14 @@ effective-dated figure per user, the same shape.
 cannot compare, and the effective-dating means several rows per category are
 correct by design.
 
-**Rollover is per category, off by default, and carries both surplus and
-deficit** from that ceiling's `effective_from`. Only months whose ceiling
+**Rollover is recommended, never defaulted on.** It is per category, off
+unless chosen, and carries both surplus and deficit. The planner switches it on
+only for a category whose own months show gaps — a bill that lands every second
+month is simply zero in the months between, and that is a better signal than any
+payee's cadence, because a category collects several payees and it is the
+*category* that carries the ceiling. Groceries never look like that, which is
+the point: carrying a grocery deficit forward makes one bad week punish the next
+good one. Rollover carries surplus and deficit from that ceiling's `effective_from`. Only months whose ceiling
 actually had rollover on contribute, so turning it on today never hands back
 history the user did not budget for.
 

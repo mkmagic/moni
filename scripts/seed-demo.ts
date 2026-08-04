@@ -56,6 +56,14 @@ function addDays(isoDate: string, days: number): string {
 /** decimal.js round-half-up to 2dp, as a canonical decimal string — for constructing
  * realistic fixture amounts (e.g. "what the bank statement would show"), never used
  * to round a stored value in real domain-layer code (money-and-currency.md §3). */
+/** "2026-07" + 1 → "2026-08". Month arithmetic on the string, so it never
+ * meets a Date's month-length rounding. */
+function shiftMonthString(month: string, by: number): string {
+  const [year, m] = month.split("-").map(Number);
+  const zero = year * 12 + (m - 1) + by;
+  return `${Math.floor(zero / 12)}-${String((zero % 12) + 1).padStart(2, "0")}`;
+}
+
 function round2(d: Decimal): string {
   return d.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toString();
 }
@@ -189,6 +197,42 @@ const USERS: UserPlan[] = [
 const ENTRY_DATES_MONTHS = ["2026-05", "2026-06", "2026-07"];
 const TODAY = "2026-07-24";
 
+/**
+ * Every month the ledger covers: the three pinned complete months above, plus
+ * each month since, up to and including the one we are in.
+ *
+ * The tail is derived rather than pinned so the demo always has a **current**
+ * month in progress. Without it the budget page — whose whole subject is the
+ * month you are living in — opens on an empty one, and the budget wizard has
+ * nothing to show a result against. Entries past today are dropped when the
+ * defs are built, so the current month is genuinely partial.
+ */
+const SEED_MONTHS = ((): string[] => {
+  const months = [...ENTRY_DATES_MONTHS];
+  const current = new Date().toISOString().slice(0, 7);
+  let next = shiftMonthString(months[months.length - 1], 1);
+  while (next <= current) {
+    months.push(next);
+    next = shiftMonthString(next, 1);
+  }
+  return months;
+})();
+
+/** Last date any entry may carry — nothing is seeded into the future. */
+const LAST_ENTRY_DATE = new Date().toISOString().slice(0, 10);
+
+/**
+ * Per-month spending, so the months differ from each other. Identical months
+ * would make every "typical spend" suggestion look perfect and tell the owner
+ * nothing about whether a suggestion is any good. Indexed modulo its length,
+ * so it keeps working however many months `SEED_MONTHS` ends up covering.
+ */
+const MONTHLY_SPEND: Array<{ groceries: string[]; transport: string[]; cinema: string[] }> = [
+  { groceries: ["-312.50", "-268.90"], transport: ["-120.00"], cinema: ["-96.00"] },
+  { groceries: ["-402.10", "-288.40", "-151.75"], transport: ["-120.00"], cinema: [] },
+  { groceries: ["-356.75", "-211.20"], transport: ["-120.00", "-64.00"], cinema: ["-148.00"] },
+];
+
 interface SeedCounts {
   users: number;
   categories: number;
@@ -304,7 +348,15 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
       .where(
         and(
           eq(schema.categories.ownerId, userId),
-          inArray(schema.categories.id, [categoryIds.entertainment, categoryIds.salary]),
+          // Rent is here for the budget planner rather than the recurring
+          // view: `is_recurring` is also what sorts a category into the
+          // budget's Fixed section, and a demo whose only fixed cost is
+          // subscriptions has nothing to show on that step.
+          inArray(schema.categories.id, [
+            categoryIds.entertainment,
+            categoryIds.salary,
+            categoryIds.rent,
+          ]),
         ),
       );
 
@@ -436,7 +488,7 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
     // three have been charged inside the seeded window — the rest arrive in
     // months the demo doesn't cover yet, which is exactly how a real card
     // reports one: twelve independent charges, ₪1,000 each, one per month.
-    for (const [index, month] of ENTRY_DATES_MONTHS.entries()) {
+    for (const [index, month] of SEED_MONTHS.entries()) {
       entryDefs.push({
         date: `${month}-10`,
         description: "Electric appliances",
@@ -461,7 +513,9 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
       });
     }
 
-    for (const month of ENTRY_DATES_MONTHS) {
+    for (const [monthIndex, month] of SEED_MONTHS.entries()) {
+      const spend = MONTHLY_SPEND[monthIndex % MONTHLY_SPEND.length];
+
       // Salary — income, into checking, on the 25th (or the 24th for the
       // partial final month so it stays within TODAY).
       const salaryDate = month === "2026-07" ? "2026-07-24" : `${month}-25`;
@@ -498,13 +552,12 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
         kind: "standard",
       });
 
-      // Groceries — two per month, on the credit card.
-      for (const [offset, amount] of [
-        [4, "-312.50"],
-        [18, "-268.90"],
-      ] as const) {
+      // Groceries — a few a month, on the credit card. Spread across the
+      // month so a partial current month holds only the runs that have
+      // already happened.
+      for (const [index, amount] of spend.groceries.entries()) {
         entryDefs.push({
-          date: addDays(`${month}-01`, offset),
+          date: addDays(`${month}-01`, 4 + index * 9),
           description: SHUFERSAL_DESCRIPTION,
           accountId: creditCardId,
           categoryId: categoryIds.groceries,
@@ -522,38 +575,42 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
       }
 
       // Transport — one or two per month.
-      entryDefs.push({
-        date: addDays(`${month}-01`, 9),
-        description: "Rav-Kav top-up",
-        accountId: creditCardId,
-        categoryId: categoryIds.transport,
-        enteredAmount: "-120.00",
-        enteredCurrency: "ILS",
-        accountAmount: "-120.00",
-        accountCurrency: "ILS",
-        fxRate: "1",
-        fxStatus: "locked",
-        fxSource: "identity",
-        source: "scrape",
-        kind: "standard",
-      });
+      for (const [index, amount] of spend.transport.entries()) {
+        entryDefs.push({
+          date: addDays(`${month}-01`, 9 + index * 11),
+          description: "Rav-Kav top-up",
+          accountId: creditCardId,
+          categoryId: categoryIds.transport,
+          enteredAmount: amount,
+          enteredCurrency: "ILS",
+          accountAmount: amount,
+          accountCurrency: "ILS",
+          fxRate: "1",
+          fxStatus: "locked",
+          fxSource: "identity",
+          source: "scrape",
+          kind: "standard",
+        });
+      }
 
-      // Entertainment (non-subscription) — one per month.
-      entryDefs.push({
-        date: addDays(`${month}-01`, 14),
-        description: "Cinema City",
-        accountId: creditCardId,
-        categoryId: categoryIds.entertainment,
-        enteredAmount: "-96.00",
-        enteredCurrency: "ILS",
-        accountAmount: "-96.00",
-        accountCurrency: "ILS",
-        fxRate: "1",
-        fxStatus: "locked",
-        fxSource: "identity",
-        source: "scrape",
-        kind: "standard",
-      });
+      // Entertainment (non-subscription) — not every month.
+      for (const amount of spend.cinema) {
+        entryDefs.push({
+          date: addDays(`${month}-01`, 14),
+          description: "Cinema City",
+          accountId: creditCardId,
+          categoryId: categoryIds.entertainment,
+          enteredAmount: amount,
+          enteredCurrency: "ILS",
+          accountAmount: amount,
+          accountCurrency: "ILS",
+          fxRate: "1",
+          fxStatus: "locked",
+          fxSource: "identity",
+          source: "scrape",
+          kind: "standard",
+        });
+      }
 
       // Netflix — the recurring subscription entry for this month.
       entryDefs.push({
@@ -573,6 +630,16 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
         kind: "standard",
       });
     }
+
+    // The month we are in is only partly over, so drop the entries whose day
+    // has not arrived. Everything pushed from here on is pinned to a past
+    // date, and two of those pushes are index-captured for the transfer pair
+    // below — which is why this prunes here rather than at the end.
+    entryDefs.splice(
+      0,
+      entryDefs.length,
+      ...entryDefs.filter((def) => def.date <= LAST_ENTRY_DATE),
+    );
 
     // USD purchases on the ILS credit card — exercises the currency triple
     // with a real locked rate from the seeded fx_rates table.
