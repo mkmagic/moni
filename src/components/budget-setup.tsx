@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Decimal from "decimal.js";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +21,18 @@ interface BudgetSetupProps {
 }
 
 const WINDOWS = [3, 6, 12] as const;
+
+/** A half-typed amount ("", "1.", "-") is not a number yet; it contributes
+ * nothing to the preview rather than throwing. */
+function decimalOrZero(value: string | undefined): Decimal {
+  if (!value) return new Decimal(0);
+  try {
+    const parsed = new Decimal(value);
+    return parsed.isFinite() ? parsed : new Decimal(0);
+  } catch {
+    return new Decimal(0);
+  }
+}
 
 /**
  * The empty state: "Create a budget from your existing history?"
@@ -213,13 +226,16 @@ export function BudgetSetup({
                 {"Total budgeted "}
                 <Money
                   value={{
-                    // Every suggestion is already in the reporting currency at
-                    // two decimals, so this preview total is a display sum, not
-                    // domain arithmetic.
+                    // The user is still typing these, so no server figure
+                    // exists yet — but a preview of money is still money, so
+                    // it is summed with decimal.js, never with `+`.
                     amount: suggestions
                       .filter((s) => !dropped.has(s.categoryId))
-                      .reduce((total, s) => total + Number(amounts[s.categoryId] || 0), 0)
-                      .toFixed(2),
+                      .reduce(
+                        (total, s) => total.plus(decimalOrZero(amounts[s.categoryId])),
+                        new Decimal(0),
+                      )
+                      .toFixed(),
                     currency,
                   }}
                 />

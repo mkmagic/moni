@@ -2,6 +2,7 @@ import { requireSession } from "@/domain/auth";
 import { requireOnboarded } from "@/domain/onboarding";
 import {
   availableHistoryMonths,
+  currentMonth,
   getBudgetMonth,
   monthEnd,
   monthStart,
@@ -26,13 +27,14 @@ export default async function BudgetPage({ searchParams }: BudgetPageProps) {
   await requireOnboarded(session.userId);
 
   const { month: requested } = await searchParams;
-  // `new Date()` in a server component is fine; the same clock decides the
-  // current month here and inside the domain layer.
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  // The domain layer's own clock, not a UTC slice — on the 1st of a month
+  // before ~02:00 Israel time the two disagree, and this page would default
+  // to the previous month while calling it current.
+  const thisMonth = currentMonth();
   // A malformed or future month is dropped rather than passed through — a
   // budget for a month that hasn't happened has nothing to report.
   const month =
-    requested && MONTH.test(requested) && requested <= currentMonth ? requested : currentMonth;
+    requested && MONTH.test(requested) && requested <= thisMonth ? requested : thisMonth;
 
   const [view, categories, historyMonths] = await Promise.all([
     getBudgetMonth(session, month),
@@ -45,10 +47,10 @@ export default async function BudgetPage({ searchParams }: BudgetPageProps) {
       view={view}
       monthLabel={MONTH_LABEL.format(new Date(`${monthStart(month)}T00:00:00Z`))}
       previousMonth={shiftMonth(month, -1)}
-      nextMonth={month < currentMonth ? shiftMonth(month, 1) : null}
+      nextMonth={month < thisMonth ? shiftMonth(month, 1) : null}
       monthFrom={monthStart(month)}
       monthTo={monthEnd(month)}
-      isCurrentMonth={month === currentMonth}
+      isCurrentMonth={month === thisMonth}
       // Only an expense category can carry a ceiling, so the picker never
       // offers one that the domain layer would refuse.
       categories={categories.filter((category) => category.classification === "expense")}

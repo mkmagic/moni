@@ -22,6 +22,7 @@ import {
   BudgetBranchConflictError,
   BudgetCategoryNotBudgetableError,
   createCeilings,
+  currentMonth,
   deleteCeiling,
   getBudgetMonth,
   getBudgetSummary,
@@ -154,18 +155,18 @@ describe("getBudgetMonth", () => {
 
     const view = await getBudgetMonth(fx.session, MONTH);
     expect(view.hasBudget).toBe(true);
-    expect(view.everyday).toHaveLength(1);
-    expect(view.fixed).toHaveLength(1);
+    expect(view.everyday.rows).toHaveLength(1);
+    expect(view.fixed.rows).toHaveLength(1);
 
-    const everyday = view.everyday[0];
-    expect(everyday.spent.amount).toBe("1500.00");
-    expect(everyday.ceiling.amount).toBe("2000.00");
-    expect(everyday.remaining.amount).toBe("500.00");
+    const everyday = view.everyday.rows[0];
+    expect(everyday.spent.amount).toBe("1500");
+    expect(everyday.ceiling.amount).toBe("2000");
+    expect(everyday.remaining.amount).toBe("500");
     expect(everyday.carriedIn).toBeNull();
 
-    expect(view.fixed[0].spent.amount).toBe("5000.00");
-    expect(view.ceilingTotal.amount).toBe("7000.00");
-    expect(view.spentTotal.amount).toBe("6500.00");
+    expect(view.fixed.rows[0].spent.amount).toBe("5000");
+    expect(view.ceilingTotal.amount).toBe("7000");
+    expect(view.spentTotal.amount).toBe("6500");
     expect(view.overBudgetCount).toBe(0);
   });
 
@@ -183,8 +184,8 @@ describe("getBudgetMonth", () => {
     await addEntry(fx, `${MONTH}-09`, "200", shopping); // returned an item
 
     const view = await getBudgetMonth(fx.session, MONTH);
-    expect(view.everyday[0].spent.amount).toBe("600.00");
-    expect(view.actualIncome.amount).toBe("0.00");
+    expect(view.everyday.rows[0].spent.amount).toBe("600");
+    expect(view.actualIncome.amount).toBe("0");
   });
 
   it("counts spending in a subcategory against a ceiling on its parent", async () => {
@@ -202,9 +203,9 @@ describe("getBudgetMonth", () => {
     await addEntry(fx, `${MONTH}-08`, "-100", parent);
 
     const view = await getBudgetMonth(fx.session, MONTH);
-    expect(view.everyday).toHaveLength(1);
-    expect(view.everyday[0].spent.amount).toBe("500.00");
-    expect(view.unbudgetedSpend.amount).toBe("0.00");
+    expect(view.everyday.rows).toHaveLength(1);
+    expect(view.everyday.rows[0].spent.amount).toBe("500");
+    expect(view.unbudgetedSpend.amount).toBe("0");
   });
 
   it("collects everything with no ceiling into unbudgeted spending, so the totals reconcile", async () => {
@@ -223,9 +224,9 @@ describe("getBudgetMonth", () => {
     await addEntry(fx, `${MONTH}-11`, "-90", null); // never categorized
 
     const view = await getBudgetMonth(fx.session, MONTH);
-    expect(view.everyday[0].spent.amount).toBe("600.00");
-    expect(view.unbudgetedSpend.amount).toBe("340.00");
-    expect(view.spentTotal.amount).toBe("940.00");
+    expect(view.everyday.rows[0].spent.amount).toBe("600");
+    expect(view.unbudgetedSpend.amount).toBe("340");
+    expect(view.spentTotal.amount).toBe("940");
   });
 
   it("marks a row over budget and counts it", async () => {
@@ -240,7 +241,7 @@ describe("getBudgetMonth", () => {
     await addEntry(fx, `${MONTH}-20`, "-720", dining);
 
     const view = await getBudgetMonth(fx.session, MONTH);
-    expect(view.everyday[0].remaining.amount).toBe("-220.00");
+    expect(view.everyday.rows[0].remaining.amount).toBe("-220");
     expect(view.overBudgetCount).toBe(1);
   });
 
@@ -278,7 +279,7 @@ describe("getBudgetMonth", () => {
     // invisible to the budget rather than valued 1:1. Consistent with
     // dashboard.ts, and deliberately not fixed here.
     const view = await getBudgetMonth(fx.session, MONTH);
-    expect(view.everyday[0].spent.amount).toBe("0.00");
+    expect(view.everyday.rows[0].spent.amount).toBe("0");
   });
 
   it("ignores excluded entries and transfer categories", async () => {
@@ -324,8 +325,8 @@ describe("getBudgetMonth", () => {
     });
 
     const view = await getBudgetMonth(fx.session, MONTH);
-    expect(view.everyday[0].spent.amount).toBe("100.00");
-    expect(view.spentTotal.amount).toBe("100.00");
+    expect(view.everyday.rows[0].spent.amount).toBe("100");
+    expect(view.spentTotal.amount).toBe("100");
   });
 
   it("sets planned savings against actual savings", async () => {
@@ -350,10 +351,10 @@ describe("getBudgetMonth", () => {
     await addEntry(fx, `${MONTH}-10`, "-2500", groceries);
 
     const view = await getBudgetMonth(fx.session, MONTH);
-    expect(view.plannedIncome?.amount).toBe("18000.00");
-    expect(view.plannedSavings?.amount).toBe("16000.00");
-    expect(view.actualIncome.amount).toBe("17000.00");
-    expect(view.actualSavings.amount).toBe("14500.00");
+    expect(view.plannedIncome?.amount).toBe("18000");
+    expect(view.plannedSavings?.amount).toBe("16000");
+    expect(view.actualIncome.amount).toBe("17000");
+    expect(view.actualSavings.amount).toBe("14500");
   });
 
   it("leaves the pace marker off any month that is not the current one", async () => {
@@ -368,8 +369,8 @@ describe("getBudgetMonth", () => {
 
     expect((await getBudgetMonth(fx.session, MONTH)).pace).toBeNull();
 
-    const currentMonth = new Date().toISOString().slice(0, 7);
-    const live = await getBudgetMonth(fx.session, currentMonth);
+    const thisMonth = currentMonth();
+    const live = await getBudgetMonth(fx.session, currentMonth());
     expect(live.pace).toBeGreaterThan(0);
     expect(live.pace).toBeLessThanOrEqual(1);
   });
@@ -393,8 +394,8 @@ describe("effective dating", () => {
       rollover: false,
     });
 
-    expect((await getBudgetMonth(fx.session, PRIOR)).everyday[0].ceiling.amount).toBe("1500.00");
-    expect((await getBudgetMonth(fx.session, MONTH)).everyday[0].ceiling.amount).toBe("2500.00");
+    expect((await getBudgetMonth(fx.session, PRIOR)).everyday.rows[0].ceiling.amount).toBe("1500");
+    expect((await getBudgetMonth(fx.session, MONTH)).everyday.rows[0].ceiling.amount).toBe("2500");
   });
 
   it("has no ceiling at all before the first effective month", async () => {
@@ -429,7 +430,7 @@ describe("effective dating", () => {
 
     const ceilings = await listCeilings(fx.session, MONTH);
     expect(ceilings).toHaveLength(1);
-    expect(ceilings[0].amount.amount).toBe("1700.00");
+    expect(ceilings[0].amount.amount).toBe("1700");
     expect(ceilings[0].rollover).toBe(true);
   });
 });
@@ -534,12 +535,12 @@ describe("rollover", () => {
     await addEntry(fx, `${MONTH}-15`, "-1800", insurance);
 
     const view = await getBudgetMonth(fx.session, MONTH);
-    const row = view.everyday[0];
-    expect(row.carriedIn?.amount).toBe("1500.00"); // 3 × 500, nothing spent
-    expect(row.spent.amount).toBe("1800.00");
+    const row = view.everyday.rows[0];
+    expect(row.carriedIn?.amount).toBe("1500"); // 3 × 500, nothing spent
+    expect(row.spent.amount).toBe("1800");
     // 500 this month + 1500 carried - 1800 spent: still in credit, so the
     // annual charge does not read as a 360% overspend.
-    expect(row.remaining.amount).toBe("200.00");
+    expect(row.remaining.amount).toBe("200");
     expect(view.overBudgetCount).toBe(0);
   });
 
@@ -554,9 +555,9 @@ describe("rollover", () => {
     });
     await addEntry(fx, `${PRIOR}-10`, "-900", dining);
 
-    const row = (await getBudgetMonth(fx.session, MONTH)).everyday[0];
-    expect(row.carriedIn?.amount).toBe("-400.00");
-    expect(row.remaining.amount).toBe("100.00");
+    const row = (await getBudgetMonth(fx.session, MONTH)).everyday.rows[0];
+    expect(row.carriedIn?.amount).toBe("-400");
+    expect(row.remaining.amount).toBe("100");
   });
 
   it("does not replay months whose ceiling had rollover off", async () => {
@@ -576,11 +577,11 @@ describe("rollover", () => {
       rollover: true,
     });
 
-    const row = (await getBudgetMonth(fx.session, MONTH)).everyday[0];
+    const row = (await getBudgetMonth(fx.session, MONTH)).everyday.rows[0];
     // Nothing accrued: turning rollover on today does not hand the user back
     // two months of surplus they never budgeted for.
-    expect(row.carriedIn?.amount).toBe("0.00");
-    expect(row.remaining.amount).toBe("400.00");
+    expect(row.carriedIn?.amount).toBe("0");
+    expect(row.remaining.amount).toBe("400");
   });
 
   it("reports null carriedIn when rollover is off, so the UI can tell it apart from zero", async () => {
@@ -593,7 +594,7 @@ describe("rollover", () => {
       rollover: false,
     });
 
-    expect((await getBudgetMonth(fx.session, MONTH)).everyday[0].carriedIn).toBeNull();
+    expect((await getBudgetMonth(fx.session, MONTH)).everyday.rows[0].carriedIn).toBeNull();
   });
 });
 
@@ -601,26 +602,21 @@ describe("setup from history", () => {
   it("suggests each category's average monthly spend over the window", async () => {
     const fx = await freshFixture("budget-suggest");
     const groceries = await expenseCategory(fx, "Groceries");
-    const currentMonth = new Date().toISOString().slice(0, 7);
-    const window = monthRange(shiftMonth(currentMonth, -3), shiftMonth(currentMonth, -1));
+    const thisMonth = currentMonth();
+    const window = monthRange(shiftMonth(thisMonth, -3), shiftMonth(thisMonth, -1));
     for (const month of window) {
       await addEntry(fx, `${month}-10`, "-900", groceries);
     }
 
     const suggestions = await suggestCeilings(fx.session, 3);
     const row = suggestions.find((s) => s.categoryId === groceries);
-    expect(row?.amount.amount).toBe("900.00");
+    expect(row?.amount.amount).toBe("900");
   });
 
   it("writes nothing until the suggestions are accepted", async () => {
     const fx = await freshFixture("budget-suggest-write");
     const groceries = await expenseCategory(fx, "Groceries");
-    await addEntry(
-      fx,
-      `${shiftMonth(new Date().toISOString().slice(0, 7), -1)}-10`,
-      "-600",
-      groceries,
-    );
+    await addEntry(fx, `${shiftMonth(currentMonth(), -1)}-10`, "-600", groceries);
 
     await suggestCeilings(fx.session, 3);
     expect(await listCeilings(fx.session, MONTH)).toHaveLength(0);
@@ -630,6 +626,56 @@ describe("setup from history", () => {
     ]);
     expect(written).toBe(1);
     expect(await listCeilings(fx.session, MONTH)).toHaveLength(1);
+  });
+
+  it("refuses a batch that would budget a parent over an already-budgeted child", async () => {
+    // The mirror of the case below. `createCeilings` is a public route of its
+    // own, so an invariant enforced only on `setCeiling` is not enforced.
+    const fx = await freshFixture("budget-batch-parent");
+    const parent = await expenseCategory(fx, "Home");
+    const child = await expenseCategory(fx, "Repairs", parent);
+    await setCeiling(fx.session, {
+      categoryId: child,
+      amount: "300",
+      effectiveFrom: MONTH,
+      rollover: false,
+    });
+
+    await expect(
+      createCeilings(fx.session, [
+        { categoryId: parent, amount: "1000", effectiveFrom: MONTH, rollover: false },
+      ]),
+    ).rejects.toBeInstanceOf(BudgetBranchConflictError);
+  });
+
+  it("refuses a batch that budgets both a parent and its own child at once", async () => {
+    const fx = await freshFixture("budget-batch-both");
+    const parent = await expenseCategory(fx, "Home");
+    const child = await expenseCategory(fx, "Repairs", parent);
+
+    await expect(
+      createCeilings(fx.session, [
+        { categoryId: parent, amount: "1000", effectiveFrom: MONTH, rollover: false },
+        { categoryId: child, amount: "300", effectiveFrom: MONTH, rollover: false },
+      ]),
+    ).rejects.toBeInstanceOf(BudgetBranchConflictError);
+  });
+
+  it("refuses a batch containing an income category", async () => {
+    const fx = await freshFixture("budget-batch-income");
+    const salary = await createCategory(fx.session, {
+      name: `Salary-${randomUUID().slice(0, 6)}`,
+      parentId: null,
+      classification: "income",
+      color: "chart-1",
+      icon: "tag",
+    });
+
+    await expect(
+      createCeilings(fx.session, [
+        { categoryId: salary, amount: "1000", effectiveFrom: MONTH, rollover: false },
+      ]),
+    ).rejects.toBeInstanceOf(BudgetCategoryNotBudgetableError);
   });
 
   it("refuses a batch that would budget a child under a budgeted parent", async () => {
@@ -670,21 +716,21 @@ describe("deleteCeiling and the dashboard summary", () => {
   it("summarises the current month for the dashboard card", async () => {
     const fx = await freshFixture("budget-summary");
     const groceries = await expenseCategory(fx, "Groceries");
-    const currentMonth = new Date().toISOString().slice(0, 7);
+    const thisMonth = currentMonth();
     await setCeiling(fx.session, {
       categoryId: groceries,
       amount: "1000",
-      effectiveFrom: currentMonth,
+      effectiveFrom: thisMonth,
       rollover: false,
     });
-    await addEntry(fx, `${currentMonth}-02`, "-1200", groceries);
-    await addEntry(fx, `${currentMonth}-03`, "-50", null); // unbudgeted
+    await addEntry(fx, `${thisMonth}-02`, "-1200", groceries);
+    await addEntry(fx, `${thisMonth}-03`, "-50", null); // unbudgeted
 
     const summary = await getBudgetSummary(fx.session);
     expect(summary.hasBudget).toBe(true);
-    expect(summary.ceilingTotal.amount).toBe("1000.00");
+    expect(summary.ceilingTotal.amount).toBe("1000");
     // Budgeted spend only — the card is about the budget, not the month.
-    expect(summary.spent.amount).toBe("1200.00");
+    expect(summary.spent.amount).toBe("1200");
     expect(summary.overBudgetCount).toBe(1);
   });
 
@@ -692,6 +738,6 @@ describe("deleteCeiling and the dashboard summary", () => {
     const fx = await freshFixture("budget-empty");
     const summary = await getBudgetSummary(fx.session);
     expect(summary.hasBudget).toBe(false);
-    expect(summary.ceilingTotal.amount).toBe("0.00");
+    expect(summary.ceilingTotal.amount).toBe("0");
   });
 });

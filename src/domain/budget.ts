@@ -74,6 +74,18 @@ export function shiftMonth(month: string, count: number): string {
   return d.toISOString().slice(0, 7);
 }
 
+/**
+ * The month "now" falls in, on the Israeli calendar.
+ *
+ * Exported because the page needs it too, and a page that computed it from
+ * UTC would disagree with this module for the first two or three hours of
+ * every 1st of the month — defaulting to the previous month, calling it
+ * current, and showing a setup flow the domain layer says is a past month.
+ */
+export function currentMonth(now: Date = new Date()): string {
+  return israelDate(now).slice(0, 7);
+}
+
 /** Every month from `from` up to and including `to`, in order. */
 export function monthRange(from: string, to: string): string[] {
   const months: string[] = [];
@@ -105,13 +117,23 @@ export interface BudgetRowView {
   carriedIn: Money | null;
 }
 
+/** One of the two sections, with its own subtotals — the Everyday subtotal is
+ * the number a user can actually act on, and a single blended total is
+ * useless when most of it was never discretionary. Summed here so the display
+ * edge never adds money together. */
+export interface BudgetSectionView {
+  rows: BudgetRowView[];
+  ceiling: Money;
+  spent: Money;
+}
+
 export interface BudgetMonthView {
   month: string;
   currency: string;
   /** True when at least one ceiling is in force — the page's empty state. */
   hasBudget: boolean;
-  fixed: BudgetRowView[];
-  everyday: BudgetRowView[];
+  fixed: BudgetSectionView;
+  everyday: BudgetSectionView;
   /** Spending that fell outside every ceiling. Display-only: it takes no
    * ceiling, but it is shown so the totals reconcile and no money hides. */
   unbudgetedSpend: Money;
@@ -341,8 +363,10 @@ function spentOn(
   return total.negated();
 }
 
+/** Exact, unrounded — rounding to a currency's minor unit happens at the
+ * display edge and never here (money-and-currency.md §3). */
 const money = (amount: Decimal, currency: string): Money => ({
-  amount: amount.toFixed(2),
+  amount: amount.toFixed(),
   currency,
 });
 
@@ -361,7 +385,6 @@ const money = (amount: Decimal, currency: string): Money => ({
 export async function getBudgetMonth(session: Session, month: string): Promise<BudgetMonthView> {
   const { userId, dataKey, baseCurrency } = session;
   const today = israelDate(new Date());
-  const currentMonth = today.slice(0, 7);
 
   return withUser(userId, async (tx) => {
     const [cats, ceilingRows] = await Promise.all([loadCategories(tx), loadCeilings(tx, dataKey)]);
@@ -440,8 +463,14 @@ export async function getBudgetMonth(session: Session, month: string): Promise<B
       month,
       currency: baseCurrency,
       hasBudget: rows.length > 0,
-      fixed: rows.filter((row) => row.isRecurring),
-      everyday: rows.filter((row) => !row.isRecurring),
+      fixed: section(
+        rows.filter((row) => row.isRecurring),
+        baseCurrency,
+      ),
+      everyday: section(
+        rows.filter((row) => !row.isRecurring),
+        baseCurrency,
+      ),
       unbudgetedSpend: money(unbudgetedSpend, baseCurrency),
       ceilingTotal: money(ceilingTotal, baseCurrency),
       spentTotal: money(spentTotal, baseCurrency),
@@ -450,9 +479,25 @@ export async function getBudgetMonth(session: Session, month: string): Promise<B
       plannedSavings: plannedIncome ? money(plannedIncome.minus(ceilingTotal), baseCurrency) : null,
       actualSavings: money(actualIncome.minus(spentTotal), baseCurrency),
       overBudgetCount,
-      pace: month === currentMonth ? paceOf(today) : null,
+      pace: month === currentMonth() ? paceOf(today) : null,
     };
   });
+}
+
+function section(rows: BudgetRowView[], currency: string): BudgetSectionView {
+  const total = (pick: (row: BudgetRowView) => Money) =>
+    rows.reduce((sum, row) => sum.plus(new Decimal(pick(row).amount)), new Decimal(0));
+  return {
+    rows,
+    ceiling: money(
+      total((row) => row.ceiling),
+      currency,
+    ),
+    spent: money(
+      total((row) => row.spent),
+      currency,
+    ),
+  };
 }
 
 /** Fraction of the month elapsed at `today`, counting today as spent — the
@@ -509,8 +554,7 @@ export async function availableHistoryMonths(session: Session): Promise<number> 
       .orderBy(asc(entries.date))
       .limit(1);
     if (!earliest) return 0;
-    const currentMonth = israelDate(new Date()).slice(0, 7);
-    const months = monthRange(earliest.date.slice(0, 7), shiftMonth(currentMonth, -1)).length;
+    const months = monthRange(earliest.date.slice(0, 7), shiftMonth(currentMonth(), -1)).length;
     return Math.min(months, 12);
   });
 }
@@ -536,7 +580,7 @@ export async function suggestCeilings(
   const { userId, dataKey, baseCurrency } = session;
   return withUser(userId, async (tx) => {
     const cats = await loadCategories(tx);
-    const lastComplete = shiftMonth(israelDate(new Date()).slice(0, 7), -1);
+    const lastComplete = shiftMonth(currentMonth(), -1);
     const fromMonth = shiftMonth(lastComplete, -(windowMonths - 1));
     const months = monthRange(fromMonth, lastComplete);
     const flows = await loadMonthlyFlows(tx, dataKey, cats, fromMonth, lastComplete);
@@ -580,6 +624,40 @@ export interface SetCeilingInput {
 }
 
 /**
+ * The two rules that decide whether a category may carry a ceiling at all.
+ * Both write paths go through here — `setCeiling` and the batch
+ * `createCeilings` — because either one alone is a public route, and an
+ * invariant enforced on only one of them is not enforced.
+ *
+ * `budgetedIds` is every category that already has a ceiling, plus (for a
+ * batch) every category the same batch proposes: a batch that budgets both a
+ * parent and its child is exactly as ambiguous as doing it in two calls.
+ */
+function assertBudgetable(
+  cats: Map<string, CategoryRow>,
+  budgetedIds: Set<string>,
+  categoryId: string,
+): void {
+  const category = cats.get(categoryId);
+  if (!category) throw new BudgetCategoryNotBudgetableError("No such category");
+  if (category.classification !== "expense") {
+    throw new BudgetCategoryNotBudgetableError(
+      `"${category.name}" is not an expense category — only spending takes a ceiling`,
+    );
+  }
+  // One authority per shekel: a parent and its children cannot both carry a
+  // ceiling, or "over budget" would have two answers.
+  if (category.parentId && budgetedIds.has(category.parentId)) {
+    throw new BudgetBranchConflictError(cats.get(category.parentId)?.name ?? "the parent group");
+  }
+  for (const [id, row] of cats) {
+    if (id !== categoryId && row.parentId === categoryId && budgetedIds.has(id)) {
+      throw new BudgetBranchConflictError(row.name);
+    }
+  }
+}
+
+/**
  * Sets a category's ceiling from `effectiveFrom` forward. Editing the same
  * month again replaces that row; editing a later month adds one and leaves
  * the earlier month's number intact, which is what makes a past month
@@ -589,26 +667,8 @@ export async function setCeiling(session: Session, input: SetCeilingInput): Prom
   const { userId, dataKey } = session;
   await withUser(userId, async (tx) => {
     const cats = await loadCategories(tx);
-    const category = cats.get(input.categoryId);
-    if (!category) throw new BudgetCategoryNotBudgetableError("No such category");
-    if (category.classification !== "expense") {
-      throw new BudgetCategoryNotBudgetableError(
-        `"${category.name}" is not an expense category — only spending takes a ceiling`,
-      );
-    }
-
     const existing = await tx.select().from(budgetCeilings);
-    const budgetedIds = new Set(existing.map((row) => row.categoryId));
-    // One authority per shekel: a parent and its children cannot both carry a
-    // ceiling, or "over budget" would have two answers.
-    if (category.parentId && budgetedIds.has(category.parentId)) {
-      throw new BudgetBranchConflictError(cats.get(category.parentId)?.name ?? "the parent group");
-    }
-    for (const [id, row] of cats) {
-      if (row.parentId === input.categoryId && budgetedIds.has(id)) {
-        throw new BudgetBranchConflictError(row.name);
-      }
-    }
+    assertBudgetable(cats, new Set(existing.map((row) => row.categoryId)), input.categoryId);
 
     const effectiveFrom = monthStart(input.effectiveFrom);
     const replaced = existing.find(
@@ -692,13 +752,7 @@ export async function createCeilings(session: Session, inputs: SetCeilingInput[]
     const budgetedIds = new Set([...existing.map((row) => row.categoryId), ...proposed]);
 
     for (const input of inputs) {
-      const category = cats.get(input.categoryId);
-      if (!category) throw new BudgetCategoryNotBudgetableError("No such category");
-      if (category.parentId && budgetedIds.has(category.parentId)) {
-        throw new BudgetBranchConflictError(
-          cats.get(category.parentId)?.name ?? "the parent group",
-        );
-      }
+      assertBudgetable(cats, budgetedIds, input.categoryId);
     }
 
     const values = inputs.map((input) => {
@@ -727,7 +781,7 @@ export async function getBudgetSummary(session: Session): Promise<{
   ceilingTotal: Money;
   overBudgetCount: number;
 }> {
-  const month = israelDate(new Date()).slice(0, 7);
+  const month = currentMonth();
   const view = await getBudgetMonth(session, month);
   return {
     hasBudget: view.hasBudget,

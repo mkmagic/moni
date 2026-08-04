@@ -15,7 +15,7 @@ import { CategoryIconTile } from "@/components/category-icon";
 import { BudgetBar } from "@/components/budget-bar";
 import { BudgetSetup } from "@/components/budget-setup";
 import { cn } from "@/lib/utils";
-import type { BudgetMonthView, BudgetRowView } from "@/domain/budget";
+import type { BudgetMonthView, BudgetRowView, BudgetSectionView } from "@/domain/budget";
 import type { CategoryView } from "@/domain/categorization";
 
 interface BudgetScreenProps {
@@ -85,8 +85,7 @@ export function BudgetScreen({
           <Section
             title="Fixed"
             caption="Money already committed — rent, insurance, subscriptions."
-            rows={view.fixed}
-            currency={view.currency}
+            section={view.fixed}
             monthFrom={monthFrom}
             monthTo={monthTo}
             pace={null}
@@ -95,8 +94,7 @@ export function BudgetScreen({
           <Section
             title="Everyday"
             caption="Money still in play this month."
-            rows={view.everyday}
-            currency={view.currency}
+            section={view.everyday}
             monthFrom={monthFrom}
             monthTo={monthTo}
             pace={view.pace}
@@ -137,7 +135,7 @@ export function BudgetScreen({
         <CeilingDialog
           row={editing === "new" ? null : editing}
           categories={categories}
-          budgetedIds={[...view.fixed, ...view.everyday].map((row) => row.categoryId)}
+          budgetedIds={[...view.fixed.rows, ...view.everyday.rows].map((row) => row.categoryId)}
           effectiveFrom={view.month}
           onClose={() => setEditing(null)}
           onSaved={() => {
@@ -248,8 +246,7 @@ function Headline({ view, onEditIncome }: { view: BudgetMonthView; onEditIncome:
 function Section({
   title,
   caption,
-  rows,
-  currency,
+  section,
   monthFrom,
   monthTo,
   pace,
@@ -257,21 +254,13 @@ function Section({
 }: {
   title: string;
   caption: string;
-  rows: BudgetRowView[];
-  currency: string;
+  section: BudgetSectionView;
   monthFrom: string;
   monthTo: string;
   pace: number | null;
   onEdit: (row: BudgetRowView) => void;
 }) {
-  if (rows.length === 0) return null;
-  // Subtotals are the one number a user can act on, so each section carries
-  // its own; a single blended total is useless when most of it was never
-  // discretionary. Summing pre-rounded display strings is safe here because
-  // every row is already in the reporting currency at two decimals.
-  const sum = (pick: (row: BudgetRowView) => string) =>
-    rows.reduce((total, row) => total + Number(pick(row)), 0).toFixed(2);
-
+  if (section.rows.length === 0) return null;
   return (
     <Card>
       <CardHeader className="flex-row items-baseline justify-between gap-4">
@@ -279,13 +268,14 @@ function Section({
           <CardTitle className="text-foreground">{title}</CardTitle>
           <p className="text-xs text-muted-foreground">{caption}</p>
         </div>
+        {/* Subtotals come from the domain layer already summed — the display
+            edge never adds money together. */}
         <span className="text-sm text-muted-foreground">
-          <Money value={{ amount: sum((row) => row.spent.amount), currency }} /> of{" "}
-          <Money value={{ amount: sum((row) => row.ceiling.amount), currency }} />
+          <Money value={section.spent} /> of <Money value={section.ceiling} />
         </span>
       </CardHeader>
       <CardContent className="flex flex-col">
-        {rows.map((row) => (
+        {section.rows.map((row) => (
           <BudgetRow
             key={row.categoryId}
             row={row}
