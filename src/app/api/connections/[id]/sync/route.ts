@@ -18,6 +18,7 @@ import {
   type ChildStdinPayload,
 } from "@/lib/connectors";
 import { spawnInvestmentSyncWorker } from "@/lib/investments";
+import { redactSecrets } from "@/lib/redact-secrets";
 
 const Params = z.object({ id: z.uuid() });
 const validIsoDate = z
@@ -43,6 +44,9 @@ const Json = z
   .strict();
 const Currency = z.string().regex(/^[A-Z]{3}$/);
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+/** Cap on retained child stderr — enough for a stack trace, bounded so a
+ * chatty (or hostile) scrape can't grow the server's heap. */
+const MAX_STDERR_CHARS = 8 * 1024;
 
 export async function POST(
   req: NextRequest,
@@ -164,16 +168,41 @@ export async function POST(
   return NextResponse.json({ syncRunId }, { status: 202 });
 }
 
+/**
+ * The child's stderr is PIPED, not inherited. Inheriting pointed an
+ * uninspected stream — from a process holding a plaintext bank credential —
+ * straight at the server's log sink (journal, Docker log driver, aggregator),
+ * against "credentials never to logs" (security-design-principles §1/§5).
+ * The library's own debug output prints step names rather than values, but
+ * `verbose: true` would enable Puppeteer protocol logging, which includes the
+ * `Input.insertText` payload — i.e. the typed password. Piping means the
+ * parent decides: bounded, redacted, and only on failure.
+ */
 function spawnBankWorker(dataKey: Buffer, payload: ChildStdinPayload): void {
   const child = spawn(
     path.join(process.cwd(), "node_modules", ".bin", "tsx"),
     [path.join(process.cwd(), "scripts", "scrape-worker.mts")],
-    { stdio: ["pipe", "ignore", "ignore"] },
+    { stdio: ["pipe", "ignore", "pipe"] },
   );
   const frame = encodeChildStdinFrame(dataKey, payload);
   child.stdin.write(frame, () => frame.fill(0));
   child.stdin.end();
   child.once("error", () => frame.fill(0));
+
+  let stderr = "";
+  child.stderr?.on("data", (chunk: Buffer) => {
+    if (stderr.length >= MAX_STDERR_CHARS) return;
+    stderr += chunk.toString("utf8").slice(0, MAX_STDERR_CHARS - stderr.length);
+  });
+  /** Logs the child's stderr once, redacted and bounded, then drops it. */
+  const flushStderr = () => {
+    const captured = stderr;
+    stderr = "";
+    if (!captured.trim()) return;
+    const safe = redactSecrets(captured, Object.values(payload.credentials));
+    console.error(`scrape-worker[${payload.syncRunId}] stderr:\n${safe}`);
+  };
+
   let kill: NodeJS.Timeout | undefined;
   const term = setTimeout(
     () => {
@@ -189,12 +218,20 @@ function spawnBankWorker(dataKey: Buffer, payload: ChildStdinPayload): void {
   const failed = () => {
     void markSyncRunFailed(payload.userId, payload.syncRunId, "scrape_worker_failed");
   };
+  // `close` rather than `exit`: `exit` can fire before the stderr pipe has
+  // drained, which would log a truncated diagnostic (or none at all).
   child.once("close", (code, signal) => {
     done();
-    if (code !== 0 || signal) failed();
+    // Only a failed run is worth logging; a clean scrape's chatter is noise,
+    // and dropping it keeps scraper output out of the log by default.
+    if (code !== 0 || signal) {
+      flushStderr();
+      failed();
+    } else stderr = "";
   });
   child.once("error", () => {
     done();
+    flushStderr();
     failed();
   });
 }
