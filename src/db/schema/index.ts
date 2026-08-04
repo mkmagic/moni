@@ -7,5 +7,6 @@ export * from "./accounts";
 export * from "./ledger";
 export * from "./classification";
 export * from "./dashboard";
+export * from "./budget";
 export * from "./reference";
 export * from "./investments";

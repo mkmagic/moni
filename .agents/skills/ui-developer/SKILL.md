@@ -42,10 +42,19 @@ new feedback lands.
 
 ## Feedback log (newest first — append, don't overwrite)
 
+### 2026-08-04 — the budget page (issue #69): a bar's colour is a fact about the numbers, not about its own width
+
+- **A progress ratio cannot decide "over budget" once rollover exists.** `BudgetBar` computed `ratio = spent / available` and called it over when `ratio > 1`. With rollover on, a carried deficit drives `available` to zero or below — Groceries showed ₪581.40 spent against a ₪300 ceiling with −₪562.80 carried in, so the row said "₪844.20 over" in coral **next to a full teal bar**. The guard `available > 0 ? spent > available : spent > 0` fixes it. **Whenever a denominator can legitimately reach zero, decide the state on the operands and use the ratio only for geometry.**
+- **An empty state on a past month must not offer to create things.** `/budget?month=2026-07` rendered the whole "Create a budget from your existing history?" flow, because "no ceiling in force this month" and "no budget at all" are the same boolean. Accepting it there would have backdated ceilings the user never lived under. The setup flow is now gated on `isCurrentMonth`, and a finished month with no ceiling says so instead. **A view that is parameterised by time needs its empty states parameterised too.**
+- **A `Number()` in a UI component is fine when it produces a CSS width.** The money-at-the-edge rule is about _rendered_ values; a bar width is never read as a figure. Said so at the call site so the next reader doesn't "fix" it. The genuinely risky version — client-side money arithmetic — was avoided by returning `available` (`ceiling + carriedIn`) from the domain layer as an exact string rather than adding two Money values in the component.
+- **`{"Total budgeted "}` survived Prettier.** The 2026-07-26 Turbopack space-eating trap did not recur, because every mixed text/expression line here is written as its own string expression from the start. Worth keeping as the default habit rather than a fix applied after seeing the bug.
+- **Named a state variable `chosenWindow`, not `window`** — the 2026-07-29 note, applied preemptively.
+- **Verification needed data the seed doesn't have.** The demo seed's newest entry is July while "today" is August, so every current-month figure is ₪0 and the interesting states (over budget, carried deficit, pace) are unreachable from a fresh seed. Backdating ceilings to May via `fetch` from the page console — the session cookie is already there — put real spend under real ceilings without touching the seed script. **When a feature's interesting states depend on the current month, expect the seed to be the blocker and drive the API from the page rather than editing fixtures.**
+
 ### 2026-08-03 (later) — the history graph (issue #37): a share of a portfolio is not a portfolio's worth
 
 - **"How did my money change" is a money axis, not a percentage axis.** The graph was a 0–100%
-  stacked composition and the owner called it *"completely wrong"*. A 100%-stacked chart has a flat
+  stacked composition and the owner called it _"completely wrong"_. A 100%-stacked chart has a flat
   top edge by construction, so the one question the screen exists to answer — what is this worth,
   and is it going up — was the one thing it could not show. Plotting the ILS value instead keeps
   every other affordance (the Holding/Account switch, the stack, the brush, the tooltip) and simply
@@ -67,8 +76,8 @@ new feedback lands.
 
 - **Never show the user a connector id.** The Accounts page rendered "snaptrade (EE23)" and
   "ibkr_flex (3443)" because `resolveAccount` named the account `${source} (${last4})` and set
-  `institution` to the source id. The user's words: *"A user doesn't need to see 'Snaptrade' in his
-  accounts — he should see 'Schwab'."* Two halves to the fix: `ConnectorDefinition.institutionLabel`
+  `institution` to the source id. The user's words: _"A user doesn't need to see 'Snaptrade' in his
+  accounts — he should see 'Schwab'."_ Two halves to the fix: `ConnectorDefinition.institutionLabel`
   for direct connectors (ibkr_flex → "Interactive Brokers"), and the payload's own
   `institution_name` for an **aggregator**, which by definition can reach many brokerages and so
   cannot be named from the registry. `institutionDisplayName(institution, connectorId)` in
@@ -91,7 +100,7 @@ new feedback lands.
   the button is only expressible once it's a `Set`. The button also flips to "Collapse all" when
   everything is open, and hides entirely below two connections.
 - **A hero figure and its own components must not read as siblings.** `Cash ₪1,343 · US$437.54 USD ·
-  ₪6 ILS` was correct arithmetic (the ₪1,343 is the ILS conversion of the other two) and still read
+₪6 ILS` was correct arithmetic (the ₪1,343 is the ILS conversion of the other two) and still read
   as three cash piles. Dropping the converted total fixed it — the portfolio total above already
   carries that number. **When a line lists parts, don't lead it with the whole.**
 - **Don't offer a control whose dialog would be empty.** "Import statement" showed with no
@@ -128,9 +137,9 @@ new feedback lands.
   `target="_blank" rel="noreferrer noopener"`.
 - **The timeframe control belongs under the chart as a draggable window.** Two `<input type="range">`
   labelled Start and End were the wrong instrument — Recharts' own `<Brush>` (as the prototype in
-  commit `f57b0fd` already had it) is one control that shows the window *and* the dates it covers.
+  commit `f57b0fd` already had it) is one control that shows the window _and_ the dates it covers.
   Consequence worth knowing: with a Brush you must pass the chart the **full** data array and let
-  `startIndex`/`endIndex` window it. Pre-slicing the array *and* brushing it feeds the brush its own
+  `startIndex`/`endIndex` window it. Pre-slicing the array _and_ brushing it feeds the brush its own
   output. Reset the indices to `null` whenever new history loads, since indices into a new range are
   meaningless.
 - **A worker's safe failure code is not a user-facing message.** "Last sync failed,
@@ -141,12 +150,12 @@ new feedback lands.
   (`send_flex_1012` → "Your Flex token has expired. Create a new token…"). **Any new worker error
   code needs an entry there or it surfaces raw.**
 - **A button that un-presses while the work continues is worse than no feedback.** The import dialog
-  called `setBusy(false)` right after the POST returned 202 — but the POST only *starts* a worker,
+  called `setBusy(false)` right after the POST returned 202 — but the POST only _starts_ a worker,
   and the real wait is `waitForSyncRun`. The busy flag has to span the whole promise (`try/finally`),
   and the dialog swaps its whole body for a spinner rather than only disabling the button.
 - **Style `<input type="file">` with the `file:` variants.** The native "Choose File" button is
   unstyled and reads as plain text on a dark card; `file:rounded-[var(--radius)] file:border
-  file:border-border file:bg-muted file:px-3 file:py-1.5` makes it a button.
+file:border-border file:bg-muted file:px-3 file:py-1.5` makes it a button.
 - **Don't name a shared surface after one provider.** "Import Schwab statement" and a hardcoded
   `?? "Schwab"` fallback assumed the only importer there will ever be. Fall back to
   `getConnectorDefinition(connectorId)?.label` instead.
@@ -165,7 +174,7 @@ new feedback lands.
   `snapshotTotal`/`estimatedTotal`). That phantom line also encoded nothing — a constant `0` on a
   0–100% composition axis — so it was removed rather than restructured.
 - **My first diagnosis was wrong and the owner's second report corrected it.** I read "tooltip
-  doesn't match the graph" as a date-convention mismatch (the axis showed week *start* dates while
+  doesn't match the graph" as a date-convention mismatch (the axis showed week _start_ dates while
   the tooltip said "Week ending"), which was real and worth fixing, but it was not what they were
   seeing. **A constant offset and a stuck value are different symptoms — establish which one before
   fixing.** Hovering two known x positions and comparing the tooltip against the tick under the
@@ -182,7 +191,7 @@ new feedback lands.
 
 ### 2026-07-30 (later) — delete account (issue #31): the confirm flow the Remove button was waiting for
 
-- **The 2026-07-30 rule below was a "not yet", not a "never".** "Don't offer a destructive control with no undo" ended with *"until there's a confirm flow that can say what is lost"*. This is that flow, so the copy enumerates the loss ("your transactions and their history, your accounts and balances, your categories, rules and merchants, and every bank connection along with its encrypted login") instead of asking "are you sure?". The owner chose **password re-entry** over a type-your-email confirmation when asked: a typed email stops a misclick, a password also stops a borrowed session.
+- **The 2026-07-30 rule below was a "not yet", not a "never".** "Don't offer a destructive control with no undo" ended with _"until there's a confirm flow that can say what is lost"_. This is that flow, so the copy enumerates the loss ("your transactions and their history, your accounts and balances, your categories, rules and merchants, and every bank connection along with its encrypted login") instead of asking "are you sure?". The owner chose **password re-entry** over a type-your-email confirmation when asked: a typed email stops a misclick, a password also stops a borrowed session.
 - **A destructive control needed a `Button` variant, not utilities through `className`.** First instinct was `variant="outline"` plus `bg-negative/10 text-negative` — which is exactly the 2026-07-28 `cn`-is-a-plain-join trap, since the variant's own `bg-transparent` wins by stylesheet order, not class order. Added `variant="destructive"` (coral outline, hover-fill) to `src/components/ui/button.tsx` and documented the pattern in `ui-and-feel.md` §6. **When a new state needs conflicting utilities, extend the primitive.**
 - **Coral has a second meaning now.** §3 says coral = negative amount. `variant="destructive"` makes it also mean "this destroys something". Worth watching: a destructive button next to a coral money value in the same view has not happened yet and would read ambiguously.
 - **A destructive control goes in its own card, last.** Putting "Delete account" inside the same Card as the name field would mean the form you use to change your name is also the form that erases you. Two Cards in a `flex-col gap-8`, delete last.
@@ -195,14 +204,14 @@ new feedback lands.
 - **Removing an input can remove a whole step.** The Moni-password field disappeared from the connect form, the connection-edit form, and the arm prompt — bank credentials are now unlocked by a passkey, so there is nothing to type. The arm prompt went from a `<form>` with an `Input` to a single outline `Button` with a `KeyRound` icon and a spinner while the ceremony is open. The 423 handling that used to surface as "Wrong password" now shows the ceremony's own message, which is the only thing that distinguishes "you cancelled" from "this deployment moved and your passkey is bound to the old domain".
 - **A prerequisite goes above the thing it gates, not below it.** `PasskeyManager` sits above `ConnectionsList` on Settings › Connections: with no passkey there is no key to encrypt a bank login under, so it is the precondition, not a footnote. It owns that view's amber **only while nothing is enrolled** (`variant={none ? "primary" : "outline"}`) — once a passkey exists, "Add connection" is the primary action again, so the amber moves rather than duplicating. Per the per-view accent rule, "Add connection" was demoted to `variant="outline"` because the empty-state passkey CTA outranks it.
 - **Don't offer a destructive control with no undo.** `PasskeyManager` deliberately has no "Remove". With no recovery path for CK, a Remove button beside the last passkey is a one-click way to destroy every stored bank login. Listing without removing is the honest shape until there's a confirm flow that can say what is lost.
-- **`throw` at module load in a `lib/` file fails `next build`, not just a bad request.** `webauthn-config.ts` validated `MONI_WEBAUTHN_RP_ID` at import — correct-looking, and it broke the build: "Collecting page data" imports every route module in an environment that legitimately has no runtime env, so the build failed instead of the misconfiguration. Fixed by validating on first *use* and memoizing (`relyingParty()`), which keeps the loud failure exactly where it matters (first passkey request) without making a build depend on deployment config. **Any env validation that throws must be lazy if a route module imports it.**
+- **`throw` at module load in a `lib/` file fails `next build`, not just a bad request.** `webauthn-config.ts` validated `MONI_WEBAUTHN_RP_ID` at import — correct-looking, and it broke the build: "Collecting page data" imports every route module in an environment that legitimately has no runtime env, so the build failed instead of the misconfiguration. Fixed by validating on first _use_ and memoizing (`relyingParty()`), which keeps the loud failure exactly where it matters (first passkey request) without making a build depend on deployment config. **Any env validation that throws must be lazy if a route module imports it.**
 - **The gates all passed with the build broken.** typecheck, lint, format and 386 tests were green while `npm run build` failed outright. CI runs `build` as a fifth step for exactly this reason — run it locally too whenever a change adds module-level side effects.
 - **Not visually verified by me.** The owner took the browser pass this session. Worth checking specifically: the onboarding passkey step (first screen a new user sees now), the Settings › Connections stack order and where the amber lands with 0 vs 1 passkeys, and the arm button's spinner state while a biometric prompt is open.
 
 ### 2026-07-29 (later) — the recurring tab (issue #15): icon toggles over Switches, and a disable comment that disabled nothing
 
 - **A per-row boolean is an icon toggle, not a `Switch`.** The recurring flag needed a control on every
-  category *and* every subcategory — the shipped set puts Salary under Income, so a group-level flag
+  category _and_ every subcategory — the shipped set puts Salary under Income, so a group-level flag
   would drag refunds and dividends in with it. `Switch` is amber "on", and a two-column grid of ~20
   groups would have put dozens of amber tracks in one view. A `Repeat` icon that goes `text-primary`
   when set is the same signal at a fraction of the weight, matching the category picker's
@@ -211,7 +220,7 @@ new feedback lands.
 - **`// eslint-disable-next-line` with a wrapped description disables nothing.** The waiver for
   `@next/next/no-img-element` in `merchant-icon.tsx` had its justification spilling onto a second
   comment line, so "next line" pointed at the comment rather than the `<img>`. Lint still reported the
-  warning and it read as a phantom. Put the reason on the lines *above* and the bare disable directive
+  warning and it read as a phantom. Put the reason on the lines _above_ and the bare disable directive
   immediately before the element.
 - **Don't name a state variable `window`.** `const [window, setWindow]` in a row component sat a few
   lines from a `window.location.search` read in the same file. Renamed to `paymentWindow`.

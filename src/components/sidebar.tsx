@@ -9,6 +9,7 @@ import {
   Settings,
   Wallet,
   LogOut,
+  Target,
   TrendingUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -16,6 +17,7 @@ import { cn } from "@/lib/utils";
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
+  { href: "/budget", label: "Budget", icon: Target },
   { href: "/accounts", label: "Accounts", icon: Landmark },
   { href: "/investments", label: "Investments", icon: TrendingUp },
 ] as const;
