@@ -73,7 +73,7 @@ export function PasskeyManager({ initialPasskeys }: { initialPasskeys: PasskeyRo
             <p className="text-sm font-medium text-foreground">Passkeys</p>
             <p className="text-xs text-muted-foreground">
               {none
-                ? "A passkey encrypts your bank logins. You'll need one before you can connect an account."
+                ? "A passkey is required for bank, card, and IBKR logins. Schwab CSV imports do not need one."
                 : "Your passkey unlocks your stored bank logins each time you sync."}
             </p>
           </div>

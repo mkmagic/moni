@@ -96,8 +96,41 @@ GRANT CREATE ON DATABASE moni TO moni_owner;
 --> statement-breakpoint
 
 -- ---------------------------------------------------------------------------
--- 3. Table ownership → moni_owner
+-- 3. Schema object ownership → moni_owner
 -- ---------------------------------------------------------------------------
+-- Enum types are independent schema objects in Postgres. Owning the tables
+-- that use them is not enough to ALTER the types in a later migration.
+ALTER TYPE "account_classification" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "account_status" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "account_type" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "category_classification" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "entry_field_change_source" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "connection_status" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "reconcile_state" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "sync_run_status" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "sync_staging_scraper_status" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "account_balance_snapshot_source" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "entry_source" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "entry_status" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "entry_transaction_kind" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "entry_type" OWNER TO moni_owner;
+--> statement-breakpoint
+ALTER TYPE "fx_status" OWNER TO moni_owner;
+--> statement-breakpoint
+
 ALTER TABLE "accounts" OWNER TO moni_owner;
 --> statement-breakpoint
 ALTER TABLE "credit_card_details" OWNER TO moni_owner;

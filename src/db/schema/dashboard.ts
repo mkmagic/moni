@@ -1,4 +1,13 @@
-import { pgTable, pgEnum, uuid, text, date, integer, foreignKey } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  pgEnum,
+  uuid,
+  text,
+  date,
+  integer,
+  foreignKey,
+  unique,
+} from "drizzle-orm/pg-core";
 import { bytea, timestamps } from "./shared";
 import { users } from "./identity";
 import { accounts } from "./accounts";
@@ -6,6 +15,7 @@ import { accounts } from "./accounts";
 export const accountBalanceSnapshotSourceEnum = pgEnum("account_balance_snapshot_source", [
   "scrape",
   "manual",
+  "investment",
 ]);
 
 /**
@@ -23,13 +33,14 @@ export const accountBalanceSnapshots = pgTable(
       .references(() => users.id),
     accountId: uuid("account_id").notNull(),
     date: date("date").notNull(),
-    nativeBalanceCt: bytea("native_balance_ct").notNull(),
-    currency: text("currency").notNull(),
+    nativeBalanceCt: bytea("native_balance_ct"),
+    currency: text("currency"),
     source: accountBalanceSnapshotSourceEnum("source").notNull(),
     version: integer("version").notNull().default(1),
     ...timestamps,
   },
   (table) => [
+    unique("account_balance_snapshots_owner_id_id_unique").on(table.ownerId, table.id),
     foreignKey({
       columns: [table.ownerId, table.accountId],
       foreignColumns: [accounts.ownerId, accounts.id],

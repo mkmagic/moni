@@ -17,6 +17,7 @@ function usernamePassword(
     id,
     label,
     kind,
+    mode: "credentialed_fetch",
     loginFields: [{ key: "username", label: "Username", inputType: "text" }, PASSWORD_FIELD],
   };
 }
@@ -35,12 +36,14 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
     id: "hapoalim",
     label: "Bank Hapoalim",
     kind: "bank",
+    mode: "credentialed_fetch",
     loginFields: [{ key: "userCode", label: "User Code", inputType: "text" }, PASSWORD_FIELD],
   },
   isracard: {
     id: "isracard",
     label: "Isracard",
     kind: "credit_card",
+    mode: "credentialed_fetch",
     loginFields: [
       { key: "id", label: "ID Number", inputType: "text" },
       { key: "card6Digits", label: "Last 6 Digits of Card", inputType: "text" },
@@ -51,6 +54,7 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
     id: "amex",
     label: "American Express (Isracard)",
     kind: "credit_card",
+    mode: "credentialed_fetch",
     loginFields: [
       { key: "id", label: "ID Number", inputType: "text" },
       { key: "card6Digits", label: "Last 6 Digits of Card", inputType: "text" },
@@ -61,6 +65,7 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
     id: "discount",
     label: "Discount Bank",
     kind: "bank",
+    mode: "credentialed_fetch",
     loginFields: [
       { key: "id", label: "ID Number", inputType: "text" },
       PASSWORD_FIELD,
@@ -71,6 +76,7 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
     id: "mercantile",
     label: "Mercantile Discount Bank",
     kind: "bank",
+    mode: "credentialed_fetch",
     loginFields: [
       { key: "id", label: "ID Number", inputType: "text" },
       PASSWORD_FIELD,
@@ -81,10 +87,40 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
     id: "yahav",
     label: "Bank Yahav",
     kind: "bank",
+    mode: "credentialed_fetch",
     loginFields: [
       { key: "username", label: "Username", inputType: "text" },
       { key: "nationalID", label: "National ID", inputType: "text" },
       PASSWORD_FIELD,
+    ],
+  },
+  ibkr_flex: {
+    id: "ibkr_flex",
+    label: "Interactive Brokers Flex",
+    institutionLabel: "Interactive Brokers",
+    kind: "investment",
+    mode: "credentialed_fetch",
+    loginFields: [
+      { key: "flexToken", label: "Flex Token", inputType: "password" },
+      { key: "queryId", label: "Query ID", inputType: "text" },
+    ],
+  },
+  schwab_positions_csv: {
+    id: "schwab_positions_csv",
+    label: "Schwab Positions CSV",
+    institutionLabel: "Charles Schwab",
+    kind: "investment",
+    mode: "user_mediated_import",
+    loginFields: [],
+  },
+  snaptrade: {
+    id: "snaptrade",
+    label: "SnapTrade",
+    kind: "investment",
+    mode: "credentialed_fetch",
+    loginFields: [
+      { key: "clientId", label: "Client ID", inputType: "text" },
+      { key: "consumerKey", label: "Consumer Key", inputType: "password" },
     ],
   },
 };
@@ -97,4 +133,21 @@ export function getConnectorDefinition(id: string): ConnectorDefinition | undefi
 
 export function isConnectorId(id: string): id is ConnectorId {
   return Object.prototype.hasOwnProperty.call(CONNECTOR_REGISTRY, id);
+}
+
+/**
+ * The brokerage or bank to show a user for an account.
+ *
+ * A stored institution of "snaptrade" is Moni's own source id leaking through
+ * — accounts created before the promotion learned the real name still carry
+ * one, and a raw id is never the answer to "where is my money". Treat it as
+ * unset and let the connector name its institution instead.
+ */
+export function institutionDisplayName(
+  institution: string | null | undefined,
+  connectorId: string | null | undefined,
+): string | null {
+  if (institution && !isConnectorId(institution)) return institution;
+  const definition = connectorId ? getConnectorDefinition(connectorId) : undefined;
+  return definition?.institutionLabel ?? definition?.label ?? institution ?? null;
 }

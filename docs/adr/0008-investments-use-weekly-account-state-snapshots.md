@@ -1,0 +1,41 @@
+# Investments use weekly account-state snapshots
+
+Moni 1.1 represents an investment account as complete, source-dated snapshots
+containing positions and per-currency cash balances. The latest snapshot is current
+state, one Sunday-through-Saturday snapshot per account is retained indefinitely,
+and consolidated portfolio values are derived rather than stored. This uses more
+rows than retaining account totals alone, but gives current and historical reads one
+model without prematurely introducing Ghostfolio-style activities, trades, or tax
+lots.
+
+## Consequences
+
+- A per-user canonical instrument may unite broker records only when durable
+  identifiers match without type or currency conflict. Tickers and names never
+  establish identity; ambiguous records remain separate.
+- `account_balance_snapshots` remains the dated account-observation parent and
+  net-worth domain-service seam. An investment-specific 1:1 detail row supplies
+  snapshot metadata and owns the position and cash children; [ADR 0009](0009-investment-valuation-trusts-broker-observations-and-boi-fx.md)
+  explains why their canonical ILS value is derived rather than persisted.
+- A later accepted observation replaces the active normalized snapshot for the same
+  account and week atomically. Repeated source rows aggregate only when their
+  identity, asset kind, quantity unit, currency, valuation basis, and source time
+  are compatible; otherwise the covered refresh fails.
+- Broker source values remain separate from Moni valuations. Unsupported instruments
+  participate through clearly labeled broker values but receive no specialized
+  analytics.
+- Missing account weeks are carried forward only while calculating a read and make
+  the resulting portfolio point explicitly stale; Moni writes no synthetic snapshot
+  or portfolio rollup.
+- Historical display converts through shared local FX history populated on demand by
+  user-triggered refreshes. FX rates are not copied onto investment snapshots, and
+  1.1 adds no scheduler.
+- Raw API responses and uploaded files are parsed in the short-lived worker and are
+  never retained. Accepted refreshes keep encrypted normalized source assertions,
+  structural provenance, and a keyed normalized fingerprint; failed refreshes keep
+  sanitized error metadata only.
+- Closing an account archives it through explicit user action and preserves history.
+  Disconnect and permanent deletion remain separate operations.
+- Trades, lots, returns, corporate actions, tax calculations, and user identity
+  overrides remain deferred; snapshots do not pretend to provide their event
+  lineage.

@@ -4,6 +4,7 @@
 export type {
   ConnectorId,
   ConnectorKind,
+  ConnectorMode,
   ConnectorDefinition,
   LoginFieldDescriptor,
   LoginFieldInputType,
@@ -12,6 +13,7 @@ export {
   CONNECTOR_REGISTRY,
   CONNECTOR_LIST,
   getConnectorDefinition,
+  institutionDisplayName,
   isConnectorId,
 } from "./registry";
 export {
@@ -26,5 +28,12 @@ export { computeImportKey, type ImportKeyInput } from "./import-key";
 export {
   encodeChildStdinFrame,
   decodeChildStdinFrame,
+  encodeBinaryChildFrame,
+  decodeBinaryChildFrame,
+  MAX_CHILD_STDIN_BYTES,
+  MAX_CHILD_SEGMENT_BYTES,
+  MAX_CHILD_METADATA_BYTES,
+  MAX_CHILD_FRAME_BYTES,
   type ChildStdinPayload,
 } from "./child-stdin-framing";
+export { readChildStdin } from "./read-child-stdin";

@@ -55,6 +55,12 @@ const MIGRATION_FILES = [
   "0011_recurring_view.sql",
   "0012_slim_malcolm_colcord.sql",
   "0013_clear_password_wrapped_credential_key.sql",
+  "0014_grey_logan.sql",
+  "0015_investment-rls-and-lifecycle.sql",
+  "0016_fx_rates_boi_writer.sql",
+  "0017_enum-ownership-repair.sql",
+  "0018_snaptrade_source.sql",
+  "0019_snaptrade_sync_run_check.sql",
 ];
 
 /** Bookkeeping for which of MIGRATION_FILES this database has already seen.

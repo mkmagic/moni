@@ -91,9 +91,16 @@ export function newAppRoleClient(): Client {
  * Every RLS-protected (owner_id-scoped) table, in child-before-parent
  * delete order so a bulk cleanup never trips a foreign-key violation. This
  * is also exactly the table set structural tests assert RLS is enabled on
- * (18 tables; `fx_rates` is the sole non-RLS exception — data-model.md §2).
+ * (25 tables; `fx_rates` is the sole non-RLS exception — data-model.md §2).
  */
 export const OWNER_SCOPED_TABLES_DELETE_ORDER = [
+  "investment_market_quotes",
+  "investment_snapshot_cash_balances",
+  "investment_snapshot_positions",
+  "investment_source_evidence",
+  "investment_snapshot_details",
+  "instrument_source_mappings",
+  "instruments",
   "category_rejections",
   "entry_field_changelog",
   "entry_transactions",
@@ -122,13 +129,21 @@ export const OWNER_SCOPED_TABLES_DELETE_ORDER = [
  */
 export async function cleanupOwners(ownerIds: string[]): Promise<void> {
   if (ownerIds.length === 0) return;
-  for (const table of OWNER_SCOPED_TABLES_DELETE_ORDER) {
-    // `users` is the root of the ownership graph — it's keyed by `id`, not
-    // `owner_id` (every other table here has an `owner_id` FK back to it).
-    const column = table === "users" ? "id" : "owner_id";
-    await elevatedPool.query(`DELETE FROM "${table}" WHERE ${column} = ANY($1::uuid[])`, [
-      ownerIds,
-    ]);
+  const client = await elevatedPool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const table of OWNER_SCOPED_TABLES_DELETE_ORDER) {
+      // `users` is the root of the ownership graph — it's keyed by `id`, not
+      // `owner_id` (every other table here has an `owner_id` FK back to it).
+      const column = table === "users" ? "id" : "owner_id";
+      await client.query(`DELETE FROM "${table}" WHERE ${column} = ANY($1::uuid[])`, [ownerIds]);
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
   }
 }
 

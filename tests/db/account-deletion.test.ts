@@ -78,6 +78,55 @@ async function seedFullOwner(label: string): Promise<OwnerFixture> {
     })
     .returning({ id: schema.accounts.id });
 
+  const [investmentAccount] = await elevatedDb
+    .insert(schema.accounts)
+    .values({
+      ownerId: userId,
+      connectionId: connection.id,
+      accountType: "investment",
+      classification: "asset",
+      nameCt: ct(`${label}-investment-account`),
+      currency: "USD",
+      currentBalanceCt: null,
+    })
+    .returning({ id: schema.accounts.id });
+
+  const [instrument] = await elevatedDb
+    .insert(schema.instruments)
+    .values({
+      ownerId: userId,
+      kind: "etf",
+      canonicalNameCt: ct(`${label}-investment-name`),
+      canonicalSymbolCt: ct(`${label}-investment-symbol`),
+    })
+    .returning({ id: schema.instruments.id });
+
+  const [mapping] = await elevatedDb
+    .insert(schema.instrumentSourceMappings)
+    .values({
+      ownerId: userId,
+      instrumentId: instrument.id,
+      provider: "tiingo",
+      identifierKind: "isin",
+      providerIdentifierCt: ct(`${label}-investment-id`),
+      currency: "USD",
+    })
+    .returning({ id: schema.instrumentSourceMappings.id });
+
+  await elevatedDb.insert(schema.investmentMarketQuotes).values({
+    ownerId: userId,
+    instrumentId: instrument.id,
+    instrumentSourceMappingId: mapping.id,
+    provider: "tiingo",
+    providerSymbolCt: ct(`${label}-quote-symbol`),
+    priceCt: ct("100.00"),
+    currency: "USD",
+    sourceDate: "2026-01-31",
+    fetchedAt: new Date("2026-01-31T12:00:00Z"),
+    splitState: "safe",
+    qualityState: "accepted",
+  });
+
   await elevatedDb.insert(schema.creditCardDetails).values({
     ownerId: userId,
     accountId: account.id,
@@ -188,6 +237,71 @@ async function seedFullOwner(label: string): Promise<OwnerFixture> {
     .insert(schema.syncRuns)
     .values({ ownerId: userId, connectionId: connection.id, status: "succeeded" })
     .returning({ id: schema.syncRuns.id });
+
+  await elevatedDb.transaction(async (tx) => {
+    const [snapshot] = await tx
+      .insert(schema.accountBalanceSnapshots)
+      .values({
+        ownerId: userId,
+        accountId: investmentAccount.id,
+        date: "2026-01-31",
+        nativeBalanceCt: null,
+        currency: null,
+        source: "investment",
+      })
+      .returning({ id: schema.accountBalanceSnapshots.id });
+
+    const [detail] = await tx
+      .insert(schema.investmentSnapshotDetails)
+      .values({
+        ownerId: userId,
+        accountBalanceSnapshotId: snapshot.id,
+        accountId: investmentAccount.id,
+        connectionId: connection.id,
+        syncRunId: syncRun.id,
+        weekStart: "2026-01-25",
+        source: "ibkr_flex",
+        sourceAsOf: new Date("2026-01-31T12:00:00Z"),
+        sourceAsOfPrecision: "timestamp",
+        brokerTotalCt: ct("100.00"),
+        brokerTotalCurrency: "USD",
+        reconciliationState: "matched",
+        validationVersion: 1,
+      })
+      .returning({ id: schema.investmentSnapshotDetails.id });
+
+    await tx.insert(schema.investmentSnapshotPositions).values({
+      ownerId: userId,
+      snapshotId: detail.id,
+      instrumentId: instrument.id,
+      quantityCt: ct("1"),
+      quantityUnit: "shares",
+      currency: "USD",
+      sourceValueCt: ct("100.00"),
+      sourceValueCurrency: "USD",
+      brokerValuationBasis: "market_value",
+    });
+    await tx.insert(schema.investmentSnapshotCashBalances).values({
+      ownerId: userId,
+      snapshotId: detail.id,
+      currency: "USD",
+      amountCt: ct("0"),
+    });
+    await tx.insert(schema.investmentSourceEvidence).values({
+      ownerId: userId,
+      connectionId: connection.id,
+      syncRunId: syncRun.id,
+      accountId: investmentAccount.id,
+      source: "ibkr_flex",
+      sourceAsOf: new Date("2026-01-31T12:00:00Z"),
+      sourceAsOfPrecision: "timestamp",
+      validationVersion: 1,
+      positionRowCount: 1,
+      cashRowCount: 1,
+      qualityCodes: [],
+      normalizedFingerprint: ct(`${label}-fingerprint`),
+    });
+  });
 
   await elevatedDb.insert(schema.syncStaging).values({
     ownerId: userId,

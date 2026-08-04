@@ -9,7 +9,8 @@
 /** What kind of account a connector represents — drives account-type
  * inference at scrape-promotion time (src/domain/sync-promotion.ts) and the
  * onboarding picker's grouping (a later cluster, not built here). */
-export type ConnectorKind = "bank" | "credit_card";
+export type ConnectorKind = "bank" | "credit_card" | "investment";
+export type ConnectorMode = "credentialed_fetch" | "user_mediated_import";
 
 export type LoginFieldInputType = "text" | "password";
 
@@ -42,13 +43,24 @@ export type ConnectorId =
   | "amex"
   | "discount"
   | "mercantile"
-  | "yahav";
+  | "yahav"
+  | "ibkr_flex"
+  | "schwab_positions_csv"
+  | "snaptrade";
 
 export interface ConnectorDefinition {
   id: ConnectorId;
-  /** Human-readable institution name — used for UI and default account naming. */
+  /** Human-readable name of the connector itself, e.g. "Interactive Brokers Flex". */
   label: string;
+  /**
+   * The institution an account reached through this connector actually belongs
+   * to — "Charles Schwab", not "Schwab Positions CSV". Undefined for an
+   * aggregator like SnapTrade, which can reach many brokerages and therefore
+   * reports the institution per account instead.
+   */
+  institutionLabel?: string;
   kind: ConnectorKind;
+  mode: ConnectorMode;
   /** Ordered to match the scraper's expected credentials-object key order. */
   loginFields: LoginFieldDescriptor[];
 }

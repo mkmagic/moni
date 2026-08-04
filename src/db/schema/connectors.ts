@@ -18,6 +18,10 @@ export const connectionStatusEnum = pgEnum("connection_status", [
   "error",
   "disconnected",
 ]);
+export const connectionModeEnum = pgEnum("connection_mode", [
+  "credentialed_fetch",
+  "user_mediated_import",
+]);
 export const syncRunStatusEnum = pgEnum("sync_run_status", [
   "pending",
   "running",
@@ -50,7 +54,8 @@ export const connections = pgTable(
     // Tier-0: wrapped by the user's unlock secret, never the data key
     // (threat-model.md §5 — a scrape must be able to decrypt this without
     // the data-key/unlock-window machinery gating ordinary Tier-1 reads).
-    credentialsCt: bytea("credentials_ct").notNull(),
+    credentialsCt: bytea("credentials_ct"),
+    mode: connectionModeEnum("mode").notNull().default("credentialed_fetch"),
     status: connectionStatusEnum("status").notNull(),
     lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
     version: integer("version").notNull().default(1),
@@ -72,6 +77,11 @@ export const syncRuns = pgTable(
     windowStart: timestamp("window_start", { withTimezone: true }),
     windowEnd: timestamp("window_end", { withTimezone: true }),
     error: text("error"),
+    investmentSource: text("investment_source"),
+    declaredAccountCount: integer("declared_account_count"),
+    promotedAccountCount: integer("promoted_account_count"),
+    promotedPositionCount: integer("promoted_position_count"),
+    promotedCashBalanceCount: integer("promoted_cash_balance_count"),
     ...timestamps,
   },
   (table) => [

@@ -9,13 +9,19 @@ we deliberately don't. It holds no implementation detail; see `docs/design/` for
 ### Connecting and syncing
 
 **Connection**:
-One stored login at one financial institution, owned by exactly one user.
+One configured data source at one financial institution, owned by exactly one
+user. It discovers accounts through delegated access or a user-mediated import.
 _Avoid_: Account (that's the thing a connection discovers), integration, link.
 
 **Sync run**:
-A single scrape attempt against one connection. Either it fully succeeds or it
-records a failure and writes nothing.
+A single attempt to retrieve and promote data from one connection. Either it fully
+succeeds or it records a failure and writes no new financial data.
 _Avoid_: Job, import, refresh.
+
+**User-mediated import connection**:
+A connection whose sync run starts when the user uploads an official structured
+export in an explicitly supported institution-specific format.
+_Avoid_: Manual broker, manual positions, generic CSV import.
 
 **Sync window**:
 The date range a recurring sync run covers. Always computed by the server from the
@@ -85,3 +91,80 @@ _Avoid_: Frequency, interval, period, schedule.
 Having at least one connection. There is no separate flag — the presence of a
 connection _is_ the signal.
 _Avoid_: Setup complete, activated.
+
+### Investments
+
+**Instrument**:
+A user-owned canonical identity for one investable asset across connections and
+accounts. Source records unite only when strong evidence identifies the same asset.
+_Avoid_: Ticker, symbol, or name as identity; global security.
+
+**Position**:
+The source-observed signed quantity of one instrument in one investment snapshot.
+It is an account state observation, not a trade or tax lot.
+_Avoid_: Activity, transaction, lot.
+
+**Cash balance**:
+A source-observed signed amount in one currency held within an investment snapshot.
+It appears beside positions but is not an instrument or position.
+_Avoid_: Cash instrument, cash position.
+
+**Investment snapshot**:
+The complete observed state of one investment account at a stated time, including
+its positions, cash balances, source value, and valuation quality. The latest
+snapshot is current state; at most one snapshot per week remains in history.
+_Avoid_: Portfolio snapshot, lot history, activity ledger.
+
+**Sync coverage**:
+The exact set of investment accounts for which one sync asserts a complete source
+state. Every account in the set succeeds together; accounts outside it are
+untouched.
+_Avoid_: Discovered accounts, partial success, best-effort scope.
+
+**Archived investment account**:
+An investment account excluded from the current portfolio after it closes or its
+assets move elsewhere, while its snapshots remain part of history.
+_Avoid_: Deleted account, removed history.
+
+**Source value**:
+A financial institution's monetary assertion for a position or account at a stated
+time. It is retained as evidence and does not overwrite Moni's valuation.
+_Avoid_: Canonical value, calculated value.
+
+**Market quote**:
+A public-provider observation of one instrument's unit price at an explicit date
+and currency. It may update a current estimate but is not broker source evidence.
+_Avoid_: Source value, live price, canonical price.
+
+**Valuation**:
+The exact monetary value of a position, account, or portfolio under a named basis.
+It carries explicit as-of, currency, freshness, and completeness context and never
+hides whether it uses broker evidence or a newer market quote.
+_Avoid_: Source value, balance, performance.
+
+**Current investment estimate**:
+A mixed-age valuation using the latest accepted quantities, the latest usable
+market quotes for supported instruments, and last-known cash. Unsupported or
+unusable quotes fall back to broker-observed values and make the basis and staleness
+visible.
+_Avoid_: Live balance, broker value, guaranteed current value.
+
+**Reconciliation mismatch**:
+A quality state where a broker's account source value and Moni's summed account
+valuation differ after both are rounded for ILS display. It does not replace or
+invalidate Moni's valuation.
+_Avoid_: Balance error, rejected snapshot.
+
+**Portfolio**:
+The consolidated calculated view of a user's investment accounts. A portfolio is
+not a separately stored container; users can drill down from it by connection and
+account.
+_Avoid_: A user-created or broker-owned grouping.
+
+**Portfolio value history**:
+The calculated weekly series of a portfolio's total market value, including the
+effect of deposits and withdrawals. A missing account snapshot may be carried
+forward only in the view and makes that point explicitly stale; reporting
+conversion uses the shared historical FX rate for each snapshot's real date. It
+is not an investment-return measure.
+_Avoid_: Performance, return, gain.

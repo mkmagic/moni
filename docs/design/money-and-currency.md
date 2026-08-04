@@ -37,9 +37,47 @@ Rules:
 
 ## 4. FX sourcing & missing rates
 
-- **Rates come from an FX/market-data provider behind the generic provider interface** (shape adapted from Ghostfolio's market-data provider), fetched by the pg-boss worker as a background job and cached outside the request cycle. v1.0 ships one provider.
+- **Rates come from an FX/market-data provider behind the generic provider interface** (shape adapted from Ghostfolio's market-data provider). Moni fetches missing rates during a user-triggered operation and retains them in the shared local cache; 1.1 adds no scheduler or queue.
 - The rate for an entry is the provider's rate for `entered → reporting` **as of the transaction date**. Store the rate, its date, and its source alongside the entry.
-- **A missing rate never blocks ingest and is never faked.** entered and account amounts are ground truth and persist regardless. If no rate is available for the transaction date at ingest, `fxRate` is left null and the entry is flagged `fx_status = 'pending'`; its reporting value is simply unavailable (nothing is stored to backfill) until a background job locks the rate once it exists. Never substitute a silent `1:1`, never fall back to today's rate to "fill the gap." On-the-fly aggregation surfaces or excludes pending entries rather than silently under/over-counting.
+- **A missing rate is never faked.** For ledger flows, entered and account amounts are ground truth and persist regardless. If no rate is available for the transaction date at ingest, `fxRate` is left null and the entry is flagged `fx_status = 'pending'`; a later user-triggered operation may fill it once the rate exists. Never substitute a silent `1:1`, never fall back to today's rate to "fill the gap." On-the-fly aggregation surfaces or excludes pending entries rather than silently under/over-counting. A complete investment refresh has the stricter contract in [ADR 0008](../adr/0008-investments-use-weekly-account-state-snapshots.md): if a required valuation input is missing, the new snapshot is rejected atomically.
+
+### Investment valuation in 1.1
+
+[ADR 0009](../adr/0009-investment-valuation-trusts-broker-observations-and-boi-fx.md)
+sets the narrower investment policy:
+
+- The Bank of Israel is the sole FX authority. Consolidated investment and
+  net-worth values are ILS-only; native holding and cash values remain visible.
+- Source-date valuation uses the broker value, or exact quantity × broker price,
+  plus source cash. The current estimate may instead use exact last accepted
+  quantity × latest usable Tiingo EOD close for supported active USD ETFs and common
+  stocks on NYSE or Nasdaq, plus last-known cash. Both retain their own dates and
+  valuation basis.
+- Tiingo closes are parsed from CSV decimal text without a JavaScript number. A
+  missing, unresolved, more-than-seven-day-old, or unsafe post-corporate-action
+  quote falls back to the broker-observed value and makes the result visibly stale.
+  Quote failure never rejects an otherwise valid broker or statement snapshot.
+- Fetch bounded date ranges from BOI's unauthenticated
+  `https://edge.boi.gov.il/FusionEdgeServer/sdmx/v2/data/dataflow/BOI.STATISTICS/EXR/1.0/`
+  endpoint with `format=csv`; do not use the convenient current-rate JSON response,
+  whose numeric tokens a normal TypeScript parser would turn into floats. Parse
+  `OBS_VALUE` and `UNIT_MULT` as text and normalize to ILS per one foreign unit as
+  `OBS_VALUE / 10^UNIT_MULT` with `decimal.js`. Retain `TIME_PERIOD`,
+  `BASE_CURRENCY`, `COUNTER_CURRENCY`, `DATA_SOURCE`, and `RELEASE_STATUS` as public
+  provenance. One adapter handles every currency BOI publishes; currencies outside
+  that response have no 1.1 fallback.
+- Use the latest BOI observation on or before the relevant valuation date. The
+  observation may be at most seven calendar days old. Beyond that it is unavailable:
+  a new investment refresh is rejected atomically and the prior accepted snapshot
+  remains current.
+- User-triggered refreshes fetch required observations before promoting snapshots.
+  Dashboard and portfolio reads use the shared local cache and perform no external
+  I/O. Current valuation uses the newest accepted local observation; weekly history
+  uses each snapshot's real date.
+- A newly fetched official correction replaces the cached observation for that
+  source/date and can correct derived value history. Investment snapshots do not
+  copy or lock the FX rate; future transaction and tax-lot evidence retains its own
+  date-specific locking rules.
 
 ## 5. Base currency vs. display currency (stock vs. flow)
 
@@ -53,8 +91,8 @@ Which rate a total uses depends on whether it is a **stock** or a **flow**:
 | Total | Kind | Rate to use |
 |---|---|---|
 | Income / expenses / category spend over a period | **flow** | Each transaction at **its own transaction-date rate**, then summed. A period total must not move as rates move. |
-| "Net worth / balances **right now**" | **stock** | Each account's **current native balance at today's latest rate**. This *should* move with the market — that is correct valuation, not drift. |
-| "Net worth **as of** a past date" | **stock** | Native balance at that date × the rate **on that date**. |
+| "Net worth / balances **right now**" | **stock** | An ordinary account's current native balance at today's latest rate; an investment account's last accepted quantities × newest usable local Tiingo closes for supported instruments, plus last-known cash, converted at the newest locally cached BOI rate. Unsupported or unusable quotes fall back to broker values with explicit freshness. This *should* move with the market — that is correct valuation, not drift. |
+| "Net worth **as of** a past date" | **stock** | An ordinary account's native balance at that date, or an investment snapshot's component values, converted with the rate **on that date**. |
 
 So a flow total is a sum of historically-locked amounts; a current-balance total is a live conversion off the latest rate. Never value flows at today's rate, and never value "current net worth" at historical per-transaction rates.
 
@@ -71,11 +109,12 @@ So a flow total is a sum of historically-locked amounts; a current-balance total
 
 ## 7. Changing the base currency
 
-Because reporting amounts are **derived, not stored**, changing the base currency touches **no ciphertext** — there is no stored reporting leg to re-encrypt, and no rollups to recompute. Each entry's reporting value is re-derived on read from *that entry's transaction-date rate* looked up in the **new** base currency (`fx_rates`), exactly as the display-currency path does (§5). The base currency remains a stored per-user setting (`users.base_currency`); an entry's cached plaintext `fxRate`/`reporting_currency` reflect the base *at write*, and a background job may refresh those plaintext caches for the fast path, but **no amount ciphertext is ever rewritten**. Avoiding that ledger-wide re-encryption on every base-currency change is the concrete payoff of deriving rather than storing the reporting leg (traced in `data-model.md` §4.3). Any transaction-date rate missing in the new base is backfilled by the FX job like any other pending rate (§4).
+Because reporting amounts are **derived, not stored**, changing the base currency touches **no ciphertext** — there is no stored reporting leg to re-encrypt, and no rollups to recompute. Each entry's reporting value is re-derived on read from *that entry's transaction-date rate* looked up in the **new** base currency (`fx_rates`), exactly as the display-currency path does (§5). The base currency remains a stored per-user setting (`users.base_currency`); an entry's cached plaintext `fxRate`/`reporting_currency` reflect the base *at write*, and a later user-triggered backfill may refresh those plaintext caches for the fast path, but **no amount ciphertext is ever rewritten**. Avoiding that ledger-wide re-encryption on every base-currency change is the concrete payoff of deriving rather than storing the reporting leg (traced in `data-model.md` §4.3). Any transaction-date rate missing in the new base is filled by the same user-triggered FX operation as any other pending rate (§4).
 
 ## Open questions
 - `NUMERIC` scale policy for the (few) plaintext money columns, and the internal precision cap for `decimal.js` intermediate FX products.
-- Exact FX provider(s) for v1.0 and the rate convention (daily close vs. mid vs. a specific published fixing), plus whether ILS↔USD gets a preferred source given the Israeli-first focus.
+- Exact FX provider(s) and rate convention for ledger flows outside the BOI-backed
+  Moni 1.1 investment valuation policy.
 - Backfill/consistency for late-arriving FX rates (locking a previously pending `fxRate`, and refreshing any cached plaintext `fxRate`/`reporting_currency` after a base-currency change) — shares the open question in `encryption.md` and `../security/threat-model.md` §13.
 - For the deferred display-currency toggle (§5): whether flow periods reconvert at period **close** or period **average**, and the historical-rate coverage the FX provider must guarantee for any currency a user might view in.
 

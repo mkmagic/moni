@@ -42,6 +42,144 @@ new feedback lands.
 
 ## Feedback log (newest first — append, don't overwrite)
 
+### 2026-08-03 (later) — the history graph (issue #37): a share of a portfolio is not a portfolio's worth
+
+- **"How did my money change" is a money axis, not a percentage axis.** The graph was a 0–100%
+  stacked composition and the owner called it *"completely wrong"*. A 100%-stacked chart has a flat
+  top edge by construction, so the one question the screen exists to answer — what is this worth,
+  and is it going up — was the one thing it could not show. Plotting the ILS value instead keeps
+  every other affordance (the Holding/Account switch, the stack, the brush, the tooltip) and simply
+  makes the stack's top edge the portfolio's worth. **When a chart is "wrong" but the numbers are
+  right, suspect the axis before the data.**
+- **The y-axis label and the tooltip are different jobs.** An axis has room for `₪800K`, not for
+  `₪689,366` — `Intl.NumberFormat` with `notation: "compact"` on the ticks, exact strings in the
+  tooltip and the summary. The `width={64}` on `<YAxis>` is needed or the ticks clip.
+- **A week before the first snapshot is not a week worth ₪0.** As percentages, the year of empty
+  weeks ahead of the first sync was invisible; as money it drew a flat line along zero and made
+  "valuation change" read `+₪689,366 · 0%` — the whole portfolio appearing from nothing.
+  `getPortfolioHistory` now skips leading weeks with no evidence at all. **Changing how a value is
+  drawn can expose a data-shape bug that the old encoding was hiding.**
+- **Re-screenshot a Recharts area before believing it.** Twice this session the first frame showed a
+  sliver at the left edge that looks exactly like a broken dataset; it is the grow animation. Same
+  note as the donut on 2026-08-01.
+
+### 2026-08-03 — accounts & investments follow-ups (issue #37): a pipe is not a brokerage
+
+- **Never show the user a connector id.** The Accounts page rendered "snaptrade (EE23)" and
+  "ibkr_flex (3443)" because `resolveAccount` named the account `${source} (${last4})` and set
+  `institution` to the source id. The user's words: *"A user doesn't need to see 'Snaptrade' in his
+  accounts — he should see 'Schwab'."* Two halves to the fix: `ConnectorDefinition.institutionLabel`
+  for direct connectors (ibkr_flex → "Interactive Brokers"), and the payload's own
+  `institution_name` for an **aggregator**, which by definition can reach many brokerages and so
+  cannot be named from the registry. `institutionDisplayName(institution, connectorId)` in
+  `lib/connectors/registry.ts` treats any stored value that `isConnectorId()` recognises as unset —
+  that's what corrects rows written before the fix **without waiting for a sync**.
+- **"Connection" and "account" are different nouns and the card has to say so.** The account is the
+  title ("Interactive Brokers"); how Moni reaches it is a muted provenance line ("via Interactive
+  Brokers Flex · •••• 3443"). Suppress the provenance when it would repeat the title — an
+  un-synced SnapTrade account has nothing but the connector name, and "SnapTrade / via SnapTrade"
+  says one thing twice.
+- **"Balance unavailable" was structural, not missing data.** An investment account has no
+  `current_balance_ct` — its worth is derived from holdings — so the card had nothing to read.
+  `listInvestmentAccountValues` gives one ILS figure per account, deliberately narrower than
+  `getPortfolioOverview`. Base currency wins over native: the number has to tie out against the
+  dashboard.
+- **The hover glow was reused exactly as documented** — `.card-link` wrapper + `.card-glow` +
+  `.card-glow-top`, and **only** on investment cards, because they're the only ones with a detail
+  view. `h-full` on the Card, or a linked card in a grid row is shorter than its unlinked neighbour.
+- **A single-select `expanded` state cannot express "Expand all".** It was `useState<string | null>`;
+  the button is only expressible once it's a `Set`. The button also flips to "Collapse all" when
+  everything is open, and hides entirely below two connections.
+- **A hero figure and its own components must not read as siblings.** `Cash ₪1,343 · US$437.54 USD ·
+  ₪6 ILS` was correct arithmetic (the ₪1,343 is the ILS conversion of the other two) and still read
+  as three cash piles. Dropping the converted total fixed it — the portfolio total above already
+  carries that number. **When a line lists parts, don't lead it with the whole.**
+- **Don't offer a control whose dialog would be empty.** "Import statement" showed with no
+  `user_mediated_import` connection configured.
+- **Diagnostics were the actual deliverable.** Three independent silencers hid every provider call:
+  worker stderr was `"ignore"`, the BOI grandchild was `stdio: [...,"ignore","ignore"]`
+  unconditionally, and every worker ended in `main().catch(() => {})` which discarded the error
+  object. `src/lib/sync-log.ts` is on by default in dev, opt-in in production
+  (`MONI_SYNC_DIAGNOSTIC=1`) because the lines name instrument symbols — holdings data this app
+  otherwise encrypts. Reconciliation deltas are logged in **basis points, never shekels**, which
+  distinguishes an FX spread from a missing component without putting the portfolio's value in a log.
+- **Name the reason a rule rejected something, not just that it did.** `selectCurrentComponent`
+  returned a bare `fallback: boolean`; it now returns the first failing rule
+  (`broker_value_is_newer`, `exchange_not_eligible`, …), and `listTiingoQuoteTargets` logs a reason
+  on every `continue`. That is what makes the "quote fallback" badge traceable.
+- **Verification hit a real wall: a sync needs a passkey ceremony I cannot perform.** The 423 →
+  "Unlock with your passkey" path is owner-only, so anything that only takes effect on the next sync
+  (here: the stored account name and the IBKR venue backfill) has to be verified by the owner or
+  designed to correct itself at the display edge. Prefer the latter where the stored value is one
+  Moni derived itself.
+
+### 2026-08-01 — the investments screen (issue #37): a ticker is the name, and an opaque code is not an error message
+
+- **A holding is identified by its ticker, not its legal name.** The table and the hero donut both
+  rendered "VANGUARD MORNINGSTAR TOTAL STOCK MARKET ETF". The fix was in the **domain layer**, not
+  the components: `PortfolioHolding` now carries `symbol` and `name` separately and `label` is
+  `symbol ?? name`. Because the donut, the history legend, and the table all read `row.label`, one
+  change fixed all three — worth checking for that shared-field leverage before editing three
+  components. The long name survives as a muted `truncate` second line with a `title`.
+- **`capitalize` turns an initialism into a typo.** `instrumentKind` "etf" rendered as "Etf". CSS
+  `capitalize` cannot know; it needs a real mapping function. Assume this recurs for any enum shown
+  to a user (ISIN, CUSIP, ILS, ETF).
+- **A symbol should be a link out.** Tickers now link to `finance.yahoo.com/quote/<symbol>/` with
+  `target="_blank" rel="noreferrer noopener"`.
+- **The timeframe control belongs under the chart as a draggable window.** Two `<input type="range">`
+  labelled Start and End were the wrong instrument — Recharts' own `<Brush>` (as the prototype in
+  commit `f57b0fd` already had it) is one control that shows the window *and* the dates it covers.
+  Consequence worth knowing: with a Brush you must pass the chart the **full** data array and let
+  `startIndex`/`endIndex` window it. Pre-slicing the array *and* brushing it feeds the brush its own
+  output. Reset the indices to `null` whenever new history loads, since indices into a new range are
+  meaningless.
+- **A worker's safe failure code is not a user-facing message.** "Last sync failed,
+  provider_rejected" told the owner nothing. Workers deliberately emit opaque codes so a provider's
+  error text can never carry credentials into a log, which leaves the mapping to advice as a UI
+  concern — now `src/lib/sync-error-message.ts`, a dependency-free module so both the connections
+  list and the investments screen say the same thing. It decodes IBKR's numeric Flex codes
+  (`send_flex_1012` → "Your Flex token has expired. Create a new token…"). **Any new worker error
+  code needs an entry there or it surfaces raw.**
+- **A button that un-presses while the work continues is worse than no feedback.** The import dialog
+  called `setBusy(false)` right after the POST returned 202 — but the POST only *starts* a worker,
+  and the real wait is `waitForSyncRun`. The busy flag has to span the whole promise (`try/finally`),
+  and the dialog swaps its whole body for a spinner rather than only disabling the button.
+- **Style `<input type="file">` with the `file:` variants.** The native "Choose File" button is
+  unstyled and reads as plain text on a dark card; `file:rounded-[var(--radius)] file:border
+  file:border-border file:bg-muted file:px-3 file:py-1.5` makes it a button.
+- **Don't name a shared surface after one provider.** "Import Schwab statement" and a hardcoded
+  `?? "Schwab"` fallback assumed the only importer there will ever be. Fall back to
+  `getConnectorDefinition(connectorId)?.label` instead.
+- **Verifying a busy state without writing data:** stub `window.fetch` in the page so the POST
+  returns a fake `syncRunId` and the sync-run poll stays `"running"`. The dialog holds its busy
+  branch indefinitely and nothing reaches the database — much better than importing a fixture into
+  the owner's dev portfolio just to see a spinner.
+- **A Recharts series with its own `data` prop poisons the shared category axis.** The owner reported
+  a tooltip showing a date that "doesn't even change when you move the mouse". The cause was an
+  `<Area>`-stacked chart carrying one `<Line data={[...]} dataKey={() => 0}>` for "Estimated now":
+  a second, 2-point dataset whose categories get concatenated onto the x-axis (Recharts'
+  `allowDuplicatedCategory` defaults to `true`), which desynchronizes the tooltip's active index
+  from the main series. **The tell is a tick label that isn't in your data** — the axis literally
+  rendered "Estimated now" as its last tick. Fix is one dataset for the whole chart; put extra
+  series in the shared array as extra keys (the prototype in `f57b0fd` does exactly that with
+  `snapshotTotal`/`estimatedTotal`). That phantom line also encoded nothing — a constant `0` on a
+  0–100% composition axis — so it was removed rather than restructured.
+- **My first diagnosis was wrong and the owner's second report corrected it.** I read "tooltip
+  doesn't match the graph" as a date-convention mismatch (the axis showed week *start* dates while
+  the tooltip said "Week ending"), which was real and worth fixing, but it was not what they were
+  seeing. **A constant offset and a stuck value are different symptoms — establish which one before
+  fixing.** Hovering two known x positions and comparing the tooltip against the tick under the
+  cursor settles it in two screenshots.
+- **`weekEnding` threw on the estimate label.** Adding a `tickFormatter` to the axis made every x
+  value flow through `weekEnding`, including the non-date "Estimated now", so
+  `new Date("Estimated nowT00:00:00Z").toISOString()` crashed the page with a `RangeError`. The
+  guard now lives in `weekEnding` itself, since the tooltip could have hit it too. **A formatter
+  runs over every category, not only the ones you were thinking about.**
+- **A first paint of a Recharts `<Pie>` can be a degenerate sliver.** The donut rendered as a flat
+  sliver with correct radii but ~6° of sweep, which looks exactly like a data bug. It resolves
+  itself; the owner confirmed it renders correctly. **Re-screenshot before investigating a chart
+  that looks wrong immediately after load.**
+
 ### 2026-07-30 (later) — delete account (issue #31): the confirm flow the Remove button was waiting for
 
 - **The 2026-07-30 rule below was a "not yet", not a "never".** "Don't offer a destructive control with no undo" ended with *"until there's a confirm flow that can say what is lost"*. This is that flow, so the copy enumerates the loss ("your transactions and their history, your accounts and balances, your categories, rules and merchants, and every bank connection along with its encrypted login") instead of asking "are you sure?". The owner chose **password re-entry** over a type-your-email confirmation when asked: a typed email stops a misclick, a password also stops a borrowed session.

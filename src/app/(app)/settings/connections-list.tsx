@@ -18,6 +18,7 @@ import { ArmPrompt } from "@/components/arm-prompt";
 import { ConnectionEditForm } from "@/components/connection-edit-form";
 import { getConnectorDefinition } from "@/lib/connectors";
 import { startSyncRun, waitForSyncRun } from "@/lib/sync-client";
+import { syncErrorMessage } from "@/lib/sync-error-message";
 import { armWithPasskey } from "@/lib/passkey-client";
 import { useSyncAll } from "@/lib/use-sync-all";
 import { cn } from "@/lib/utils";
@@ -157,7 +158,7 @@ export function ConnectionsList({ initialConnections }: ConnectionsListProps) {
           state.kind === "error"
             ? state.message
             : state.kind === "idle" && c.lastRunFailed
-              ? (c.lastRunError ?? "Last sync failed")
+              ? syncErrorMessage(c.lastRunError)
               : null;
         return (
           <Card key={c.id}>

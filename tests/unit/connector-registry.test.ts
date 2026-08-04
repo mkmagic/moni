@@ -14,7 +14,9 @@ describe("CONNECTOR_REGISTRY matches israeli-bank-scrapers' SCRAPERS", () => {
     { name: string; loginFields: string[] }
   >;
 
-  for (const [id, def] of Object.entries(CONNECTOR_REGISTRY)) {
+  for (const [id, def] of Object.entries(CONNECTOR_REGISTRY).filter(
+    ([, definition]) => definition.kind !== "investment",
+  )) {
     it(`${id}: field keys (in order) match SCRAPERS["${id}"].loginFields`, () => {
       const libEntry = scrapersById[id];
       expect(libEntry, `SCRAPERS has no entry for "${id}"`).toBeDefined();
@@ -27,5 +29,33 @@ describe("CONNECTOR_REGISTRY matches israeli-bank-scrapers' SCRAPERS", () => {
     // Confirms the exclusion is a deliberate choice, not an oversight — the
     // library really does define it.
     expect(scrapersById.oneZero).toBeDefined();
+  });
+
+  it("defines exactly the supported investment connectors", () => {
+    expect(
+      Object.values(CONNECTOR_REGISTRY).filter((definition) => definition.kind === "investment"),
+    ).toEqual([
+      expect.objectContaining({
+        id: "ibkr_flex",
+        mode: "credentialed_fetch",
+        loginFields: [
+          expect.objectContaining({ key: "flexToken" }),
+          expect.objectContaining({ key: "queryId" }),
+        ],
+      }),
+      expect.objectContaining({
+        id: "schwab_positions_csv",
+        mode: "user_mediated_import",
+        loginFields: [],
+      }),
+      expect.objectContaining({
+        id: "snaptrade",
+        mode: "credentialed_fetch",
+        loginFields: [
+          expect.objectContaining({ key: "clientId" }),
+          expect.objectContaining({ key: "consumerKey" }),
+        ],
+      }),
+    ]);
   });
 });

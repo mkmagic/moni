@@ -13,6 +13,8 @@
 -- ---------------------------------------------------------------------------
 -- 1. Table ownership -> moni_owner (0001 §3's pattern)
 -- ---------------------------------------------------------------------------
+ALTER TYPE "category_suggestion_status" OWNER TO moni_owner;
+--> statement-breakpoint
 ALTER TABLE "category_suggestions" OWNER TO moni_owner;
 --> statement-breakpoint
 

@@ -3,6 +3,7 @@
 // scripts/scrape-worker.mts from the scraper library's error enum.
 import { describe, expect, it } from "vitest";
 import { classifySyncFailure } from "@/lib/sync-error";
+import { syncErrorMessage } from "@/lib/sync-error-message";
 
 describe("classifySyncFailure", () => {
   it("treats a rejected login as a credential problem", () => {
@@ -30,5 +31,20 @@ describe("classifySyncFailure", () => {
 
   it("ignores colons inside the message", () => {
     expect(classifySyncFailure("INVALID_PASSWORD: at 10:30, login failed")).toBe("credentials");
+  });
+});
+
+describe("syncErrorMessage", () => {
+  it("distinguishes a rejected run from an unexpected save failure", () => {
+    // These two used to share the `invalid_sync` code, so a database fault was
+    // indistinguishable from a deliberate guard rejection.
+    expect(syncErrorMessage("invalid_sync")).toMatch(/no longer matches its connection/);
+    expect(syncErrorMessage("promotion_failed")).toMatch(/MONI_SYNC_DIAGNOSTIC=1/);
+    expect(syncErrorMessage("invalid_sync")).not.toBe(syncErrorMessage("promotion_failed"));
+  });
+
+  it("still falls back to the raw code for anything unmapped", () => {
+    expect(syncErrorMessage("some_new_code")).toBe("some_new_code");
+    expect(syncErrorMessage(null)).toBe("Last sync failed");
   });
 });

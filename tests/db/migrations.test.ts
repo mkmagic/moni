@@ -1,6 +1,5 @@
-// Structural sanity checks that the two committed migrations
-// (drizzle/0000_nervous_master_mold.sql, drizzle/0001_rls_and_roles.sql)
-// landed correctly on moni_test. Every other test file in this suite
+// Structural sanity checks that the committed migrations landed correctly on
+// moni_test. Every other test file in this suite
 // implicitly depends on this already being true (vitest.setup.ts calls
 // `ensureTestDatabase()` before any test runs) — these are the one-time
 // belt-and-suspenders checks referenced in the T6 spec, not a full schema
@@ -9,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { elevatedPool } from "./helpers";
 
 describe("migrations: structural facts about moni_test", () => {
-  it("creates exactly the 19 tables from data-model.md §5 (18 + user_unlock_methods)", async () => {
+  it("creates exactly the 26 application tables, including seven investment tables", async () => {
     const { rows } = await elevatedPool.query<{ count: string }>(
       // `_moni_test_migrations` is this harness's own bookkeeping (see
       // setup-test-db.ts), not part of the data model — excluded so the
@@ -19,24 +18,24 @@ describe("migrations: structural facts about moni_test", () => {
        where table_schema = 'public' and table_type = 'BASE TABLE'
          and table_name <> '_moni_test_migrations'`,
     );
-    expect(Number(rows[0].count)).toBe(19);
+    expect(Number(rows[0].count)).toBe(26);
   });
 
-  it("enables + forces RLS on exactly 18 tables (every user-owned table, excluding fx_rates)", async () => {
+  it("enables + forces RLS on exactly 25 tables (every user-owned table, excluding fx_rates)", async () => {
     const { rows } = await elevatedPool.query<{ count: string }>(
       `select count(*)::int as count
        from pg_class c
        join pg_namespace n on n.oid = c.relnamespace
        where n.nspname = 'public' and c.relkind = 'r' and c.relrowsecurity = true and c.relforcerowsecurity = true`,
     );
-    expect(Number(rows[0].count)).toBe(18);
+    expect(Number(rows[0].count)).toBe(25);
   });
 
-  it("has a tenant-isolation policy on every one of those 18 tables", async () => {
+  it("has a tenant-isolation policy on every one of those 25 tables", async () => {
     const { rows } = await elevatedPool.query<{ tablename: string }>(
       `select distinct tablename from pg_policies where schemaname = 'public'`,
     );
-    expect(rows.length).toBe(18);
+    expect(rows.length).toBe(25);
   });
 
   it("leaves fx_rates without RLS (global reference data, data-model.md §5)", async () => {
@@ -54,5 +53,18 @@ describe("migrations: structural facts about moni_test", () => {
       `select rolname from pg_roles where rolname in ('moni_owner', 'moni_app') order by rolname`,
     );
     expect(rows.map((r) => r.rolname)).toEqual(["moni_app", "moni_owner"]);
+  });
+
+  it("makes moni_owner the owner of every application enum", async () => {
+    const { rows } = await elevatedPool.query<{ typname: string; owner: string }>(
+      `select t.typname, r.rolname as owner
+       from pg_type t
+       join pg_namespace n on n.oid = t.typnamespace
+       join pg_roles r on r.oid = t.typowner
+       where n.nspname = 'public' and t.typtype = 'e'
+       order by t.typname`,
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.filter((row) => row.owner !== "moni_owner")).toEqual([]);
   });
 });

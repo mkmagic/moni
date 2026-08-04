@@ -1,84 +1,137 @@
-// Length-prefixed binary frame for the scrape-worker child's stdin (docs
-// plan §C). The whole reason this exists instead of one JSON blob: the data
-// key (DK) must stay a raw `Buffer` end to end. Base64-encoding it into JSON
-// would materialize an unwipeable V8 `String`, violating the Tier-0
-// invariant (docs/security/threat-model.md §5.5). So the wire format keeps
-// DK as raw bytes, length-prefixed, and only the non-key payload (ids,
-// dates, and the unavoidably-string bank credentials — the scraper API
-// itself takes strings, a documented residual) travels as JSON:
-//
-//   [4B BE uint32 dataKeyLen][DK raw bytes]
-//   [4B BE uint32 jsonLen]   [UTF-8 JSON payload]
-//
-// Pure functions on purpose (no stdin/process access) so
-// tests/unit/child-stdin-framing.test.ts can exercise them without spawning
-// a real child process.
+// Binary child-process framing. Secrets stay in raw segments; JSON is limited
+// to structural metadata. The legacy bank frame remains available below.
 export interface ChildStdinPayload {
   syncRunId: string;
   userId: string;
   connectionId: string;
   connectorId: string;
-  /** ISO date string, passed straight to `new Date(...)` as the scraper's `startDate`. */
   startDate: string;
-  /** Bank/card login credentials. Still plain strings — the scraper API
-   * itself takes strings (threat-model.md §5.5's documented residual). */
   credentials: Record<string, string>;
 }
 
-const LENGTH_PREFIX_BYTES = 4;
+const PREFIX = 4;
+export const MAX_CHILD_STDIN_BYTES = 10 * 1024 * 1024;
+/** A source segment may be 10 MiB; metadata/framing gets a small separate budget. */
+export const MAX_CHILD_SEGMENT_BYTES = 10 * 1024 * 1024;
+export const MAX_CHILD_METADATA_BYTES = 64 * 1024;
+export const MAX_CHILD_FRAME_BYTES = MAX_CHILD_SEGMENT_BYTES + MAX_CHILD_METADATA_BYTES;
+export const MAX_CHILD_SEGMENTS = 4;
 
-function writeUint32BE(n: number): Buffer {
-  const buf = Buffer.alloc(LENGTH_PREFIX_BYTES);
-  buf.writeUInt32BE(n, 0);
-  return buf;
+function uint(n: number): Buffer {
+  const value = Buffer.alloc(PREFIX);
+  value.writeUInt32BE(n);
+  return value;
 }
 
-/**
- * Encodes the frame the parent writes to the child's stdin. `dataKey` is
- * copied into the frame as raw bytes — never JSON, never base64.
- */
+function checkedSegmentLength(value: number): void {
+  if (value > MAX_CHILD_SEGMENT_BYTES) throw new Error("child-stdin-framing: segment too large");
+}
+
+function assertStructuralMetadata(value: unknown, key = ""): void {
+  if (/token|query|credential|secret|csv|data.?key/i.test(key))
+    throw new Error("child-stdin-framing: sensitive metadata is forbidden");
+  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number" || typeof value === "bigint" || typeof value === "undefined")
+    throw new Error("child-stdin-framing: metadata must be structural JSON");
+  if (Array.isArray(value)) {
+    for (const item of value) assertStructuralMetadata(item);
+    return;
+  }
+  if (typeof value === "object")
+    for (const [childKey, child] of Object.entries(value))
+      assertStructuralMetadata(child, childKey);
+}
+
+/** Frame layout: metadata length, metadata JSON, segment count, raw segments. */
+export function encodeBinaryChildFrame(
+  metadata: Record<string, unknown>,
+  segments: Buffer[],
+): Buffer {
+  assertStructuralMetadata(metadata);
+  if (segments.length > MAX_CHILD_SEGMENTS)
+    throw new Error("child-stdin-framing: too many segments");
+  const json = Buffer.from(JSON.stringify(metadata), "utf8");
+  if (json.length > MAX_CHILD_METADATA_BYTES)
+    throw new Error("child-stdin-framing: metadata too large");
+  const pieces = [uint(json.length), json, uint(segments.length)];
+  let length = PREFIX + json.length + PREFIX;
+  for (const segment of segments) {
+    checkedSegmentLength(segment.length);
+    length += PREFIX + segment.length;
+    if (length > MAX_CHILD_FRAME_BYTES) throw new Error("child-stdin-framing: frame too large");
+    pieces.push(uint(segment.length), segment);
+  }
+  return Buffer.concat(pieces, length);
+}
+
+export function decodeBinaryChildFrame(frame: Buffer): {
+  metadata: Record<string, unknown>;
+  segments: Buffer[];
+} {
+  if (frame.length > MAX_CHILD_FRAME_BYTES) throw new Error("child-stdin-framing: frame too large");
+  let offset = 0;
+  const read = (): number => {
+    if (offset + PREFIX > frame.length)
+      throw new Error("child-stdin-framing: truncated length prefix");
+    const length = frame.readUInt32BE(offset);
+    offset += PREFIX;
+    return length;
+  };
+  const take = (length: number): Buffer => {
+    checkedSegmentLength(length);
+    if (offset + length > frame.length) throw new Error("child-stdin-framing: truncated frame");
+    const result = Buffer.from(frame.subarray(offset, offset + length));
+    offset += length;
+    return result;
+  };
+  const json = take(read());
+  const segments: Buffer[] = [];
+  try {
+    const parsed: unknown = JSON.parse(json.toString("utf8"));
+    if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error();
+    assertStructuralMetadata(parsed);
+    const count = read();
+    if (count > MAX_CHILD_SEGMENTS) throw new Error("child-stdin-framing: too many segments");
+    for (let index = 0; index < count; index += 1) segments.push(take(read()));
+    if (offset !== frame.length) throw new Error("child-stdin-framing: trailing bytes");
+    return { metadata: parsed as Record<string, unknown>, segments };
+  } finally {
+    json.fill(0);
+    // On a failed decode no child owns these copies, so clear them here.
+    if (offset !== frame.length) for (const segment of segments) segment.fill(0);
+  }
+}
+
+// Compatibility wire format for existing bank workers.
 export function encodeChildStdinFrame(dataKey: Buffer, payload: ChildStdinPayload): Buffer {
-  const jsonBuf = Buffer.from(JSON.stringify(payload), "utf8");
-  return Buffer.concat([
-    writeUint32BE(dataKey.length),
-    dataKey,
-    writeUint32BE(jsonBuf.length),
-    jsonBuf,
-  ]);
+  const json = Buffer.from(JSON.stringify(payload), "utf8");
+  return Buffer.concat([uint(dataKey.length), dataKey, uint(json.length), json]);
 }
 
-/**
- * Decodes a frame produced by {@link encodeChildStdinFrame}. Throws if the
- * buffer is shorter than the two length prefixes declare (a truncated or
- * malformed frame) rather than reading past the end.
- */
 export function decodeChildStdinFrame(buf: Buffer): {
   dataKey: Buffer;
   payload: ChildStdinPayload;
 } {
   let offset = 0;
-
-  if (buf.length < LENGTH_PREFIX_BYTES) {
-    throw new Error("child-stdin-framing: buffer too short for the data-key length prefix");
+  const read = (): number => {
+    if (offset + PREFIX > buf.length)
+      throw new Error("child-stdin-framing: buffer too short for length prefix");
+    const length = buf.readUInt32BE(offset);
+    offset += PREFIX;
+    return length;
+  };
+  const take = (length: number): Buffer => {
+    if (offset + length > buf.length) throw new Error("child-stdin-framing: truncated frame");
+    const result = Buffer.from(buf.subarray(offset, offset + length));
+    offset += length;
+    return result;
+  };
+  const dataKey = take(read());
+  const json = take(read());
+  if (offset !== buf.length) throw new Error("child-stdin-framing: trailing bytes");
+  try {
+    return { dataKey, payload: JSON.parse(json.toString("utf8")) as ChildStdinPayload };
+  } finally {
+    json.fill(0);
   }
-  const dataKeyLen = buf.readUInt32BE(offset);
-  offset += LENGTH_PREFIX_BYTES;
-  if (offset + dataKeyLen > buf.length) {
-    throw new Error("child-stdin-framing: truncated frame (data key length exceeds buffer)");
-  }
-  const dataKey = Buffer.from(buf.subarray(offset, offset + dataKeyLen));
-  offset += dataKeyLen;
-
-  if (offset + LENGTH_PREFIX_BYTES > buf.length) {
-    throw new Error("child-stdin-framing: buffer too short for the JSON length prefix");
-  }
-  const jsonLen = buf.readUInt32BE(offset);
-  offset += LENGTH_PREFIX_BYTES;
-  if (offset + jsonLen > buf.length) {
-    throw new Error("child-stdin-framing: truncated frame (JSON length exceeds buffer)");
-  }
-  const jsonBuf = buf.subarray(offset, offset + jsonLen);
-  const payload = JSON.parse(jsonBuf.toString("utf8")) as ChildStdinPayload;
-
-  return { dataKey, payload };
 }

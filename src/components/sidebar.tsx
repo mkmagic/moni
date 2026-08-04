@@ -2,13 +2,22 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
-import { LayoutDashboard, ArrowLeftRight, Landmark, Settings, Wallet, LogOut } from "lucide-react";
+import {
+  LayoutDashboard,
+  ArrowLeftRight,
+  Landmark,
+  Settings,
+  Wallet,
+  LogOut,
+  TrendingUp,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
   { href: "/accounts", label: "Accounts", icon: Landmark },
+  { href: "/investments", label: "Investments", icon: TrendingUp },
 ] as const;
 
 // Sits at the bottom of the rail, above the account block — Connections now

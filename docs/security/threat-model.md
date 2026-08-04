@@ -42,13 +42,19 @@ The security bar is **not uniform**. Assets are tiered, and the crown jewels are
 ```
 [User's browser / MCP client]  ──HTTPS──▶  [Moni app (Next.js)]  ──▶  [Domain/service layer]  ──▶  [PostgreSQL + RLS]
                                                     │
-                                                    └──▶ [Background worker (pg-boss)] ──▶ [israeli-bank-scrapers → bank website]
+                                                    └──▶ [bounded child worker] ──▶ [source/provider]
 ```
 
 - **Every** DB access — from the app, the worker, the API, or the MCP server — passes through the single domain/service layer. There is no second path. In v1.0 the AI side of that layer exposes **reads only**.
 - The background worker is the only component that ever handles **plaintext Tier-0 bank credentials**, and only for the duration of a scrape.
 - **Encryption/decryption of Tier-1 sensitive fields happens only in the app/worker tier** (which holds the keys in RAM). PostgreSQL — whether local or a **third-party managed provider** — stores only ciphertext for those fields plus plaintext structural columns. The DB is therefore treated as *untrusted storage*, and can be hosted off-box without exposing amounts or descriptions (§7.4, §7.6).
-- **Network egress filtering on the worker.** The worker runs the untrusted Puppeteer/scraper stack *with plaintext Tier-0 credentials in memory*, so a malicious dependency update or a Chromium exploit triggered by a compromised bank page would have direct read access to them. Least privilege on the process is not enough — a firewall is. The worker container is confined at the network level (Docker network policy / `iptables`) to outbound connections to **whitelisted bank domains + PostgreSQL only**; all other egress is blocked, so exfiltrated credentials have nowhere to be POSTed. This turns "malicious code reads the credential" into "malicious code reads the credential but cannot get it off the box."
+- **Network egress filtering on the worker.** Least privilege on the process is not
+  enough — deployment networking must confine it. Investment workers have the exact
+  policy in [`../deployment/egress.md`](../deployment/egress.md): IBKR Flex may use
+  only its Flex host plus PostgreSQL; Schwab import has no internet egress; BOI may
+  use only its SDMX host plus PostgreSQL; Tiingo may use only its API host plus
+  PostgreSQL and has no broker credentials. Application host checks and redirect
+  rejection complement, but never replace, the firewall.
 
 ## 5. Primary threat: bank-credential custody
 
@@ -63,10 +69,15 @@ This is the most important and hardest problem in Moni, and the reason the visio
 There is no way to have both *unattended scheduled sync* and *server-compromise-resistant credentials* for the same account. The design below chooses per-account, and softens the UX cost.
 
 ### 5.2 Baseline design (secure, the user's proposal)
-- Store each bank credential encrypted under a **per-user data key**, which is itself wrapped ("enveloped") by a key derived from a **user unlock secret** (password or passkey). The wrapped data key and the ciphertext sit in the DB; the plaintext key exists only in RAM after unlock.
-
-  **Superseded in one respect (issue #7, requirement from #18): there are TWO keys, not one.** A per-user **data key (DK)** covers Tier-1 fields and is wrapped by the login password's Argon2id KEK. A separate **credential key (CK)** covers bank credentials and is wrapped **only** by a WebAuthn-PRF passkey — the login password does not wrap CK on any row, so no code path and no attacker holding the password can reach a bank credential. The reasoning is in #18: any AI-agent surface puts an unlock secret next to the agent's token, and a secret merely *derived* from the password still requires the password to be typed somewhere, which makes a local helper indistinguishable from one that harvests it. Making the password structurally incapable of opening CK removes the class. Consequences: **no recovery path for CK** (lose every passkey and you delete the connection and re-enter the bank login; recovery codes, when built, wrap DK only), and a device that cannot do WebAuthn PRF cannot use bank scraping at all (notably **Windows 10**, which has no PRF path via any authenticator).
-- To sync, the user clicks **Sync**, authenticates (password / passkey), the worker derives the key, decrypts the credential **in memory**, runs the scrape, and **zeroes the key and plaintext** immediately after.
+- A per-user **data key (DK)** covers Tier-1 fields and is wrapped by the login
+  password's Argon2id KEK. A separate **credential key (CK)** covers reusable bank
+  and IBKR Flex credentials and is wrapped **only** by a WebAuthn-PRF passkey. The
+  password never wraps CK, recovery codes wrap DK only, and a Schwab Positions CSV
+  connection deliberately stores no credential. Losing every passkey requires
+  deleting and re-entering a credentialed connection; there is no CK recovery path.
+- To run a credentialed sync, the user clicks **Sync** while the passkey-armed CK
+  window is open. The parent decrypts the credential in memory, passes only bounded
+  worker material, and the child wipes owned buffers on every exit path.
 - Property achieved: a stolen disk/backup, a stolen DB, or a leaked API key yields **no usable bank credentials** — none of them contain the unlock secret. This is exactly the bar we want against Tier-0 theft.
 - Cost: **no unattended scheduled sync**, and a prompt on every sync. This is the "too cumbersome" part.
 
@@ -81,14 +92,21 @@ Combine these three so the user unlocks *rarely* while keeping keys off disk:
 
    **Pinned as built (issue #7).** `@simplewebauthn/server` verifies the assertion and **enforces user verification per unlock**, so the biometric/PIN is a verified fact rather than a client claim. Challenges are server-issued, held in RAM per session, and **single-use** (`src/lib/auth/webauthn-challenge.ts`). The client sends the raw 32-byte PRF output over TLS, not an HKDF proof — the server needs the actual key material, because `israeli-bank-scrapers` runs server-side and CK must reach the server regardless; the server HKDFs it to a KEK (`src/lib/auth/unlock-secret.ts`, no Argon2id — the input is already authenticator-generated entropy, so stretching buys nothing) and wipes it. The RP ID comes from an explicit env var, never the `Host` header, and each enrolled method records the RP ID it was bound under.
 
-2. **Bounded in-memory unlock window (the password-manager model).** After one unlock, hold the derived key **in process memory only** for a bounded TTL (e.g. the session, or N hours). During that window, syncs — including background ones queued by the worker — can run without re-prompting. The key is wiped on TTL expiry, logout, or process restart; it is never written to disk or swap. This turns "prompt on every sync" into "unlock roughly once per session."
+2. **Bounded credential window (the password-manager model).** After a passkey
+   unlock, hold CK **in process memory only** for its bounded TTL. User-triggered
+   credentialed syncs may reuse that window; the key is wiped on expiry, logout, or
+   process restart and is never written to disk or swap.
 
-3. **Sync-on-active / warm-window scheduling instead of true 24/7 cron.** A personal-finance app rarely needs sub-daily freshness. Rather than an unattended overnight job that would force an always-available key, refresh **when the user is active** (on app open) or **within the unlock window** they just opened. Optionally, for the overnight case, a **push/Telegram "tap to unlock sync"** prompt lets a power user release the key for a single scheduled run without storing it.
+3. **User-triggered sync only.** Each refresh begins from an authenticated browser
+   action. There is no queue, scheduler, cron, or unattended warm-window sync in
+   v1.0; a route spawns one bounded child and the UI polls its `sync_runs` row.
 
 The net UX: a family member opens Moni, does one biometric tap, and their accounts refresh — with Tier-0 credentials never decryptable from disk alone.
 
 ### 5.4 Future connectors reduce this problem
-Where an institution offers **scoped, read-only OAuth** (e.g. US brokers like Schwab/IBKR, deferred past v1.0), prefer it over passwords: a stolen read-only token can't move money and can be revoked. The scraper's full-credential model is a constraint of the Israeli banking reality, not the target shape.
+Future connectors may evaluate scoped, read-only OAuth independently. It is not an
+investment path in Moni 1.1: Schwab uses a user-mediated Positions CSV import and
+IBKR uses credentialed Flex XML.
 
 ### 5.5 Handling secrets in memory (Node/V8 caveat)
 "Zero the key and plaintext after use" (§5.2) has a language-specific trap in this stack. In V8, JavaScript **`String`s are immutable and garbage-collected** — you cannot overwrite one, and copies linger on the heap until (and after) GC, readable by a memory dump or an arbitrary-read exploit in a compromised dependency. "Zeroing" a string is therefore a no-op. Rules:

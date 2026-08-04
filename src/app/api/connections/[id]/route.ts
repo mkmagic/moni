@@ -12,6 +12,8 @@ import { z } from "zod";
 import { getSessionFromRequest } from "@/domain/auth";
 import {
   InvalidCredentialsShapeError,
+  ConnectionCredentialsUnavailableError,
+  disconnectConnection,
   renameConnection,
   updateConnectionCredentials,
 } from "@/domain/connections";
@@ -24,10 +26,15 @@ const PatchSchema = z
   .object({
     displayName: z.string().max(120).nullable().optional(),
     credentials: z.record(z.string(), z.string()).optional(),
+    disconnect: z.literal(true).optional(),
   })
-  .refine((v) => v.displayName !== undefined || v.credentials !== undefined, {
-    message: "nothing to update",
-  });
+  .refine(
+    (v) => v.displayName !== undefined || v.credentials !== undefined || v.disconnect === true,
+    {
+      message: "nothing to update",
+    },
+  )
+  .strict();
 
 export async function PATCH(
   req: NextRequest,
@@ -48,6 +55,16 @@ export async function PATCH(
   const parsed = PatchSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "invalid request" }, { status: 400 });
+  }
+
+  if (parsed.data.disconnect) {
+    if (parsed.data.displayName !== undefined || parsed.data.credentials !== undefined)
+      return NextResponse.json({ error: "invalid request" }, { status: 400 });
+    const result = await disconnectConnection(session.userId, connectionId);
+    if (result === "not_found") return NextResponse.json({ error: "not found" }, { status: 404 });
+    if (result === "sync_running")
+      return NextResponse.json({ error: "sync_running" }, { status: 409 });
+    return NextResponse.json({ ok: true });
   }
 
   if (parsed.data.displayName !== undefined) {
@@ -79,8 +96,11 @@ export async function PATCH(
     }
     return NextResponse.json({ ok: true });
   } catch (err) {
-    if (err instanceof InvalidCredentialsShapeError) {
-      return NextResponse.json({ error: err.message }, { status: 400 });
+    if (
+      err instanceof InvalidCredentialsShapeError ||
+      err instanceof ConnectionCredentialsUnavailableError
+    ) {
+      return NextResponse.json({ error: "invalid request" }, { status: 400 });
     }
     throw err;
   }

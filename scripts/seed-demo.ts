@@ -21,7 +21,10 @@ import * as schema from "@/db/schema";
 import { encryptField, decryptField, wipe, type AadContext } from "@/lib/crypto";
 import { normalizeDescription } from "@/lib/categorization/normalize";
 import { multiply } from "@/lib/money";
+import { createConnection } from "@/domain/connections";
+import { promoteInvestmentSnapshot } from "@/domain/investment-promotion";
 import { createUser } from "@/domain/registration";
+import { startSyncRun } from "@/domain/sync-promotion";
 
 // Demo login password shared by both seeded users (dev only). Printed in the
 // seed summary. In production, users choose their own; here it just lets the
@@ -77,9 +80,10 @@ async function wipeAll(owner: Client): Promise<void> {
 // ---------------------------------------------------------------------------
 // 2. fx_rates (global reference data, no owner_id — moni_app is SELECT-only
 //    per the T3 grants, so this also goes through the elevated connection).
-//    A handful of representative ILS<->USD dates spanning the entries below.
+//    A handful of deterministic ILS<->USD demo dates spanning the entries
+//    below. They are explicitly not attributed to an external authority.
 // ---------------------------------------------------------------------------
-const FX_SOURCE = "demo-fixed";
+const DEMO_FX_SOURCE = "demo-fixed";
 const FX_DATES_USD_ILS: Array<{ date: string; rate: string }> = [
   { date: "2026-05-01", rate: "3.70" },
   { date: "2026-05-15", rate: "3.72" },
@@ -87,7 +91,11 @@ const FX_DATES_USD_ILS: Array<{ date: string; rate: string }> = [
   { date: "2026-06-15", rate: "3.71" },
   { date: "2026-07-01", rate: "3.73" },
   { date: "2026-07-15", rate: "3.75" },
+  { date: "2026-07-24", rate: "3.74" },
 ];
+// Captured from the official BOI USD representative-rate page. This is a real
+// historical observation used to promote the deterministic investment demo.
+const BOI_USD_ILS_FIXTURE = { date: "2026-07-28", rate: "3.058" } as const;
 /** Rate lookup entries reuse so entries.fxRate is honestly "a real locked rate from
  * the seeded fx_rates table," not a coincidentally-matching separate number. */
 const fxRateByDate = new Map(FX_DATES_USD_ILS.map((r) => [r.date, r.rate]));
@@ -98,17 +106,23 @@ async function seedFxRates(owner: Client): Promise<number> {
     await owner.query(
       `INSERT INTO fx_rates (id, from_currency, to_currency, date, rate, source)
        VALUES ($1, 'USD', 'ILS', $2, $3, $4)`,
-      [randomUUID(), date, rate, FX_SOURCE],
+      [randomUUID(), date, rate, DEMO_FX_SOURCE],
     );
     count++;
     const inverse = new Decimal(1).dividedBy(new Decimal(rate)).toDecimalPlaces(6).toString();
     await owner.query(
       `INSERT INTO fx_rates (id, from_currency, to_currency, date, rate, source)
        VALUES ($1, 'ILS', 'USD', $2, $3, $4)`,
-      [randomUUID(), date, inverse, FX_SOURCE],
+      [randomUUID(), date, inverse, DEMO_FX_SOURCE],
     );
     count++;
   }
+  await owner.query(
+    `INSERT INTO fx_rates (id, from_currency, to_currency, date, rate, source)
+     VALUES ($1, 'USD', 'ILS', $2, $3, 'boi')`,
+    [randomUUID(), BOI_USD_ILS_FIXTURE.date, BOI_USD_ILS_FIXTURE.rate],
+  );
+  count++;
   return count;
 }
 
@@ -162,8 +176,8 @@ const USERS: UserPlan[] = [
     creditCardInstitution: "Max",
     thirdAccount: {
       type: "investment",
-      name: "IBKR Brokerage",
-      institution: "Interactive Brokers",
+      name: "Schwab Brokerage",
+      institution: "Charles Schwab",
       currency: "USD",
       balance: "18250.00",
     },
@@ -185,6 +199,10 @@ interface SeedCounts {
   entryTransactions: number;
   transfers: number;
   accountBalanceSnapshots: number;
+  connections: number;
+  syncRuns: number;
+  investmentPositions: number;
+  investmentCashBalances: number;
 }
 
 /** A seeded user's identity + the real data key createUser() minted for it —
@@ -321,24 +339,28 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
         currency: "ILS",
         currentBalanceCt: enc(dataKey, creditCardId, "current_balance_ct", creditCardBalance),
       },
-      {
-        id: thirdAccountId,
-        ownerId: userId,
-        accountType: plan.thirdAccount.type,
-        classification: "asset",
-        nameCt: enc(dataKey, thirdAccountId, "name_ct", plan.thirdAccount.name),
-        institution: plan.thirdAccount.institution,
-        accountNumberLast4Ct: enc(dataKey, thirdAccountId, "account_number_last4_ct", "9012"),
-        currency: plan.thirdAccount.currency,
-        currentBalanceCt: enc(
-          dataKey,
-          thirdAccountId,
-          "current_balance_ct",
-          plan.thirdAccount.balance,
-        ),
-      },
+      ...(plan.thirdAccount.type === "savings"
+        ? [
+            {
+              id: thirdAccountId,
+              ownerId: userId,
+              accountType: plan.thirdAccount.type,
+              classification: "asset" as const,
+              nameCt: enc(dataKey, thirdAccountId, "name_ct", plan.thirdAccount.name),
+              institution: plan.thirdAccount.institution,
+              accountNumberLast4Ct: enc(dataKey, thirdAccountId, "account_number_last4_ct", "9012"),
+              currency: plan.thirdAccount.currency,
+              currentBalanceCt: enc(
+                dataKey,
+                thirdAccountId,
+                "current_balance_ct",
+                plan.thirdAccount.balance,
+              ),
+            },
+          ]
+        : []),
     ]);
-    counts.accounts += 3;
+    counts.accounts += plan.thirdAccount.type === "savings" ? 3 : 2;
 
     // --- credit_card_details ---------------------------------------------
     await tx.insert(schema.creditCardDetails).values({
@@ -354,11 +376,15 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
     const snapshotDefs = [
       { accountId: checkingId, amount: checkingBalance, currency: "ILS" },
       { accountId: creditCardId, amount: creditCardBalance, currency: "ILS" },
-      {
-        accountId: thirdAccountId,
-        amount: plan.thirdAccount.balance,
-        currency: plan.thirdAccount.currency,
-      },
+      ...(plan.thirdAccount.type === "savings"
+        ? [
+            {
+              accountId: thirdAccountId,
+              amount: plan.thirdAccount.balance,
+              currency: plan.thirdAccount.currency,
+            },
+          ]
+        : []),
     ];
     for (const s of snapshotDefs) {
       const id = randomUUID();
@@ -528,7 +554,7 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
         accountCurrency: "ILS",
         fxRate: rate,
         fxStatus: "locked",
-        fxSource: FX_SOURCE,
+        fxSource: DEMO_FX_SOURCE,
         source: "scrape",
         kind: "standard",
       });
@@ -649,6 +675,81 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
     counts.transfers++;
   });
 
+  // Keep both demo users past onboarding. Dana exercises the empty import
+  // state; Yossi has a complete normalized investment snapshot for the
+  // production portfolio screen.
+  const { id: investmentConnectionId } = await createConnection(
+    userId,
+    "schwab_positions_csv",
+    null,
+    null,
+    plan.thirdAccount.type === "investment" ? "Schwab Brokerage" : "Schwab CSV",
+  );
+  counts.connections++;
+
+  if (plan.thirdAccount.type === "investment") {
+    const syncRunId = await startSyncRun(userId, investmentConnectionId);
+    counts.syncRuns++;
+    const asOf = `${BOI_USD_ILS_FIXTURE.date}T12:00:00Z`;
+    const promoted = await promoteInvestmentSnapshot({
+      userId,
+      connectionId: investmentConnectionId,
+      syncRunId,
+      dataKey,
+      envelope: {
+        source: "schwab_positions_csv",
+        coverage: { kind: "bound_single_account", accountRefs: ["****9012"] },
+        sourceAsOf: { value: asOf, precision: "timestamp" },
+        accounts: [
+          {
+            sourceAccountRef: "****9012",
+            baseCurrency: "USD",
+            positions: [
+              {
+                sourceSecurityId: "SPY",
+                sourceSecurityIdKind: "schwab_symbol",
+                symbol: "SPY",
+                name: "SPDR S&P 500 ETF Trust",
+                exchange: "NYSE",
+                assetKind: "etf",
+                quantity: "100",
+                quantityUnit: "shares",
+                currency: "USD",
+                sourcePrice: "150",
+                sourcePriceCurrency: "USD",
+                sourceValue: "15000",
+                sourceValueCurrency: "USD",
+                sourceAsOf: asOf,
+              },
+              {
+                sourceSecurityId: "IXUS",
+                sourceSecurityIdKind: "schwab_symbol",
+                symbol: "IXUS",
+                name: "iShares Core MSCI Total International Stock ETF",
+                exchange: "NASDAQ",
+                assetKind: "etf",
+                quantity: "50",
+                quantityUnit: "shares",
+                currency: "USD",
+                sourcePrice: "60",
+                sourcePriceCurrency: "USD",
+                sourceValue: "3000",
+                sourceValueCurrency: "USD",
+                sourceAsOf: asOf,
+              },
+            ],
+            cash: [{ currency: "USD", amount: "250" }],
+            brokerTotal: { amount: "18250", currency: "USD", asOf },
+          },
+        ],
+      },
+    });
+    counts.accounts += promoted.accounts;
+    counts.accountBalanceSnapshots += promoted.accounts;
+    counts.investmentPositions += promoted.positions;
+    counts.investmentCashBalances += promoted.cashBalances;
+  }
+
   return { plan, userId, dataKey };
 }
 
@@ -698,6 +799,10 @@ async function main() {
     entryTransactions: 0,
     transfers: 0,
     accountBalanceSnapshots: 0,
+    connections: 0,
+    syncRuns: 0,
+    investmentPositions: 0,
+    investmentCashBalances: 0,
   };
 
   try {
@@ -731,6 +836,10 @@ async function main() {
     console.log(`entry_transactions: ${counts.entryTransactions}`);
     console.log(`transfers: ${counts.transfers}`);
     console.log(`account_balance_snapshots: ${counts.accountBalanceSnapshots}`);
+    console.log(`connections: ${counts.connections}`);
+    console.log(`sync_runs: ${counts.syncRuns}`);
+    console.log(`investment_snapshot_positions: ${counts.investmentPositions}`);
+    console.log(`investment_snapshot_cash_balances: ${counts.investmentCashBalances}`);
     console.log("\nDecrypt round-trip proof:");
     for (const rt of roundTrips) {
       console.log(`- ${rt.field} -> "${rt.value}"`);
