@@ -289,6 +289,15 @@ The first two were widened when the קרן השתלמות parser landed. The thi
 
 - `tests/db/setup-test-db.ts` carries a **hardcoded** `MIGRATION_FILES` array. A new
   migration must be added there or DB tests fail with "relation does not exist".
+- **A new migration leaves your DEV database behind, and all four gates stay green.**
+  The test suite bootstraps `moni_test` from that `MIGRATION_FILES` array, so adding a
+  column there makes every test pass while the running app is broken. Drizzle expands
+  `tx.select().from(table)` into an explicit column list, so the first screen to read
+  the table dies with `column … does not exist` — for the קרן השתלמות column that was
+  `/long-term-savings`, and nothing in typecheck, lint, format or test could have said
+  so. **Run `npm run db:migrate` after generating a migration**, and load the screen
+  that reads the table. Migrations run as `moni_owner` via `DATABASE_URL_MIGRATE`, never
+  as `moni_app`.
 - `tests/db/migrations.test.ts` counts tables and RLS policies; `account-deletion.test.ts`
   demands a fixture row in every owner-scoped table. Both are drift gates — update them.
 - A `"use client"` component may import **types** from `@/domain`, never runtime values;
