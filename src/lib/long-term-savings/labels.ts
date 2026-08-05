@@ -9,10 +9,53 @@
  * React reports as a hydration error.
  */
 
+import { getConnectorDefinition } from "@/lib/connectors";
+
 const MONTH = new Intl.DateTimeFormat("en-US", { month: "short", timeZone: "UTC" });
 
 function month(isoDate: string): string {
   return MONTH.format(new Date(`${isoDate}T00:00:00Z`));
+}
+
+export type ProductName =
+  "pension" | "hishtalmut" | "gemel" | "gemel_investment" | "managers_insurance";
+
+/**
+ * What the account IS, in the vocabulary CONTEXT.md pins. Hebrew where the
+ * product has no honest English name — "provident fund" as a catch-all is
+ * exactly what that entry says to avoid, and it would collapse three products
+ * with different liquidity horizons into one word.
+ */
+export const PRODUCT_LABEL: Record<ProductName, string> = {
+  pension: "Pension",
+  hishtalmut: "קרן השתלמות",
+  gemel: "קופת גמל",
+  gemel_investment: "קופת גמל להשקעה",
+  managers_insurance: "ביטוח מנהלים",
+};
+
+/**
+ * The account's name: the provider and the product held there ("Harel
+ * Pension"), not the document that reported it.
+ *
+ * A long-term savings statement carries no account name and no account number,
+ * so everything stored in `accounts.name_ct` is either a nickname the user
+ * typed or a string Moni derived. This corrects the derived one — the original
+ * `<provider> <document>` default, which read "Harel Quarterly Pension Report"
+ * — without waiting for the next import, and leaves a nickname alone because a
+ * nickname never matches that pattern.
+ */
+export function longTermSavingsAccountName(
+  storedName: string,
+  connectorId: string | null,
+  product: ProductName,
+): string {
+  const definition = connectorId ? getConnectorDefinition(connectorId) : undefined;
+  const provider = definition?.institutionLabel;
+  if (!provider) return storedName;
+  return storedName === `${provider} ${definition.label}`
+    ? `${provider} ${PRODUCT_LABEL[product]}`
+    : storedName;
 }
 
 export interface LiquidityBadge {
@@ -76,6 +119,11 @@ export function statedPeriodLabel(start: string, end: string): string {
  */
 export function formatPercent(value: string): string {
   return `${value}%`;
+}
+
+/** "Mar 2026" — the ends of a span the reports cover. */
+export function monthYearLabel(isoDate: string): string {
+  return `${month(isoDate)} ${isoDate.slice(0, 4)}`;
 }
 
 /** "2026-03" as printed in the deposit table's "for month" column. */

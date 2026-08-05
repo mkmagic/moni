@@ -18,6 +18,7 @@ import {
   type ChildStdinPayload,
 } from "@/lib/connectors";
 import { spawnInvestmentSyncWorker } from "@/lib/investments";
+import { PRODUCT_LABEL } from "@/lib/long-term-savings/labels";
 import { redactSecrets } from "@/lib/redact-secrets";
 
 const Params = z.object({ id: z.uuid() });
@@ -111,9 +112,16 @@ export async function POST(
         connectorId: connection.connectorId,
         // The account's name until the user renames it. Derived here because
         // the worker has no registry-free way to name what it imported, and
-        // the report itself only carries the fund, not the product.
+        // the report itself carries no account name or number at all.
+        //
+        // Provider + PRODUCT, never provider + document: the account is a
+        // pension held at Harel, and "Harel Quarterly Pension Report" names the
+        // statement that reported it rather than the thing itself.
         accountLabel:
-          connection.displayName ?? `${definition.institutionLabel} ${definition.label}`,
+          connection.displayName ??
+          (definition.product
+            ? `${definition.institutionLabel} ${PRODUCT_LABEL[definition.product]}`
+            : `${definition.institutionLabel} ${definition.label}`),
         valuationCurrency,
       },
       segments: [Buffer.from(session.dataKey), bytes],

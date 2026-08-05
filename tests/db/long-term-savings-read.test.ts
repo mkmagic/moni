@@ -173,6 +173,86 @@ describe("listLongTermSavingsAccounts", () => {
   });
 });
 
+/**
+ * A second 2026 report, so the fiscal year has two statements to difference.
+ * The fixtures are Q1 2026 and Q3 2025 — different years, which is the case
+ * that must NOT be differenced.
+ */
+const q2 = {
+  ...q1,
+  reportDate: "2026-06-30",
+  quarter: 2,
+  statedPeriodEnd: "2026-06-30",
+  movements: {
+    ...q1.movements,
+    contributions: "14000",
+    investmentResult: "-1000",
+    disabilityInsuranceCost: "-262",
+    deathInsuranceCost: "-106",
+    // Balances the equation: 72306 + 14000 - 1000 + 0 - 262 - 106.
+    closingBalance: "84938",
+  },
+};
+
+describe("report history", () => {
+  it("differences a report against the previous one of the same fiscal year", async () => {
+    const ctx = await fixture();
+    await importReport(ctx, q1);
+    await importReport(ctx, q2);
+
+    const [account] = await listLongTermSavingsAccounts(ctx.session);
+    expect(account.reports.map((report) => report.asOf)).toEqual(["2026-06-30", "2026-03-31"]);
+    expect(account.reports[0].period).toMatchObject({
+      // Starts the day after Q1's stated period ended, not in January.
+      start: "2026-04-01",
+      end: "2026-06-30",
+      derived: true,
+      contributions: { amount: "6924", currency: "ILS" },
+      investmentResult: { amount: "1954", currency: "ILS" },
+    });
+    // The first report of a year has nothing to difference against, and its
+    // stated period already IS the period.
+    expect(account.reports[1].period).toMatchObject({
+      start: "2026-01-01",
+      derived: false,
+      contributions: { amount: "7076", currency: "ILS" },
+    });
+  });
+
+  it("totals the differenced periods rather than the year-to-date figures", async () => {
+    const ctx = await fixture();
+    await importReport(ctx, q1);
+    await importReport(ctx, q2);
+
+    const [account] = await listLongTermSavingsAccounts(ctx.session);
+    // Adding the two year-to-date figures would give 21,076 and count
+    // January–March twice.
+    expect(account.totals).toMatchObject({
+      contributions: { amount: "14000", currency: "ILS" },
+      investmentResult: { amount: "-1000", currency: "ILS" },
+      reportCount: 2,
+      from: "2026-01-01",
+      to: "2026-06-30",
+      hasGaps: false,
+    });
+  });
+
+  it("never differences across a fiscal year, and says the coverage has a hole", async () => {
+    const ctx = await fixture();
+    await importReport(ctx, q3);
+    await importReport(ctx, q1);
+
+    const [account] = await listLongTermSavingsAccounts(ctx.session);
+    // Q1 2026 restates from January, so subtracting Q3 2025 would be nonsense.
+    expect(account.reports[0]).toMatchObject({
+      asOf: "2026-03-31",
+      period: { start: "2026-01-01", derived: false },
+    });
+    // Oct–Dec 2025 was never imported, and the totals admit it.
+    expect(account.totals).toMatchObject({ reportCount: 2, hasGaps: true });
+  });
+});
+
 describe("listAccountsGrouped", () => {
   it("puts a pension in its own group and subtotals it", async () => {
     const ctx = await fixture();

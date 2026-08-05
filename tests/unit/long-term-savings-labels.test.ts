@@ -7,6 +7,7 @@ import {
   forMonthLabel,
   formatPercent,
   liquidityBadge,
+  longTermSavingsAccountName,
   statedPeriodLabel,
 } from "@/lib/long-term-savings/labels";
 
@@ -61,6 +62,28 @@ describe("formatPercent", () => {
   it("renders a rate exactly as printed — shortening it would change the figure", () => {
     expect(formatPercent("0.0018")).toBe("0.0018%");
     expect(formatPercent("0.00")).toBe("0.00%");
+  });
+});
+
+describe("longTermSavingsAccountName", () => {
+  it("names the product held at the provider, not the document that reported it", () => {
+    expect(
+      longTermSavingsAccountName(
+        "Harel Quarterly Pension Report",
+        "harel_pension_quarterly",
+        "pension",
+      ),
+    ).toBe("Harel Pension");
+  });
+
+  it("leaves a nickname the user typed alone", () => {
+    expect(
+      longTermSavingsAccountName("My old army pension", "harel_pension_quarterly", "pension"),
+    ).toBe("My old army pension");
+  });
+
+  it("keeps the stored name when the connector is unknown", () => {
+    expect(longTermSavingsAccountName("Something", null, "pension")).toBe("Something");
   });
 });
 

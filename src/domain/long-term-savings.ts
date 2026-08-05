@@ -18,6 +18,7 @@ import { asc, desc, eq, inArray } from "drizzle-orm";
 import { withUser } from "@/db/client";
 import {
   accounts,
+  connections,
   longTermSavingsDetails,
   longTermSavingsSnapshotDeposits,
   longTermSavingsSnapshotTracks,
@@ -26,6 +27,8 @@ import {
 import type { Session } from "@/lib/auth/session-store";
 import type { Money } from "@/lib/money";
 import { decText } from "./fields";
+
+type SnapshotRow = typeof longTermSavingsSnapshots.$inferSelect;
 
 export type LongTermSavingsProductName = (typeof longTermSavingsDetails.product.enumValues)[number];
 export type LongTermSavingsLiquidity = (typeof longTermSavingsDetails.liquidity.enumValues)[number];
@@ -80,13 +83,66 @@ export interface LongTermSavingsTrackRow {
   annualCostPercent: string | null;
 }
 
-export interface LongTermSavingsSnapshotView {
+/**
+ * What a report adds on top of the one before it.
+ *
+ * An Israeli quarterly report states its flows **year-to-date**, so a Q3
+ * report's contributions cover January–September. Differencing it against the
+ * previous report of the same fiscal year is what turns that into the quarter —
+ * the derivation CONTEXT.md's "Stated period" entry names, and the reason flows
+ * are stored exactly as published rather than pre-differenced.
+ */
+export interface LongTermSavingsPeriodFlows {
+  start: string;
+  end: string;
+  /**
+   * False when there is no earlier report in the same fiscal year to difference
+   * against. The figures are then the document's own year-to-date ones, and the
+   * view says so rather than presenting nine months as a quarter.
+   */
+  derived: boolean;
+  contributions: Money;
+  investmentResult: Money;
+  feesCharged: Money;
+}
+
+/** One imported report, in the list of everything held for an account. */
+export interface LongTermSavingsReportView {
   id: string;
   asOf: string;
   statedPeriodStart: string;
   statedPeriodEnd: string;
   quarter: number | null;
   fiscalYear: number | null;
+  closingBalance: Money;
+  /** This report's own share of the flows. */
+  period: LongTermSavingsPeriodFlows;
+}
+
+/**
+ * Everything the imported reports add up to, so the card can answer "how much
+ * have I put in" rather than only "what did the last statement say".
+ *
+ * Summed from each report's `period`, which is why differencing has to happen
+ * before this: adding four year-to-date figures would count January four times.
+ */
+export interface LongTermSavingsTotals {
+  contributions: Money;
+  investmentResult: Money;
+  feesCharged: Money;
+  reportCount: number;
+  /** The span the reports actually cover. */
+  from: string;
+  to: string;
+  /**
+   * True when the covered periods don't join up — a year with no report, or a
+   * quarter that had to fall back to year-to-date. The totals are then a sum of
+   * what was imported, not of the account's whole life, and the view says so.
+   */
+  hasGaps: boolean;
+}
+
+export interface LongTermSavingsSnapshotView extends LongTermSavingsReportView {
   /**
    * The report's stated retirement age, so a locked badge can say "until 67"
    * rather than "until retirement". This is the only part of the projection
@@ -95,11 +151,10 @@ export interface LongTermSavingsSnapshotView {
    * that is wrong by an order of magnitude.
    */
   retirementAge: number | null;
-  closingBalance: Money;
   openingBalance: Money;
-  /** Everything paid in over the stated period. */
+  /** As published: everything paid in over the STATED period, not the quarter. */
   contributions: Money;
-  /** Signed: gains in a good period, losses in a bad one. */
+  /** Signed: gains in a good period, losses in a bad one. As published. */
   investmentResult: Money;
   feesCharged: Money;
   fees: LongTermSavingsFees;
@@ -112,11 +167,147 @@ export interface LongTermSavingsAccountView {
   name: string;
   institution: string | null;
   connectionId: string | null;
+  connectorId: string | null;
   product: LongTermSavingsProductName;
   liquidity: LongTermSavingsLiquidity;
   liquidFrom: string | null;
-  /** Null until the first report has been imported for this account. */
+  /** Newest first. Empty until the first report has been imported. */
+  reports: LongTermSavingsReportView[];
+  /** The newest report, with its deposit table and tracks. */
   latest: LongTermSavingsSnapshotView | null;
+  /** Null until the first report has been imported. */
+  totals: LongTermSavingsTotals | null;
+}
+
+/** The day after `isoDate` — a differenced period starts where the last one ended. */
+function nextDay(isoDate: string): string {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * Turns a run of reports into per-period flows and their totals.
+ *
+ * The differencing rule is the fiscal year: an Israeli quarterly report restates
+ * its flows from the start of the year, so a report is differenced against the
+ * previous report **of the same year** and stands alone otherwise. That makes a
+ * Q1 report correct without differencing, and a Q3 report with no Q2 fall back
+ * to what the document literally says rather than to an invented quarter.
+ *
+ * Rows arrive oldest first; the returned reports are newest first.
+ */
+function deriveReports(
+  dataKey: Uint8Array,
+  held: SnapshotRow[],
+): { reports: LongTermSavingsReportView[]; totals: LongTermSavingsTotals | null } {
+  const reports: LongTermSavingsReportView[] = [];
+  let contributions = new Decimal(0);
+  let investmentResult = new Decimal(0);
+  let feesCharged = new Decimal(0);
+  let hasGaps = false;
+  let coveredThrough: string | null = null;
+
+  for (const [index, row] of held.entries()) {
+    const flow = (ct: Uint8Array, column: string) =>
+      new Decimal(decText(dataKey, ct, row.id, column, row.version) ?? "0");
+    const previous = held[index - 1];
+    const sameYear =
+      previous !== undefined &&
+      previous.fiscalYear !== null &&
+      previous.fiscalYear === row.fiscalYear;
+    const base = sameYear
+      ? {
+          contributions: new Decimal(
+            decText(
+              dataKey,
+              previous.contributionsCt,
+              previous.id,
+              "contributions_ct",
+              previous.version,
+            ) ?? "0",
+          ),
+          investmentResult: new Decimal(
+            decText(
+              dataKey,
+              previous.investmentResultCt,
+              previous.id,
+              "investment_result_ct",
+              previous.version,
+            ) ?? "0",
+          ),
+          feesCharged: new Decimal(
+            decText(
+              dataKey,
+              previous.feesChargedCt,
+              previous.id,
+              "fees_charged_ct",
+              previous.version,
+            ) ?? "0",
+          ),
+        }
+      : null;
+
+    const periodContributions = flow(row.contributionsCt, "contributions_ct").minus(
+      base?.contributions ?? 0,
+    );
+    const periodResult = flow(row.investmentResultCt, "investment_result_ct").minus(
+      base?.investmentResult ?? 0,
+    );
+    const periodFees = flow(row.feesChargedCt, "fees_charged_ct").minus(base?.feesCharged ?? 0);
+    const start = base ? nextDay(previous.statedPeriodEnd) : row.statedPeriodStart;
+
+    // A hole between what the last report covered and where this one starts
+    // means the totals below are a sum of what was imported, not of the
+    // account's whole life.
+    if (coveredThrough !== null && start > nextDay(coveredThrough)) hasGaps = true;
+    coveredThrough = row.statedPeriodEnd;
+
+    contributions = contributions.plus(periodContributions);
+    investmentResult = investmentResult.plus(periodResult);
+    feesCharged = feesCharged.plus(periodFees);
+
+    reports.push({
+      id: row.id,
+      asOf: row.asOf,
+      statedPeriodStart: row.statedPeriodStart,
+      statedPeriodEnd: row.statedPeriodEnd,
+      quarter: row.quarter,
+      fiscalYear: row.fiscalYear,
+      closingBalance: {
+        amount:
+          decText(dataKey, row.closingBalanceCt, row.id, "closing_balance_ct", row.version) ?? "0",
+        currency: row.currency,
+      },
+      period: {
+        start,
+        end: row.statedPeriodEnd,
+        derived: base !== null,
+        contributions: { amount: periodContributions.toFixed(), currency: row.currency },
+        investmentResult: { amount: periodResult.toFixed(), currency: row.currency },
+        feesCharged: { amount: periodFees.toFixed(), currency: row.currency },
+      },
+    });
+  }
+
+  reports.reverse();
+  const first = held[0];
+  const last = held.at(-1);
+  return {
+    reports,
+    totals:
+      first === undefined || last === undefined
+        ? null
+        : {
+            contributions: { amount: contributions.toFixed(), currency: last.currency },
+            investmentResult: { amount: investmentResult.toFixed(), currency: last.currency },
+            feesCharged: { amount: feesCharged.toFixed(), currency: last.currency },
+            reportCount: held.length,
+            from: first.statedPeriodStart,
+            to: last.statedPeriodEnd,
+            hasGaps,
+          },
+  };
 }
 
 function above(
@@ -186,10 +377,12 @@ export async function listLongTermSavingsAccounts(
       .orderBy(asc(accounts.createdAt));
     if (rows.length === 0) return [];
 
-    const snapshots = await tx
-      .select()
-      .from(longTermSavingsSnapshots)
-      .orderBy(desc(longTermSavingsSnapshots.asOf));
+    const [snapshots, connectionRows] = await Promise.all([
+      tx.select().from(longTermSavingsSnapshots).orderBy(desc(longTermSavingsSnapshots.asOf)),
+      tx.select({ id: connections.id, connectorId: connections.connectorId }).from(connections),
+    ]);
+    // The connector is what names the provider ("Harel") at the display edge.
+    const connectorByConnection = new Map(connectionRows.map((row) => [row.id, row.connectorId]));
     // Descending, so the FIRST row seen per account is its newest report.
     const newest = new Map<string, (typeof snapshots)[number]>();
     for (const snapshot of snapshots)
@@ -212,30 +405,33 @@ export async function listLongTermSavingsAccounts(
       : [[], []];
 
     return rows.map(({ account, detail }): LongTermSavingsAccountView => {
+      // Oldest first: differencing needs each report's predecessor, and the
+      // list is reversed once at the end.
+      const held = snapshots
+        .filter((row) => row.accountId === account.id)
+        .sort((a, b) => a.asOf.localeCompare(b.asOf));
       const snapshot = newest.get(account.id);
       const money = (ct: Uint8Array, column: string): Money => ({
         amount: decText(dataKey, ct, snapshot!.id, column, snapshot!.version) ?? "0",
         currency: snapshot!.currency,
       });
+      const { reports, totals } = deriveReports(dataKey, held);
       return {
         accountId: account.id,
         name: decText(dataKey, account.nameCt, account.id, "name_ct", account.version) ?? "",
         institution: account.institution,
         connectionId: account.connectionId,
+        connectorId: connectorByConnection.get(account.connectionId ?? "") ?? null,
         product: detail.product,
         liquidity: detail.liquidity,
         liquidFrom: detail.liquidFrom,
+        reports,
+        totals,
         latest: !snapshot
           ? null
           : {
-              id: snapshot.id,
-              asOf: snapshot.asOf,
-              statedPeriodStart: snapshot.statedPeriodStart,
-              statedPeriodEnd: snapshot.statedPeriodEnd,
-              quarter: snapshot.quarter,
-              fiscalYear: snapshot.fiscalYear,
+              ...reports[0],
               retirementAge: snapshot.projectionRetirementAge,
-              closingBalance: money(snapshot.closingBalanceCt, "closing_balance_ct"),
               openingBalance: money(snapshot.openingBalanceCt, "opening_balance_ct"),
               contributions: money(snapshot.contributionsCt, "contributions_ct"),
               investmentResult: money(snapshot.investmentResultCt, "investment_result_ct"),

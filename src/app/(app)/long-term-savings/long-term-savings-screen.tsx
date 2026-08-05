@@ -16,30 +16,45 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ImportDialog } from "@/components/import-dialog";
 import { Money } from "@/components/money";
+import { Sparkline } from "@/components/sparkline";
 import type { ConnectionView } from "@/domain/connections";
 import type {
   LongTermSavingsAccountView,
+  LongTermSavingsReportView,
   LongTermSavingsSnapshotView,
+  LongTermSavingsTotals,
 } from "@/domain/long-term-savings";
 import { getConnectorDefinition } from "@/lib/connectors";
+import { abs } from "@/lib/money";
 import {
   asOfLabel,
   dayLabel,
   forMonthLabel,
   formatPercent,
   liquidityBadge,
+  longTermSavingsAccountName,
+  monthYearLabel,
   statedPeriodLabel,
 } from "@/lib/long-term-savings/labels";
 
 /**
  * Pension, קרן השתלמות and קופת גמל, one card per account.
  *
- * Lead order per account is balance → flows for the stated period → fees. Fees
- * come last because they are the smallest number, and first in *consequence*
- * because they are the only one the member can act on — so the fee row is quiet
- * when there is nothing to do and promotes itself to a callout only when the
- * member pays above the fund average. An app that opens with a scolding number
- * every visit is an app people stop opening.
+ * Lead order per account is balance → what the reports add up to → balance
+ * trend → fees, with the reports themselves, the deposit table and the tracks
+ * behind disclosures.
+ *
+ * The totals are cumulative on purpose. A single statement answers "what is it
+ * worth now"; the question a saver actually has is "how much have I put in and
+ * what has it earned", and no one statement says that. They are summed from
+ * each report's DIFFERENCED period — adding four year-to-date figures would
+ * count January four times.
+ *
+ * Fees come last because they are the smallest number, and first in
+ * *consequence* because they are the only one the member can act on — so the fee
+ * row is quiet when there is nothing to do and promotes itself to a callout only
+ * when the member pays above the fund average. An app that opens with a scolding
+ * number every visit is an app people stop opening.
  */
 export function LongTermSavingsScreen({
   accounts,
@@ -137,8 +152,9 @@ function EmptyState({ canImport, onImport }: { canImport: boolean; onImport: () 
 }
 
 function AccountPanel({ account }: { account: LongTermSavingsAccountView }) {
-  const [open, setOpen] = useState<"deposits" | "tracks" | null>(null);
+  const [open, setOpen] = useState<"reports" | "deposits" | "tracks" | null>(null);
   const snapshot = account.latest;
+  const name = longTermSavingsAccountName(account.name, account.connectorId, account.product);
   const liquidity = liquidityBadge({
     liquidity: account.liquidity,
     liquidFrom: account.liquidFrom,
@@ -151,7 +167,9 @@ function AccountPanel({ account }: { account: LongTermSavingsAccountView }) {
     <Card className="flex flex-col gap-5 px-6 pb-6 pt-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex flex-col gap-1">
-          <span className="text-base font-semibold text-foreground">{account.name}</span>
+          <span className="text-base font-semibold text-foreground">
+            <bdi>{name}</bdi>
+          </span>
           {account.institution && (
             <span className="text-xs text-muted-foreground">
               <bdi>{account.institution}</bdi>
@@ -181,10 +199,16 @@ function AccountPanel({ account }: { account: LongTermSavingsAccountView }) {
             </span>
           </div>
 
-          <Flows snapshot={snapshot} />
+          {account.totals && <Totals totals={account.totals} />}
+          {account.reports.length > 1 && <BalanceTrend reports={account.reports} />}
           <Fees snapshot={snapshot} />
 
           <div className="flex flex-wrap gap-2">
+            <Disclosure
+              label={`Reports (${account.reports.length})`}
+              open={open === "reports"}
+              onToggle={() => setOpen(open === "reports" ? null : "reports")}
+            />
             {snapshot.deposits.length > 0 && (
               <Disclosure
                 label={`Deposits (${snapshot.deposits.length})`}
@@ -205,6 +229,7 @@ function AccountPanel({ account }: { account: LongTermSavingsAccountView }) {
             )}
           </div>
 
+          {open === "reports" && <ReportTable reports={account.reports} />}
           {open === "deposits" && <DepositTable snapshot={snapshot} />}
           {open === "tracks" && <TrackTable snapshot={snapshot} />}
         </>
@@ -213,39 +238,131 @@ function AccountPanel({ account }: { account: LongTermSavingsAccountView }) {
   );
 }
 
-function Flows({ snapshot }: { snapshot: LongTermSavingsSnapshotView }) {
-  // The period is the one the DOCUMENT states — year-to-date on an Israeli
-  // quarterly report — so a Q3 figure is never labelled "this quarter" (#76 D6).
-  const period = statedPeriodLabel(snapshot.statedPeriodStart, snapshot.statedPeriodEnd);
+/**
+ * What the imported reports add up to — the question a single statement can't
+ * answer. Summed from each report's differenced period, so importing four
+ * quarterly statements doesn't count January four times.
+ */
+function Totals({ totals }: { totals: LongTermSavingsTotals }) {
+  const span = `${monthYearLabel(totals.from)} – ${monthYearLabel(totals.to)}`;
   return (
-    <dl className="flex flex-col gap-1.5 text-sm">
-      <FlowRow label="Contributed" period={period} value={snapshot.contributions} />
-      <FlowRow label="Gains" period={period} value={snapshot.investmentResult} signColor />
-      <FlowRow label="Fees charged" period={period} value={snapshot.feesCharged} />
-    </dl>
+    <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-2">
+      <dl className="flex min-w-56 flex-1 flex-col gap-1.5 text-sm">
+        <TotalRow label="Contributed" value={totals.contributions} />
+        <TotalRow label="Gains" value={totals.investmentResult} signColor />
+        {/* The report signs fees as a movement — money leaving the balance —
+            but "Fees paid −₪212" reads as a refund. The word already carries
+            the direction, so the figure carries only its size. Gains keep their
+            sign, because there the direction IS the information. */}
+        <TotalRow label="Fees paid" value={abs(totals.feesCharged)} />
+      </dl>
+      <p className="flex flex-col text-xs text-muted-foreground">
+        <span>
+          {totals.reportCount === 1 ? "from 1 report" : `across ${totals.reportCount} reports`}
+        </span>
+        <span className="tabular-nums">{span}</span>
+        {totals.hasGaps && (
+          // A total that quietly skips a year is worse than one that admits it.
+          <span>some periods have no report</span>
+        )}
+      </p>
+    </div>
   );
 }
 
-function FlowRow({
+function TotalRow({
   label,
-  period,
   value,
   signColor,
 }: {
   label: string;
-  period: string;
   value: { amount: string; currency: string };
   signColor?: boolean;
 }) {
   return (
     <div className="flex items-baseline justify-between gap-4">
-      <dt className="flex items-baseline gap-2">
-        <span className="text-foreground">{label}</span>
-        <span className="text-xs text-muted-foreground">{period}</span>
-      </dt>
+      <dt className="text-foreground">{label}</dt>
       <dd>
         <Money value={value} signColor={signColor} className="font-medium" />
       </dd>
+    </div>
+  );
+}
+
+function BalanceTrend({ reports }: { reports: LongTermSavingsReportView[] }) {
+  // Oldest first for the chart; `Number()` here is chart geometry, which is the
+  // one place money is allowed to widen (ui-and-feel.md §3).
+  const ordered = [...reports].reverse();
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-xs uppercase tracking-wide text-muted-foreground">Balance</span>
+      <Sparkline
+        data={ordered.map((report) => Number(report.closingBalance.amount))}
+        labels={ordered.map((report) =>
+          asOfLabel({
+            asOf: report.asOf,
+            quarter: report.quarter,
+            fiscalYear: report.fiscalYear,
+          }),
+        )}
+        currency={ordered[0].closingBalance.currency}
+        color="var(--color-chart-2)"
+        height={56}
+      />
+    </div>
+  );
+}
+
+function ReportTable({ reports }: { reports: LongTermSavingsReportView[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full border-separate border-spacing-0 text-xs">
+        <thead>
+          <tr className="text-left text-muted-foreground">
+            <Th>Report</Th>
+            <Th>Covers</Th>
+            <Th align="right">Balance</Th>
+            <Th align="right">In</Th>
+            <Th align="right">Gains</Th>
+            <Th align="right">Fees</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {reports.map((report) => (
+            <tr key={report.id}>
+              <Td>
+                {asOfLabel({
+                  asOf: report.asOf,
+                  quarter: report.quarter,
+                  fiscalYear: report.fiscalYear,
+                })}
+              </Td>
+              <Td>
+                {statedPeriodLabel(report.period.start, report.period.end)}
+                {!report.period.derived && (
+                  // Nothing earlier in the same fiscal year to difference
+                  // against, so these are the document's own year-to-date
+                  // figures — say so rather than pass nine months off as a
+                  // quarter (CONTEXT.md, "Stated period").
+                  <span className="ml-1.5 text-muted-foreground">year to date</span>
+                )}
+              </Td>
+              <Td align="right">
+                <Money value={report.closingBalance} />
+              </Td>
+              <Td align="right">
+                <Money value={report.period.contributions} />
+              </Td>
+              <Td align="right">
+                <Money value={report.period.investmentResult} signColor />
+              </Td>
+              <Td align="right">
+                <Money value={abs(report.period.feesCharged)} />
+              </Td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -261,7 +378,9 @@ function Fees({ snapshot }: { snapshot: LongTermSavingsSnapshotView }) {
   return (
     <div className="flex flex-col gap-2 border-t border-border pt-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
-        <span className="text-foreground">Fees</span>
+        {/* "Management fees", not "Fees" — the totals above already have a
+            "Fees paid" row, and two rows called Fees on one card is a puzzle. */}
+        <span className="text-foreground">Management fees</span>
         <span className="tabular-nums text-muted-foreground">{rates.join(" · ")}</span>
       </div>
       {fees.aboveAverage.length > 0 ? (

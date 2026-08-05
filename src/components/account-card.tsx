@@ -4,7 +4,11 @@ import type { LucideIcon } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Money } from "@/components/money";
 import { getConnectorDefinition, institutionDisplayName } from "@/lib/connectors";
-import { asOfLabel, liquidityBadge } from "@/lib/long-term-savings/labels";
+import {
+  asOfLabel,
+  liquidityBadge,
+  longTermSavingsAccountName,
+} from "@/lib/long-term-savings/labels";
 import type { Money as MoneyValue } from "@/lib/money";
 import type { AccountView } from "@/domain/accounts";
 import type { LongTermSavingsSummary } from "@/domain/long-term-savings";
@@ -56,16 +60,20 @@ export function AccountCard({ account, valuation, savings }: AccountCardProps) {
   // anything a user or a bank chose — and it corrects rows named before the
   // real brokerage was known, without waiting for the next sync. Every other
   // account type keeps the name its source gave it.
-  const title =
-    (account.accountType === "investment"
-      ? institutionDisplayName(account.institution, account.connectorId)
-      : null) ?? account.name;
+  // A long-term savings account is named for the PRODUCT held at the provider
+  // ("Harel Pension"). Same re-derivation, same reason: the statement carries
+  // no account name of its own, so the stored default was Moni's to correct.
+  const title = savings
+    ? longTermSavingsAccountName(account.name, account.connectorId, savings.product)
+    : ((account.accountType === "investment"
+        ? institutionDisplayName(account.institution, account.connectorId)
+        : null) ?? account.name);
   // "SnapTrade / via SnapTrade" says one thing twice. That happens whenever
   // the connector is all Moni knows — an aggregator only names the brokerage
-  // once its payload has been synced. `includes`, not equality: a long-term
-  // savings account is named "<provider> <document>", so it CONTAINS the
-  // connector's own label ("Harel Quarterly Pension Report / via Quarterly
-  // Pension Report") without ever equalling it.
+  // once its payload has been synced. `includes` rather than equality, since a
+  // derived name can contain the source without equalling it. "Harel Pension /
+  // via Quarterly Pension Report" is not that case and reads correctly: the
+  // account is the product, the provenance is the document it came from.
   const provenance = [
     title.includes(source) ? null : `via ${source}`,
     account.last4 && `•••• ${account.last4}`,
@@ -91,7 +99,9 @@ export function AccountCard({ account, valuation, savings }: AccountCardProps) {
           )}
         </div>
         <div className="flex flex-col gap-0.5">
-          <span className="font-semibold text-foreground">{title}</span>
+          <span className="font-semibold text-foreground">
+            <bdi>{title}</bdi>
+          </span>
           <span className="text-xs text-muted-foreground">{provenance}</span>
         </div>
         {value ? (
