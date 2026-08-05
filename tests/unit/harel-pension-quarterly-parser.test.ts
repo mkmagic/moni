@@ -48,6 +48,26 @@ describe("harelPensionQuarterlyParser.recognises", () => {
   });
 });
 
+describe("harelPensionQuarterlyParser.parse — refuses a misread", () => {
+  it("rejects the document rather than storing a missing deposit cell as ₪0", () => {
+    // Blank the "עובד/ת" fragment, so the employee-contribution column's title
+    // no longer matches and the matcher cannot place its cells. Only the
+    // balance equation gates the import, so a fabricated zero here would be
+    // persisted as fact and pass every check that could have caught it.
+    const damaged = q1.map((item) => (item.text === "עובד/ת" ? { ...item, text: "·" } : item));
+    expect(() => harelPensionQuarterlyParser.parse(damaged)).toThrow(
+      expect.objectContaining({ code: "malformed_document" }),
+    );
+  });
+
+  it("rejects a document missing a section ב figure", () => {
+    const damaged = q1.filter((item) => !/^יתרת הכספים בקרן בסוף/.test(item.text));
+    expect(() => harelPensionQuarterlyParser.parse(damaged)).toThrow(
+      expect.objectContaining({ code: "malformed_document" }),
+    );
+  });
+});
+
 describe("harelPensionQuarterlyParser.parse — 2026 Q1", () => {
   const report = harelPensionQuarterlyParser.parse(q1);
 

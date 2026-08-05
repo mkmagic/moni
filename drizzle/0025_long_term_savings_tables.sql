@@ -29,6 +29,7 @@ CREATE TABLE "long_term_savings_snapshot_deposits" (
 	"version" integer DEFAULT 1 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "long_term_savings_snapshot_deposits_owner_id_id_unique" UNIQUE("owner_id","id"),
 	CONSTRAINT "long_term_savings_snapshot_deposits_owner_snapshot_row_unique" UNIQUE("owner_id","snapshot_id","row_index")
 );
 --> statement-breakpoint
@@ -43,6 +44,7 @@ CREATE TABLE "long_term_savings_snapshot_tracks" (
 	"version" integer DEFAULT 1 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "long_term_savings_snapshot_tracks_owner_id_id_unique" UNIQUE("owner_id","id"),
 	CONSTRAINT "long_term_savings_snapshot_tracks_owner_snapshot_row_unique" UNIQUE("owner_id","snapshot_id","row_index")
 );
 --> statement-breakpoint
@@ -77,6 +79,10 @@ CREATE TABLE "long_term_savings_snapshots" (
 	"projection_dependent_parent_pension_ct" "bytea",
 	"projection_disability_pension_ct" "bytea",
 	"projection_contribution_waiver_ct" "bytea",
+	"deposits_total_employee_ct" "bytea",
+	"deposits_total_employer_ct" "bytea",
+	"deposits_total_severance_ct" "bytea",
+	"deposits_total_ct" "bytea",
 	"balance_drift_ct" "bytea" NOT NULL,
 	"check_results_ct" "bytea" NOT NULL,
 	"parser_id" text NOT NULL,

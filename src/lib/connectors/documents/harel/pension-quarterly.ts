@@ -269,6 +269,25 @@ interface Column {
 }
 
 /**
+ * A row as read off the page, before validation. Every money cell may be null
+ * here — that is how a cell the column matcher could not find travels to the
+ * schema, which rejects the document rather than letting a fabricated zero
+ * through. Only `salary` survives validation as nullable, because a
+ * self-employed row genuinely has no salary cell.
+ */
+interface DepositRowCandidate extends Omit<
+  HarelDepositRow,
+  "employeeContribution" | "employerContribution" | "severance" | "total"
+> {
+  employeeContribution: string | null;
+  employerContribution: string | null;
+  severance: string | null;
+  total: string | null;
+}
+
+type DepositTotalsCandidate = Record<keyof z.infer<typeof depositTotalsSchema>, string | null>;
+
+/**
  * Merges the stacked header fragments into columns by x-overlap, so "תגמולי"
  * over "עובד/ת" becomes one column whose centre anchors the cells beneath it.
  * Derived per page — no coordinates are hardcoded, and a report that omits the
@@ -310,7 +329,7 @@ function depositColumns(items: Item[], headerAnchor: Item): Column[] {
 function parseDepositsPage(
   items: Item[],
   anchor: Item,
-): { rows: HarelDepositRow[]; totals: z.infer<typeof depositTotalsSchema> | null } {
+): { rows: DepositRowCandidate[]; totals: DepositTotalsCandidate | null } {
   const columns = depositColumns(items, anchor);
   const cellIn = (row: Item[], title: RegExp): Item | undefined => {
     const column = columns.find((candidate) => title.test(candidate.title));
@@ -336,7 +355,7 @@ function parseDepositsPage(
       !/^לתשומת לבך/.test(item.text),
   );
 
-  const rows: HarelDepositRow[] = [];
+  const rows: DepositRowCandidate[] = [];
   for (const row of groupRows(body)) {
     const num = (pattern: RegExp): string | null => {
       const cell = cellIn(row, pattern);
@@ -348,10 +367,10 @@ function parseDepositsPage(
       return {
         rows,
         totals: {
-          employeeContribution: num(/^תגמולי עובד/) ?? "0",
-          employerContribution: num(/^תגמולי מעסיק$/) ?? "0",
-          severance: num(/^פיצויים$/) ?? "0",
-          total: num(/^סה"כ/) ?? "0",
+          employeeContribution: num(/^תגמולי עובד/),
+          employerContribution: num(/^תגמולי מעסיק$/),
+          severance: num(/^פיצויים$/),
+          total: num(/^סה"כ/),
         },
       };
     }
@@ -364,11 +383,16 @@ function parseDepositsPage(
       employer: joinRtl(row.filter((item) => !isNumber(item) && item !== date && item !== month)),
       depositDate: isoDate(date.text),
       forMonth: isoMonth(month.text),
+      // Genuinely absent on a self-employed row, which has no salary cell.
       salary: num(/^משכורת$/),
-      employeeContribution: num(/^תגמולי עובד/) ?? "0",
-      employerContribution: num(/^תגמולי מעסיק$/) ?? "0",
-      severance: num(/^פיצויים$/) ?? "0",
-      total: num(/^סה"כ/) ?? "0",
+      // Not defaulted to "0". A cell the column matcher fails to find is a
+      // misread, and only the balance equation gates the import — a fabricated
+      // zero here would be stored as fact and pass every check that could
+      // catch it. Null instead, so the schema rejects the document loudly.
+      employeeContribution: num(/^תגמולי עובד/),
+      employerContribution: num(/^תגמולי מעסיק$/),
+      severance: num(/^פיצויים$/),
+      total: num(/^סה"כ/),
     });
   }
   return { rows, totals: null };
@@ -380,9 +404,12 @@ function parseDepositsPage(
  * only on the last. Columns are re-derived per page rather than carried over,
  * because each page's header is the authority for its own cells.
  */
-function parseDeposits(items: Item[]): HarelPensionQuarterlyReport["deposits"] {
-  const rows: HarelDepositRow[] = [];
-  let totals: z.infer<typeof depositTotalsSchema> | null = null;
+function parseDeposits(items: Item[]): {
+  rows: DepositRowCandidate[];
+  totals: DepositTotalsCandidate | null;
+} {
+  const rows: DepositRowCandidate[] = [];
+  let totals: DepositTotalsCandidate | null = null;
 
   for (const heading of items.filter((item) => DEPOSITS_SECTION.test(item.text))) {
     const anchor = items.find(

@@ -10,7 +10,7 @@
  * same containment the existing workers give `israeli-bank-scrapers`.
  */
 import "dotenv/config";
-import { decodeBinaryChildFrame, readChildStdin } from "@/lib/connectors";
+import { decodeBinaryChildFrame, getConnectorDefinition, readChildStdin } from "@/lib/connectors";
 import { harelPensionQuarterlyParser } from "@/lib/connectors/documents/harel/pension-quarterly";
 import { loadItems } from "@/lib/connectors/documents/pdf-load";
 import { DocumentParseError } from "@/lib/connectors/documents/types";
@@ -37,6 +37,12 @@ async function main(): Promise<void> {
     )
       throw new Error("invalid_frame");
 
+    // The registry is the one place a connector's product is stated (D7);
+    // hardcoding it here would make a second parser silently create pension
+    // accounts.
+    const product = getConnectorDefinition(connectorId)?.product;
+    if (!product) throw new Error("invalid_frame");
+
     const items = await loadItems(new Uint8Array(segments[1])).catch(() => {
       throw new DocumentParseError("unreadable_document");
     });
@@ -52,7 +58,7 @@ async function main(): Promise<void> {
       dataKey: segments[0],
       parserId: harelPensionQuarterlyParser.id,
       parserVersion: harelPensionQuarterlyParser.version,
-      product: "pension",
+      product,
       accountLabel,
       report: harelPensionQuarterlyParser.parse(items),
     });

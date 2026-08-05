@@ -149,6 +149,17 @@ export const longTermSavingsSnapshots = pgTable(
      * passes so the ±₪50 gate can be tuned against real documents (D9).
      * Encrypted: it is a difference of amounts.
      */
+    /**
+     * The deposit table's printed totals row. Null when the table has none.
+     * Stored rather than re-summed: the document asserts it, and D6's rule is
+     * that a stated figure is kept and a derived one never is — a mismatch
+     * between this and the rows is exactly what `column_total` records.
+     */
+    depositsTotalEmployeeCt: bytea("deposits_total_employee_ct"),
+    depositsTotalEmployerCt: bytea("deposits_total_employer_ct"),
+    depositsTotalSeveranceCt: bytea("deposits_total_severance_ct"),
+    depositsTotalCt: bytea("deposits_total_ct"),
+
     balanceDriftCt: bytea("balance_drift_ct").notNull(),
     /**
      * Every non-gating check and its drift, as JSON. Encrypted because the
@@ -221,6 +232,7 @@ export const longTermSavingsSnapshotDeposits = pgTable(
     ...timestamps,
   },
   (table) => [
+    unique("long_term_savings_snapshot_deposits_owner_id_id_unique").on(table.ownerId, table.id),
     unique("long_term_savings_snapshot_deposits_owner_snapshot_row_unique").on(
       table.ownerId,
       table.snapshotId,
@@ -251,6 +263,7 @@ export const longTermSavingsSnapshotTracks = pgTable(
     ...timestamps,
   },
   (table) => [
+    unique("long_term_savings_snapshot_tracks_owner_id_id_unique").on(table.ownerId, table.id),
     unique("long_term_savings_snapshot_tracks_owner_snapshot_row_unique").on(
       table.ownerId,
       table.snapshotId,

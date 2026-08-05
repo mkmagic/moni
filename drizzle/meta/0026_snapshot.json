@@ -1,6 +1,6 @@
 {
-  "id": "27cc47c1-c312-4dc5-8847-31f75ac374be",
-  "prevId": "3b43e229-1645-460c-9218-a2c2a8fef6c1",
+  "id": "186cab4a-b546-469d-9523-ba2540b70934",
+  "prevId": "3b4ed790-97a3-4e92-8b3b-fc7031f7ac3d",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -3884,6 +3884,14 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
+        "long_term_savings_snapshot_deposits_owner_id_id_unique": {
+          "name": "long_term_savings_snapshot_deposits_owner_id_id_unique",
+          "columns": [
+            "owner_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        },
         "long_term_savings_snapshot_deposits_owner_snapshot_row_unique": {
           "name": "long_term_savings_snapshot_deposits_owner_snapshot_row_unique",
           "columns": [
@@ -4000,6 +4008,14 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
+        "long_term_savings_snapshot_tracks_owner_id_id_unique": {
+          "name": "long_term_savings_snapshot_tracks_owner_id_id_unique",
+          "columns": [
+            "owner_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        },
         "long_term_savings_snapshot_tracks_owner_snapshot_row_unique": {
           "name": "long_term_savings_snapshot_tracks_owner_snapshot_row_unique",
           "columns": [
@@ -4195,6 +4211,30 @@
         },
         "projection_contribution_waiver_ct": {
           "name": "projection_contribution_waiver_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "deposits_total_employee_ct": {
+          "name": "deposits_total_employee_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "deposits_total_employer_ct": {
+          "name": "deposits_total_employer_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "deposits_total_severance_ct": {
+          "name": "deposits_total_severance_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "deposits_total_ct": {
+          "name": "deposits_total_ct",
           "type": "bytea",
           "primaryKey": false,
           "notNull": false

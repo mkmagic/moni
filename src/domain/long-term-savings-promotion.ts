@@ -19,6 +19,7 @@ import {
   longTermSavingsDetails,
   longTermSavingsSnapshotDeposits,
   longTermSavingsSnapshotTracks,
+  longTermSavingsLiquidityEnum,
   longTermSavingsSnapshots,
   syncRuns,
 } from "@/db/schema";
@@ -50,9 +51,15 @@ export class LongTermSavingsPromotionError extends Error {
   constructor(
     readonly code: LongTermSavingsPromotionErrorCode,
     /**
-     * Appended to `sync_runs.error`. Check NAMES and drift magnitudes only —
-     * never the balances themselves, which are Tier-1 and must not reach a
-     * plaintext column (security-design-principles §1).
+     * Appended to `sync_runs.error`, which is a plaintext `text` column.
+     *
+     * Check NAMES only. §D9 asked for full check detail here, but that detail
+     * quotes the figures it compared — and the drift is itself a difference of
+     * amounts, which is why `balance_drift_ct` is encrypted. Putting the same
+     * number in plaintext would contradict that, so the Tier-1 rule wins over
+     * the diagnostic. On a successful import the drift is recoverable from
+     * `balance_drift_ct`; on a failed one nothing is written at all, and the
+     * user is told which check failed rather than by how much.
      */
     readonly detail?: string,
   ) {
@@ -87,6 +94,26 @@ export interface LongTermSavingsPromotionInput {
 
 /** Reports are denominated in shekels; there is no currency on the page. */
 const CURRENCY = "ILS";
+
+/**
+ * When each product's money becomes reachable.
+ *
+ * Exhaustive over `LongTermSavingsProduct` on purpose: liquidity varies
+ * *within* a product name — קופת גמל להשקעה is liquid today while קופת גמל
+ * לתגמולים is locked to retirement (D1) — so adding a product must be a
+ * decision someone makes, not something it inherits from whichever parser
+ * happened to land first.
+ */
+const LIQUIDITY_BY_PRODUCT: Record<
+  LongTermSavingsProduct,
+  (typeof longTermSavingsLiquidityEnum.enumValues)[number]
+> = {
+  pension: "locked_retirement",
+  hishtalmut: "liquid_after",
+  gemel: "locked_retirement",
+  gemel_investment: "liquid",
+  managers_insurance: "locked_retirement",
+};
 
 function fail(code: LongTermSavingsPromotionErrorCode, detail?: string): never {
   throw new LongTermSavingsPromotionError(code, detail);
@@ -134,10 +161,7 @@ async function resolveAccount(
     accountId: id,
     ownerId: input.userId,
     product: input.product,
-    // Every product this parser reads is a new pension fund, locked until
-    // retirement. A product whose liquidity varies gets it from its own
-    // connector when that parser lands.
-    liquidity: "locked_retirement",
+    liquidity: LIQUIDITY_BY_PRODUCT[input.product],
   });
   return { accountId: id, version: 1 };
 }
@@ -159,7 +183,7 @@ async function promote(
   // harmless drift (D9).
   const { balanceDrift, checks } = checkHarelPensionReport(report);
   if (new Decimal(balanceDrift).gt(BALANCE_TOLERANCE))
-    fail("balance_check_failed", `balance_equation drift ${balanceDrift} > ${BALANCE_TOLERANCE}`);
+    fail("balance_check_failed", "balance_equation");
 
   const { accountId, version: accountVersion } = await resolveAccount(tx, input);
   const asOf = report.reportDate;
@@ -202,6 +226,7 @@ async function promote(
     value === null ? null : money(value, column);
   const m = report.movements;
   const p = report.expectedPayments;
+  const totals = report.deposits.totals;
 
   await tx.insert(longTermSavingsSnapshots).values({
     id: snapshotId,
@@ -252,6 +277,19 @@ async function promote(
       p.contributionWaiverOnDisability,
       "projection_contribution_waiver_ct",
     ),
+    depositsTotalEmployeeCt: optionalMoney(
+      totals?.employeeContribution ?? null,
+      "deposits_total_employee_ct",
+    ),
+    depositsTotalEmployerCt: optionalMoney(
+      totals?.employerContribution ?? null,
+      "deposits_total_employer_ct",
+    ),
+    depositsTotalSeveranceCt: optionalMoney(
+      totals?.severance ?? null,
+      "deposits_total_severance_ct",
+    ),
+    depositsTotalCt: optionalMoney(totals?.total ?? null, "deposits_total_ct"),
     balanceDriftCt: money(balanceDrift, "balance_drift_ct"),
     checkResultsCt: money(JSON.stringify(checks), "check_results_ct"),
     parserId: input.parserId,

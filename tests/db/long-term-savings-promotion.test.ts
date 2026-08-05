@@ -167,6 +167,10 @@ describe("promoteLongTermSavingsSnapshot", () => {
       );
       // Printed as a dash on this report, so genuinely absent rather than zero.
       expect(snapshot.projectionSurvivorPensionCt).toBeNull();
+      // The printed totals row is stored, not re-summed — the PDF is discarded,
+      // so anything the parser reads and doesn't persist is unrecoverable (D10).
+      expect(money(snapshot.depositsTotalCt, "deposits_total_ct")).toBe("7076");
+      expect(money(snapshot.depositsTotalSeveranceCt, "deposits_total_severance_ct")).toBe("1578");
 
       const deposits = await tx
         .select()
@@ -258,12 +262,11 @@ describe("promoteLongTermSavingsSnapshot", () => {
         .where(eq(schema.syncRuns.id, syncRunId));
       expect(run.status).toBe("failed");
       expect(run.error).toContain("balance_check_failed");
-      // Drift magnitude and check name are diagnostic; the balances they were
-      // computed from are Tier-1 and must not reach this plaintext column.
-      // The equation expects 76244; the corrupted report prints 76343.
-      expect(run.error).toContain("99");
-      expect(run.error).not.toContain("76343");
-      expect(run.error).not.toContain("72306");
+      // The failing check is named, and nothing else. sync_runs.error is a
+      // plaintext column, and both the balances and the drift derived from
+      // them are Tier-1 — the equation expects 76244 against a printed 76343,
+      // so neither those nor the drift of 99 may appear here.
+      expect(run.error).toBe("balance_check_failed: balance_equation");
 
       expect(await tx.select().from(schema.longTermSavingsSnapshots)).toHaveLength(0);
       expect(await tx.select().from(schema.accountBalanceSnapshots)).toHaveLength(0);
