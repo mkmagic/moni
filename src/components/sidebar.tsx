@@ -7,7 +7,6 @@ import {
   ArrowLeftRight,
   Landmark,
   Settings,
-  Wallet,
   LogOut,
   TrendingUp,
 } from "lucide-react";
@@ -73,9 +72,8 @@ export function Sidebar({ baseCurrency }: SidebarProps) {
     <aside className="flex h-screen w-60 shrink-0 flex-col border-r border-border bg-background">
       <div className="flex flex-col gap-1 px-5 py-6">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-[var(--radius)] bg-primary/15 text-primary">
-            <Wallet className="h-4.5 w-4.5" />
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element -- next/image's optimizer proxies through a mocked internal request with no Host header, which src/proxy.ts's HTTPS-only gate rejects */}
+          <img src="/moni-icon.png" alt="" className="h-8 w-auto" />
           <span className="text-base font-semibold text-foreground">Moni</span>
         </div>
         <p className="text-xs text-muted-foreground">Your finances, in one place</p>

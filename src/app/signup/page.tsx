@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { Wallet } from "lucide-react";
 import { getCurrentSession } from "@/domain/auth";
 import { Card } from "@/components/ui/card";
 import { SignupForm } from "./signup-form";
@@ -12,9 +11,8 @@ export default async function SignupPage() {
     <main className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex items-center gap-2.5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-[var(--radius)] bg-primary/15 text-primary">
-            <Wallet size={20} strokeWidth={2.25} />
-          </span>
+          {/* eslint-disable-next-line @next/next/no-img-element -- next/image's optimizer proxies through a mocked internal request with no Host header, which src/proxy.ts's HTTPS-only gate rejects */}
+          <img src="/moni-icon.png" alt="" className="h-11 w-auto" />
           <div>
             <p className="text-lg font-semibold leading-tight">Moni</p>
             <p className="text-xs text-muted-foreground">Your money, in focus.</p>
