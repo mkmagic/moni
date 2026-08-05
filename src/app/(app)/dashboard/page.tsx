@@ -68,6 +68,7 @@ export default async function DashboardPage() {
     <div className="flex flex-col gap-6">
       <DashboardSync
         connectionIds={connections.map((c) => c.id)}
+        importConnections={connections.filter((c) => c.mode === "user_mediated_import")}
         showReminder={session.promptSyncOnLogin}
         title="Overview"
         greeting={greeting}

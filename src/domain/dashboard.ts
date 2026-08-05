@@ -6,13 +6,14 @@
 //   * Net worth (a stock) values each account's current balance at TODAY's
 //     latest rate (money-and-currency.md §5).
 import Decimal from "decimal.js";
-import { and, desc, eq, gte, lte } from "drizzle-orm";
+import { and, gte, lte } from "drizzle-orm";
 import { withUser } from "@/db/client";
-import { accountBalanceSnapshots, accounts, entries, fxRates } from "@/db/schema";
+import { accountBalanceSnapshots, accounts, entries } from "@/db/schema";
 import { multiply, type Money } from "@/lib/money";
 import type { Session } from "@/lib/auth/session-store";
 import { decText } from "./fields";
 import { countsAsFlow, loadTransferCategoryIds } from "./flows";
+import { usableIlsRate } from "./ils-rate";
 import {
   israelDate,
   valueInvestmentNetWorth,
@@ -111,29 +112,6 @@ export async function getOverview(session: Session): Promise<Overview> {
       tx.select().from(accounts),
       tx.select().from(accountBalanceSnapshots),
     ]);
-    async function usableIlsRate(
-      currency: string,
-      at: string,
-    ): Promise<{ rate: Decimal; date: string } | null> {
-      if (currency === "ILS") return { rate: new Decimal(1), date: at };
-      const [row] = await tx
-        .select()
-        .from(fxRates)
-        .where(
-          and(
-            eq(fxRates.fromCurrency, currency),
-            eq(fxRates.toCurrency, "ILS"),
-            lte(fxRates.date, at),
-          ),
-        )
-        .orderBy(desc(fxRates.date))
-        .limit(1);
-      if (!row || row.source !== "boi") return null;
-      const age =
-        (new Date(`${at}T00:00:00Z`).getTime() - new Date(`${row.date}T00:00:00Z`).getTime()) /
-        86_400_000;
-      return age >= 0 && age <= 7 ? { rate: new Decimal(row.rate), date: row.date } : null;
-    }
     const ordinaryMetadata = (
       sourceDates: string[],
       fxDates: string[],
@@ -167,7 +145,7 @@ export async function getOverview(session: Session): Promise<Overview> {
         continue;
       const raw = decText(dataKey, a.currentBalanceCt, a.id, "current_balance_ct", a.version);
       if (raw == null) continue;
-      const rate = await usableIlsRate(a.currency, today);
+      const rate = await usableIlsRate(tx, a.currency, today);
       if (!rate) {
         currentMissingFx += 1;
         continue;
@@ -253,7 +231,7 @@ export async function getOverview(session: Session): Promise<Overview> {
         const snapshot = candidates.sort((a, b) => b.date.localeCompare(a.date))[0];
         if (!snapshot || !snapshot.nativeBalanceCt || !snapshot.currency) continue;
         const sourceDate = snapshot.date;
-        const rate = await usableIlsRate(snapshot.currency, sourceDate);
+        const rate = await usableIlsRate(tx, snapshot.currency, sourceDate);
         if (!rate) {
           incomplete += 1;
           continue;

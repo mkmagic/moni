@@ -1,6 +1,6 @@
 "use client";
 
-import { Landmark, CreditCard, TrendingUp, type LucideIcon } from "lucide-react";
+import { Landmark, CreditCard, PiggyBank, TrendingUp, type LucideIcon } from "lucide-react";
 import { CONNECTOR_LIST, type ConnectorDefinition, type ConnectorId } from "@/lib/connectors";
 
 interface InstitutionPickerProps {
@@ -17,6 +17,7 @@ export function InstitutionPicker({
   const banks = CONNECTOR_LIST.filter((c) => c.kind === "bank");
   const cards = CONNECTOR_LIST.filter((c) => c.kind === "credit_card");
   const investments = CONNECTOR_LIST.filter((c) => c.kind === "investment");
+  const longTermSavings = CONNECTOR_LIST.filter((c) => c.kind === "long_term_savings");
 
   return (
     <div className="flex flex-col gap-6">
@@ -41,6 +42,18 @@ export function InstitutionPicker({
         onSelect={onSelect}
         credentialedEnabled={credentialedEnabled}
       />
+      <PickerGroup
+        icon={PiggyBank}
+        label="Long-term savings"
+        connectors={longTermSavings}
+        onSelect={onSelect}
+        credentialedEnabled={credentialedEnabled}
+        // Every other kind's `label` already names its institution ("Bank
+        // Leumi", "Schwab Positions CSV"). A long-term-savings label names the
+        // DOCUMENT instead, because one provider publishes several — so
+        // "Quarterly Pension Report" alone would not say whose.
+        withInstitution
+      />
     </div>
   );
 }
@@ -51,12 +64,14 @@ function PickerGroup({
   connectors,
   onSelect,
   credentialedEnabled,
+  withInstitution = false,
 }: {
   icon: LucideIcon;
   label: string;
   connectors: ConnectorDefinition[];
   onSelect: (connectorId: ConnectorId) => void;
   credentialedEnabled: boolean;
+  withInstitution?: boolean;
 }) {
   if (connectors.length === 0) return null;
   return (
@@ -78,7 +93,7 @@ function PickerGroup({
             }
             className="rounded-[var(--radius)] border border-border bg-card px-3 py-2 text-left text-sm text-foreground transition hover:border-primary/50 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {c.label}
+            {withInstitution ? `${c.institutionLabel} · ${c.label}` : c.label}
           </button>
         ))}
       </div>

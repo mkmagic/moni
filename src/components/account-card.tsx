@@ -1,11 +1,13 @@
 import Link from "next/link";
-import { Landmark, CreditCard, TrendingUp, Wallet } from "lucide-react";
+import { Landmark, CreditCard, Lock, LockOpen, PiggyBank, TrendingUp, Wallet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Money } from "@/components/money";
 import { getConnectorDefinition, institutionDisplayName } from "@/lib/connectors";
+import { asOfLabel, liquidityBadge } from "@/lib/long-term-savings/labels";
 import type { Money as MoneyValue } from "@/lib/money";
 import type { AccountView } from "@/domain/accounts";
+import type { LongTermSavingsSummary } from "@/domain/long-term-savings";
 
 interface AccountCardProps {
   account: AccountView;
@@ -14,6 +16,12 @@ interface AccountCardProps {
    * holdings rather than a stored balance. Absent for every other account type.
    */
   valuation?: MoneyValue;
+  /**
+   * Present only for a `long_term_savings` account. Carries the two facts the
+   * balance alone doesn't say: that the money isn't spendable, and that the
+   * figure is as old as the last quarterly report.
+   */
+  savings?: LongTermSavingsSummary;
 }
 
 const ACCOUNT_ICONS: Record<string, LucideIcon> = {
@@ -21,16 +29,24 @@ const ACCOUNT_ICONS: Record<string, LucideIcon> = {
   savings: Landmark,
   credit_card: CreditCard,
   investment: TrendingUp,
+  long_term_savings: PiggyBank,
 };
 
-export function AccountCard({ account, valuation }: AccountCardProps) {
+const DETAIL_VIEWS: Record<string, string> = {
+  investment: "/investments",
+  long_term_savings: "/long-term-savings",
+};
+
+export function AccountCard({ account, valuation, savings }: AccountCardProps) {
   const Icon = ACCOUNT_ICONS[account.accountType] ?? Wallet;
   const accentClass = account.classification === "asset" ? "text-positive" : "text-negative";
   const value = valuation ?? account.balance;
-  // An investment account's detail view is the Investments screen; nothing
-  // else has one yet, so nothing else gets the clickable glow (ui-and-feel.md
-  // §6 — the glow means "this navigates", not "this is important").
-  const href = account.accountType === "investment" ? "/investments" : null;
+  // Only an account type with a detail view gets the clickable glow
+  // (ui-and-feel.md §6 — the glow means "this navigates", not "this is
+  // important"). There is still no `/accounts/[id]`, and this doesn't add one.
+  const href = DETAIL_VIEWS[account.accountType] ?? null;
+  const liquidity = savings ? liquidityBadge(savings) : null;
+  const LiquidityIcon = liquidity?.locked ? Lock : LockOpen;
   // How Moni reaches the account, kept visibly distinct from the account
   // itself: an aggregator is not the brokerage the money is actually at.
   const connector = account.connectorId ? getConnectorDefinition(account.connectorId) : undefined;
@@ -46,9 +62,12 @@ export function AccountCard({ account, valuation }: AccountCardProps) {
       : null) ?? account.name;
   // "SnapTrade / via SnapTrade" says one thing twice. That happens whenever
   // the connector is all Moni knows — an aggregator only names the brokerage
-  // once its payload has been synced.
+  // once its payload has been synced. `includes`, not equality: a long-term
+  // savings account is named "<provider> <document>", so it CONTAINS the
+  // connector's own label ("Harel Quarterly Pension Report / via Quarterly
+  // Pension Report") without ever equalling it.
   const provenance = [
-    title === source ? null : `via ${source}`,
+    title.includes(source) ? null : `via ${source}`,
     account.last4 && `•••• ${account.last4}`,
   ]
     .filter(Boolean)
@@ -79,6 +98,19 @@ export function AccountCard({ account, valuation }: AccountCardProps) {
           <Money value={value} className={`text-xl font-bold ${accentClass}`} />
         ) : (
           <span className="text-sm text-muted-foreground">Balance unavailable</span>
+        )}
+        {liquidity && (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className="inline-flex items-center gap-1">
+              <LiquidityIcon className="h-3 w-3" />
+              {liquidity.text}
+            </span>
+            {savings?.asOf && (
+              <span className="tabular-nums">
+                {`· ${asOfLabel({ asOf: savings.asOf, quarter: savings.quarter, fiscalYear: savings.fiscalYear })}`}
+              </span>
+            )}
+          </div>
         )}
       </CardContent>
     </Card>

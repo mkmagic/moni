@@ -27,7 +27,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Dialog } from "@/components/ui/dialog";
+import { ImportDialog } from "@/components/import-dialog";
 import type { ConnectionView } from "@/domain/connections";
 import type {
   PortfolioHistory,
@@ -193,8 +193,15 @@ export function InvestmentsScreen({
 
   const hasData = overview.connections.length > 0;
   // Statement import is only reachable through a connection configured for it;
-  // with none, the button leads to an empty dialog.
-  const importConnections = connections.filter((item) => item.mode === "user_mediated_import");
+  // with none, the button leads to an empty dialog. Scoped to brokerages too:
+  // the dialog is shared with Long-term savings now, and offering a pension
+  // report here would import something this screen cannot show. The dashboard's
+  // own button is the deliberately generic one.
+  const importConnections = connections.filter(
+    (item) =>
+      item.mode === "user_mediated_import" &&
+      getConnectorDefinition(item.connectorId)?.kind === "investment",
+  );
   const allExpanded =
     overview.connections.length > 0 && overview.connections.every((view) => expanded.has(view.id));
   const rowsByConnection = useMemo(
@@ -965,126 +972,5 @@ function Snapshot({
         <p className="text-sm text-muted-foreground">Loading selected week…</p>
       )}
     </Card>
-  );
-}
-function ImportDialog({
-  open,
-  onClose,
-  connections,
-  onDone,
-}: {
-  open: boolean;
-  onClose: () => void;
-  connections: ConnectionView[];
-  onDone: (message: string) => void;
-}) {
-  const [file, setFile] = useState<File | null>(null);
-  const [currency, setCurrency] = useState("USD");
-  const [connectionId, setConnectionId] = useState(connections[0]?.id ?? "");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  async function submit() {
-    if (!file || !connectionId) {
-      setError("Choose a statement file and its connection.");
-      return;
-    }
-    if (file.size > 10 * 1024 * 1024) {
-      setError("The file is larger than 10 MiB.");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    const form = new FormData();
-    form.append("file", file);
-    form.append("valuationCurrency", currency);
-    try {
-      const response = await fetch(`/api/connections/${connectionId}/sync`, {
-        method: "POST",
-        body: form,
-      });
-      if (!response.ok) {
-        setError(
-          ((await response.json().catch(() => ({}))) as { error?: string }).error ??
-            "Could not import statement",
-        );
-        return;
-      }
-      const body = (await response.json()) as { syncRunId: string };
-      // Parsing and promotion happen in a worker, so the run is only finished
-      // once the poll says so — the dialog stays busy for all of it.
-      const done = await waitForSyncRun(body.syncRunId);
-      if (done.status !== "succeeded") {
-        setError(`${syncErrorMessage(done.error)} The last accepted snapshot remains included.`);
-        return;
-      }
-      onDone("Statement imported.");
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <Dialog
-      open={open}
-      onClose={busy ? () => undefined : onClose}
-      title="Import statement"
-      description="A CSV statement exported from your broker; the file stays bounded in memory."
-    >
-      {busy ? (
-        <div className="flex flex-col items-center gap-3 py-10 text-center">
-          <Loader2 className="h-6 w-6 animate-spin text-primary" />
-          <p className="text-sm font-medium">Importing statement…</p>
-          <p className="max-w-xs text-xs text-muted-foreground">
-            {"Reading the file, valuing every holding, and refreshing exchange rates."}
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          <label className="block text-sm">
-            Connection
-            <select
-              className="mt-1 w-full rounded-[var(--radius)] border border-border bg-background p-2"
-              value={connectionId}
-              onChange={(event) => setConnectionId(event.target.value)}
-            >
-              {connections.map((connection) => (
-                <option key={connection.id} value={connection.id}>
-                  {connection.displayName ??
-                    getConnectorDefinition(connection.connectorId)?.label ??
-                    connection.connectorId}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block text-sm">
-            Valuation currency
-            <input
-              className="mt-1 w-full rounded-[var(--radius)] border border-border bg-background p-2 uppercase"
-              value={currency}
-              maxLength={3}
-              onChange={(event) => setCurrency(event.target.value.toUpperCase())}
-            />
-          </label>
-          <label className="block text-sm">
-            Statement file
-            <input
-              aria-label="Statement CSV"
-              type="file"
-              accept=".csv,text/csv"
-              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-              className="mt-1 block w-full text-sm text-muted-foreground file:mr-3 file:cursor-pointer file:rounded-[var(--radius)] file:border file:border-border file:bg-muted file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-foreground hover:file:bg-muted/70"
-            />
-          </label>
-          {!connections.length && (
-            <p className="text-xs text-muted-foreground">
-              Create a statement-import connection first.
-            </p>
-          )}
-          {error && <p className="text-sm text-negative">{error}</p>}
-          <Button disabled={!connections.length} onClick={() => void submit()}>
-            Import statement
-          </Button>
-        </div>
-      )}
-    </Dialog>
   );
 }

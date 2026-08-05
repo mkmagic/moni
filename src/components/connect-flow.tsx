@@ -58,6 +58,21 @@ type Step =
  * existed, so the default changes nothing for a user who ignores the picker. */
 const DEFAULT_PRESET = BACKFILL_PRESETS[0];
 
+/**
+ * What the user will import, and which screen they'll do it from.
+ *
+ * Derived from the registry rather than named literally: this surface is shared
+ * by every file connection, and hardcoding "a Schwab Positions CSV from
+ * Investments" made a Harel pension connection tell the user to go to
+ * Investments and upload a Schwab file.
+ */
+function importDestination(connectorId: string): string {
+  const definition = getConnectorDefinition(connectorId);
+  return definition?.kind === "long_term_savings"
+    ? "a report from Long-term savings"
+    : `a ${definition?.label ?? "statement"} from Investments`;
+}
+
 export function ConnectFlow({
   today,
   onDone,
@@ -154,11 +169,11 @@ export function ConnectFlow({
       <div className="flex flex-col gap-5">
         <div>
           <h2 className="text-base font-semibold text-foreground">
-            {isImport ? "Set up statement import" : "Enter your login"}
+            {isImport ? "Set up file import" : "Enter your login"}
           </h2>
           <p className="text-sm text-muted-foreground">
             {isImport
-              ? "Create the connection now, then import a Schwab Positions CSV from Investments."
+              ? `Create the connection now, then import ${importDestination(step.connectorId)}.`
               : startDate === null
                 ? "We'll link the account without fetching anything yet."
                 : "We'll fetch your transactions as soon as it's connected."}
@@ -240,8 +255,8 @@ export function ConnectFlow({
         }
         title={skipped ? "Connected" : "All set"}
         body={
-          step.target.connectorId === "schwab_positions_csv"
-            ? "Statement connection created. Import a Schwab Positions CSV from Investments when you're ready."
+          getConnectorDefinition(step.target.connectorId)?.mode === "user_mediated_import"
+            ? `Connection created. Import ${importDestination(step.target.connectorId)} when you're ready.`
             : skipped
               ? "We haven't fetched anything yet — sync it from the dashboard whenever you're ready."
               : addedCount > 1

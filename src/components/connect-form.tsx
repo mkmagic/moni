@@ -84,7 +84,7 @@ export function ConnectForm({ connectorId, onConnected, onBack }: ConnectFormPro
       <p className="text-sm text-muted-foreground">
         {def.mode === "credentialed_fetch"
           ? `Enter your ${def.label} login. Your credentials are encrypted before they're stored.`
-          : "Create a statement connection. Schwab credentials and uploaded files are never stored."}
+          : `Create a file-import connection. Moni never asks for a ${def.institutionLabel ?? def.label} login, and the file you upload is never stored.`}
       </p>
       {def.loginFields.map((field) => (
         <div key={field.key} className="flex flex-col gap-1.5">
@@ -126,7 +126,7 @@ export function ConnectForm({ connectorId, onConnected, onBack }: ConnectFormPro
             ? "Connecting…"
             : def.mode === "credentialed_fetch"
               ? `Connect ${def.label}`
-              : "Create Schwab connection"}
+              : `Create ${def.institutionLabel ?? def.label} connection`}
         </Button>
       </div>
     </form>
