@@ -206,15 +206,15 @@ describe("report history", () => {
       // Starts the day after Q1's stated period ended, not in January.
       start: "2026-04-01",
       end: "2026-06-30",
-      derived: true,
+      includesEarlierQuarters: false,
       contributions: { amount: "6924", currency: "ILS" },
       investmentResult: { amount: "1954", currency: "ILS" },
     });
-    // The first report of a year has nothing to difference against, and its
-    // stated period already IS the period.
+    // The first report of a year has nothing to difference against, and needs
+    // nothing: Q1's year-to-date already IS its quarter, so no caveat.
     expect(account.reports[1].period).toMatchObject({
       start: "2026-01-01",
-      derived: false,
+      includesEarlierQuarters: false,
       contributions: { amount: "7076", currency: "ILS" },
     });
   });
@@ -240,13 +240,16 @@ describe("report history", () => {
 
     const [account] = await listLongTermSavingsAccounts(ctx.session);
     // Q1 2026 restates from January, so subtracting Q3 2025 would be nonsense.
+    // It still needs no caveat — Q1's year-to-date is exactly its quarter.
     expect(account.reports[0]).toMatchObject({
       asOf: "2026-03-31",
-      period: { start: "2026-01-01", derived: false },
+      period: { start: "2026-01-01", includesEarlierQuarters: false },
     });
+    // Q3 does: ₪19,371 is nine months of contributions, not July–September,
+    // and no Q1 or Q2 2025 report was imported to narrow it.
     expect(account.reports[1].period).toMatchObject({
       start: "2025-01-01",
-      derived: false,
+      includesEarlierQuarters: true,
     });
   });
 });

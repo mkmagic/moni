@@ -96,11 +96,15 @@ export interface LongTermSavingsPeriodFlows {
   start: string;
   end: string;
   /**
-   * False when there is no earlier report in the same fiscal year to difference
-   * against. The figures are then the document's own year-to-date ones, and the
-   * view says so rather than presenting nine months as a quarter.
+   * True when these figures cover more than the report's own quarter, because
+   * there was no earlier report of the same fiscal year to difference against.
+   *
+   * This is the consequence, not the mechanism. "Year to date" is true of every
+   * undifferenced row including a Q1 one — where it warns about nothing, since
+   * Q1's year-to-date IS its quarter — and a caveat that fires when nothing is
+   * wrong teaches the reader to ignore it when something is.
    */
-  derived: boolean;
+  includesEarlierQuarters: boolean;
   contributions: Money;
   investmentResult: Money;
   feesCharged: Money;
@@ -239,7 +243,11 @@ function deriveReports(dataKey: Uint8Array, held: SnapshotRow[]): LongTermSaving
       period: {
         start,
         end: row.statedPeriodEnd,
-        derived: base !== null,
+        // Q1 is the exception: with nothing to difference against, its
+        // year-to-date figures already are its quarter. A report with no stated
+        // quarter can't be reasoned about, so it counts as wider — a caveat
+        // shown in error is cheaper than one withheld.
+        includesEarlierQuarters: base === null && row.quarter !== 1,
         contributions: { amount: periodContributions.toFixed(), currency: row.currency },
         investmentResult: { amount: periodResult.toFixed(), currency: row.currency },
         feesCharged: { amount: periodFees.toFixed(), currency: row.currency },

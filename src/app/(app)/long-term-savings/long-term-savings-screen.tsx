@@ -285,12 +285,12 @@ function ReportTable({ reports }: { reports: LongTermSavingsReportView[] }) {
               </Td>
               <Td>
                 {statedPeriodLabel(report.period.start, report.period.end)}
-                {!report.period.derived && (
-                  // Nothing earlier in the same fiscal year to difference
-                  // against, so these are the document's own year-to-date
-                  // figures — say so rather than pass nine months off as a
-                  // quarter (CONTEXT.md, "Stated period").
-                  <span className="ml-1.5 text-muted-foreground">year to date</span>
+                {report.period.includesEarlierQuarters && (
+                  // The row's figures are wider than its own quarter, because
+                  // nothing earlier in the fiscal year was imported to
+                  // difference against (CONTEXT.md, "Stated period"). Says what
+                  // that costs the reader, not which mechanism produced it.
+                  <span className="ml-1.5 text-muted-foreground">includes earlier quarters</span>
                 )}
               </Td>
               <Td align="right">
