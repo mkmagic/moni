@@ -274,6 +274,45 @@ describe("promoteLongTermSavingsSnapshot", () => {
     });
   });
 
+  it("fails when the deposit rows no longer add up to the printed column totals", async () => {
+    const ctx = await fixture();
+    // A page of deposits lost on the way in. The balance equation is section
+    // ב's own arithmetic and stays perfectly satisfied, so before this gate the
+    // report imported with a deposits table missing rows it printed.
+    const short: HarelPensionQuarterlyReport = {
+      ...q3,
+      deposits: { ...q3.deposits, rows: q3.deposits.rows.slice(0, 10) },
+    };
+    const syncRunId = await startRun(ctx.userId, ctx.connectionId);
+
+    await expect(
+      promoteLongTermSavingsSnapshot({
+        userId: ctx.userId,
+        connectionId: ctx.connectionId,
+        syncRunId,
+        dataKey: ctx.dataKey,
+        parserId: harelPensionQuarterlyParser.id,
+        parserVersion: harelPensionQuarterlyParser.version,
+        product: "pension",
+        accountLabel: "Harel Pension",
+        report: short,
+      }),
+    ).rejects.toThrow(LongTermSavingsPromotionError);
+
+    await withUser(ctx.userId, async (tx) => {
+      const [run] = await tx
+        .select()
+        .from(schema.syncRuns)
+        .where(eq(schema.syncRuns.id, syncRunId));
+      expect(run.status).toBe("failed");
+      // The failing check is named and nothing else — the drift is a difference
+      // of amounts, and sync_runs.error is a plaintext column.
+      expect(run.error).toBe("balance_check_failed: column_total:employeeContribution");
+      expect(await tx.select().from(schema.longTermSavingsSnapshots)).toHaveLength(0);
+      expect(await tx.select().from(schema.accounts)).toHaveLength(0);
+    });
+  });
+
   it("refuses a connection whose account is not long-term savings", async () => {
     const ctx = await fixture();
     const accountId = randomUUID();

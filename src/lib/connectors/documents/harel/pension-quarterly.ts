@@ -129,13 +129,46 @@ const DEPOSITS_SECTION = /^ה\. פירוט הפקדות/;
 const DEPOSITS_HEADER_ANCHOR = "מועד";
 const TOTALS_CELL = /^סה"כ$/;
 
+/**
+ * The titles the deposits table is expected to print. Geometry alone cannot say
+ * which of the derived header groups are the table's: the "check your payslip"
+ * advice box in the left margin has a line inside the header band, so it comes
+ * back looking like an eighth column. Matching on the titles the parser already
+ * depends on separates the two, and gives the table's own column pitch — which
+ * is what bounds a cell's distance from its column, in place of any hardcoded
+ * page coordinate.
+ */
+const COLUMN_TITLES = [
+  /^מועד/,
+  /^עבור חודש/,
+  /^משכורת$/,
+  /^תגמולי עובד/,
+  /^תגמולי מעסיק$/,
+  /^פיצויים$/,
+  /^סה"כ/,
+];
+
+/**
+ * `dd/mm/yyyy` → `yyyy-mm-dd`, rejecting a date the calendar does not have.
+ * The schema below only checks the shape, so without this a misread "31/13/2026"
+ * would travel all the way to a Postgres `date` column and surface as a
+ * promotion failure rather than as the parse failure it is.
+ */
 function isoDate(ddmmyyyy: string): string {
   const [d, m, y] = ddmmyyyy.split("/");
+  const date = new Date(Date.UTC(Number(y), Number(m) - 1, Number(d)));
+  if (
+    date.getUTCFullYear() !== Number(y) ||
+    date.getUTCMonth() !== Number(m) - 1 ||
+    date.getUTCDate() !== Number(d)
+  )
+    throw new DocumentParseError("malformed_document");
   return `${y}-${m}-${d}`;
 }
 
 function isoMonth(mmyyyy: string): string {
   const [m, y] = mmyyyy.split("/");
+  if (Number(m) < 1 || Number(m) > 12) throw new DocumentParseError("malformed_document");
   return `${y}-${m}`;
 }
 
@@ -331,26 +364,44 @@ function parseDepositsPage(
   anchor: Item,
 ): { rows: DepositRowCandidate[]; totals: DepositTotalsCandidate | null } {
   const columns = depositColumns(items, anchor);
+  // Sorted right-to-left already, so adjacent pairs give the pitch directly.
+  const named = columns.filter((column) => COLUMN_TITLES.some((title) => title.test(column.title)));
+  if (named.length < 2) throw new DocumentParseError("malformed_document");
+  /**
+   * Half the tightest pitch between the table's own columns: the furthest a
+   * cell can sit from a column's centre and still belong to it. Derived from
+   * this page's header, so a wider table or an extra column re-derives it.
+   */
+  const maxDistance =
+    Math.min(...named.slice(1).map((column, index) => named[index].centre - column.centre)) / 2;
+
   const cellIn = (row: Item[], title: RegExp): Item | undefined => {
     const column = columns.find((candidate) => title.test(candidate.title));
     if (!column) return undefined;
-    return row.find(
-      (item) =>
-        columns.reduce((best, candidate) =>
-          Math.abs(candidate.centre - item.centre) < Math.abs(best.centre - item.centre)
-            ? candidate
-            : best,
-        ) === column,
-    );
+    return row.find((item) => {
+      const nearest = columns.reduce((best, candidate) =>
+        Math.abs(candidate.centre - item.centre) < Math.abs(best.centre - item.centre)
+          ? candidate
+          : best,
+      );
+      // Nearest is not sufficient on its own. Without a bound, any stray glyph
+      // on the row — a footnote marker, half a split thousands group — snaps to
+      // whichever column happens to be closest and is stored as that column's
+      // figure. Nothing downstream would catch it: the balance equation is
+      // section ב's arithmetic and says nothing about this table.
+      return nearest === column && Math.abs(nearest.centre - item.centre) <= maxDistance;
+    });
   };
 
   const body = items.filter(
     (item) =>
       item.page === anchor.page &&
       item.y < anchor.y - 14 &&
-      // The left margin holds a "check your payslip" advice box, and the page
-      // footer sits below the table.
-      item.x >= 100 &&
+      // The left margin holds a "check your payslip" advice box whose lines
+      // share baselines with the table's rows; the page footer sits below the
+      // table. Bounded by the leftmost real column rather than by a page
+      // coordinate, so a longer table stays inside it.
+      item.centre >= named[named.length - 1].centre - maxDistance &&
       !/^עמוד \d+ מתוך/.test(item.text) &&
       !/^לתשומת לבך/.test(item.text),
   );
@@ -419,7 +470,11 @@ function parseDeposits(items: Item[]): {
         item.y < heading.y &&
         heading.y - item.y < 30,
     );
-    if (!anchor) continue;
+    // Harel reprints the column header on every page the table spills onto, so
+    // a page carrying the section heading without one means the layout moved.
+    // Skipping it would drop that page's deposits silently, and the only check
+    // that could notice needs the totals row — printed on the last page alone.
+    if (!anchor) throw new DocumentParseError("malformed_document");
     const page = parseDepositsPage(items, anchor);
     rows.push(...page.rows);
     if (page.totals) totals = page.totals;

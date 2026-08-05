@@ -56,12 +56,28 @@ const CODES: Record<string, string> = {
     "Moni could not save the snapshot it fetched. The broker's data arrived fine, so retry the sync; if it keeps failing, restart with MONI_SYNC_DIAGNOSTIC=1 to log the underlying fault.",
   source_worker_failed: "The sync did not complete. Retry it.",
   source_worker_start_failed: "Moni could not start the sync. Retry it.",
+  // Imported documents. This is the whole failure path for an import, so each
+  // one has to say what the person can do about it rather than name the check.
+  balance_check_failed:
+    "The report's own figures did not add up, so nothing was imported. Check that the file is the complete report and not a partial print.",
+  account_type_mismatch:
+    "This connection already holds a different kind of account, so the report was not imported. Import it into its own connection.",
+  unrecognised_document:
+    "That file is not the report this connection expects. Check you picked the right statement.",
+  malformed_document:
+    "Moni could not read this report's layout, so nothing was imported. It may be a format Moni has not seen yet.",
+  unreadable_document:
+    "Moni could not open this file. Check it is the original PDF and not a re-saved or protected copy.",
 };
 
 /** Returns actionable advice for a failure code, or the raw code when unrecognized. */
 export function syncErrorMessage(code: string | null | undefined): string {
   if (!code) return "Last sync failed";
-  const flex = /^(?:send|retrieve)_flex_(\d+)$/.exec(code.trim());
+  const trimmed = code.trim();
+  const flex = /^(?:send|retrieve)_flex_(\d+)$/.exec(trimmed);
   if (flex) return IBKR_FLEX_CODES[flex[1]] ?? `The broker rejected the request (code ${flex[1]}).`;
-  return CODES[code.trim()] ?? code;
+  // A worker may append which check failed ("balance_check_failed:
+  // balance_equation"). That suffix is a diagnostic for the log; the code in
+  // front of it is what carries the advice.
+  return CODES[trimmed] ?? CODES[trimmed.split(":")[0].trim()] ?? trimmed;
 }

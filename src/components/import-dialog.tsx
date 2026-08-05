@@ -108,10 +108,10 @@ export function ImportDialog({
         body: form,
       });
       if (!response.ok) {
-        setError(
-          ((await response.json().catch(() => ({}))) as { error?: string }).error ??
-            "Could not import the file",
-        );
+        // The route rejects with the same vocabulary of codes the worker
+        // fails with, so both edges read through the one map.
+        const rejected = ((await response.json().catch(() => ({}))) as { error?: string }).error;
+        setError(rejected ? syncErrorMessage(rejected) : "Could not import the file");
         return;
       }
       const body = (await response.json()) as { syncRunId: string };

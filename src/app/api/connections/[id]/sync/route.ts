@@ -45,6 +45,8 @@ const Json = z
   .strict();
 const Currency = z.string().regex(/^[A-Z]{3}$/);
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+/** Every PDF opens with this, whatever the browser claimed the type was. */
+const PDF_MAGIC = Buffer.from("%PDF-", "ascii");
 /** Cap on retained child stderr — enough for a stack trace, bounded so a
  * chatty (or hostile) scrape can't grow the server's heap. */
 const MAX_STDERR_CHARS = 8 * 1024;
@@ -94,6 +96,14 @@ export async function POST(
     if (bytes.length > MAX_UPLOAD_BYTES) {
       bytes.fill(0);
       return NextResponse.json({ error: "source_too_large" }, { status: 400 });
+    }
+    // A long-term-savings report is handed straight to pdfjs. Refuse anything
+    // that is not a PDF here, where it costs one comparison and produces a
+    // message, rather than in the worker as an opaque crash. The browser's
+    // Content-Type is the uploader's claim; these five bytes are the file's.
+    if (definition.kind === "long_term_savings" && !bytes.subarray(0, 5).equals(PDF_MAGIC)) {
+      bytes.fill(0);
+      return NextResponse.json({ error: "unreadable_document" }, { status: 400 });
     }
     const syncRunId = await startActiveConnectionSyncRun(session.userId, connection.id);
     if (!syncRunId) {

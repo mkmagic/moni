@@ -66,6 +66,46 @@ describe("harelPensionQuarterlyParser.parse — refuses a misread", () => {
       expect.objectContaining({ code: "malformed_document" }),
     );
   });
+
+  it("ignores a stray number outside the table's own columns", () => {
+    // A numeric glyph in the left margin, on a deposit row's baseline. It sits
+    // at x=105 — inside the page coordinate this filter used to hardcode, and
+    // outside the bound derived from the table's leftmost column (centre 133.2)
+    // and its pitch (50.8). Both halves of the fix have to hold: the row filter
+    // drops it, and the column matcher would refuse it at 28.2 away from the
+    // nearest column regardless. Placed FIRST so array order favours it over
+    // the real cells, which is how it would win if either check were missing.
+    const deposits = harelPensionQuarterlyParser.parse(q1).deposits;
+    const row = q1.find((item) => /^\d{2}\/\d{2}\/\d{4}$/.test(item.text))!;
+    const stray = { text: "1", x: 100, right: 110, centre: 105, y: row.y, page: row.page };
+
+    expect(harelPensionQuarterlyParser.parse([stray, ...q1]).deposits).toEqual(deposits);
+  });
+
+  it("rejects a deposits page whose column header did not match", () => {
+    // Harel reprints the header on every page the table spills onto. Dropping
+    // the second page's anchor used to skip that page in silence, losing its
+    // deposits — and only the totals row, printed on the last page alone, could
+    // have noticed.
+    const second = q3.filter((item) => item.page === 2 && item.text === "מועד");
+    expect(second).toHaveLength(1);
+    const damaged = q3.filter((item) => !second.includes(item));
+    expect(() => harelPensionQuarterlyParser.parse(damaged)).toThrow(
+      expect.objectContaining({ code: "malformed_document" }),
+    );
+  });
+
+  it("rejects a date the calendar does not have", () => {
+    // The schema checks the shape of `dd/mm/yyyy`, not the calendar. Without a
+    // range check this reached a Postgres `date` column and surfaced as a
+    // promotion failure rather than as the misread it is.
+    const damaged = q1.map((item) =>
+      /^תאריך הדוח:/.test(item.text) ? { ...item, text: "תאריך הדוח: 31/13/2026" } : item,
+    );
+    expect(() => harelPensionQuarterlyParser.parse(damaged)).toThrow(
+      expect.objectContaining({ code: "malformed_document" }),
+    );
+  });
 });
 
 describe("harelPensionQuarterlyParser.parse — 2026 Q1", () => {

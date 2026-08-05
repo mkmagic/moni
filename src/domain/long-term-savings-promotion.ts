@@ -44,6 +44,19 @@ import { markSyncRunFailed } from "./sync-promotion";
  */
 export const BALANCE_TOLERANCE = new Decimal(50);
 
+/**
+ * Tolerance on the deposit table's column totals, in shekels.
+ *
+ * The balance equation is section ב's own arithmetic and says nothing about
+ * the deposits table, so without this the table had no gate at all. What this
+ * catches is a GROSS misread — a page of deposits dropped, a column shifted —
+ * where the rows no longer add up to the totals the document itself prints. A
+ * single cell off by a shekel stays under it, and deliberately so: that case is
+ * prevented in the parser, by bounding how far a cell may sit from its column,
+ * rather than by tightening a tolerance until rounding trips it.
+ */
+export const DEPOSIT_TOTALS_TOLERANCE = new Decimal(50);
+
 export type LongTermSavingsPromotionErrorCode =
   "invalid_sync" | "balance_check_failed" | "account_type_mismatch" | "promotion_failed";
 
@@ -178,12 +191,20 @@ async function promote(
     .where(and(eq(syncRuns.id, input.syncRunId), eq(syncRuns.status, "running")));
   if (run.length !== 1 || run[0].connectionId !== input.connectionId) fail("invalid_sync");
 
-  // The only gating check. Everything else is recorded, never blocking: those
-  // guard drill-down detail, and are exactly where shekel rounding produces
-  // harmless drift (D9).
+  // Two gating checks, one per figure that reaches a screen: the balance
+  // equation for section ב, and the deposit column totals for the table. The
+  // per-row checks stay recorded and never blocking — they are exactly where
+  // shekel rounding produces harmless drift (D9).
   const { balanceDrift, checks } = checkHarelPensionReport(report);
   if (new Decimal(balanceDrift).gt(BALANCE_TOLERANCE))
     fail("balance_check_failed", "balance_equation");
+  const brokenTotal = checks.find(
+    (check) =>
+      check.name.startsWith("column_total:") &&
+      new Decimal(check.drift).gt(DEPOSIT_TOTALS_TOLERANCE),
+  );
+  // The name only, never the drift — the same Tier-1 reasoning as above.
+  if (brokenTotal) fail("balance_check_failed", brokenTotal.name);
 
   const { accountId, version: accountVersion } = await resolveAccount(tx, input);
   const asOf = report.reportDate;
