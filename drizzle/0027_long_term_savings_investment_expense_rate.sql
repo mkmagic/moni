@@ -1,0 +1,11 @@
+-- Investment-management expenses, as a percentage.
+--
+-- Harel's ANNUAL קרן השתלמות report prints this in section ג alongside the
+-- management fee; the quarterly report does not. It is a real cost the member
+-- bears on top of the management fee, and the source PDF is discarded after
+-- parsing (#76 D10), so a figure not stored here is unrecoverable.
+--
+-- Nullable and plaintext, matching the fee-rate columns beside it: a rate is a
+-- percentage, not a balance. The RLS policies in 0026 are table-scoped, so a
+-- new column on an already-protected table needs no policy change.
+ALTER TABLE "long_term_savings_snapshots" ADD COLUMN "fee_rate_investment_expenses" numeric;

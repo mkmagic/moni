@@ -68,6 +68,7 @@ const MIGRATION_FILES = [
   "0024_budget_rls_and_roles.sql",
   "0025_long_term_savings_tables.sql",
   "0026_long_term_savings_rls_and_roles.sql",
+  "0027_long_term_savings_investment_expense_rate.sql",
 ];
 
 /** Bookkeeping for which of MIGRATION_FILES this database has already seen.

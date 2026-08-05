@@ -18,6 +18,7 @@ import {
 } from "@/domain/long-term-savings-promotion";
 import {
   harelPensionQuarterlyParser,
+  normaliseHarelPension,
   type HarelPensionQuarterlyReport,
 } from "@/lib/connectors/documents/harel/pension-quarterly";
 import type { Item } from "@/lib/connectors/documents/pdf-text";
@@ -83,7 +84,7 @@ async function importReport(
     parserVersion: harelPensionQuarterlyParser.version,
     product: "pension",
     accountLabel: "Harel Quarterly Pension Report",
-    report: parsed,
+    report: normaliseHarelPension(parsed),
   });
 }
 
@@ -251,7 +252,7 @@ describe("promoteLongTermSavingsSnapshot", () => {
         parserVersion: harelPensionQuarterlyParser.version,
         product: "pension",
         accountLabel: "Harel Quarterly Pension Report",
-        report: corrupted,
+        report: normaliseHarelPension(corrupted),
       }),
     ).rejects.toThrow(LongTermSavingsPromotionError);
 
@@ -295,7 +296,7 @@ describe("promoteLongTermSavingsSnapshot", () => {
         parserVersion: harelPensionQuarterlyParser.version,
         product: "pension",
         accountLabel: "Harel Pension",
-        report: short,
+        report: normaliseHarelPension(short),
       }),
     ).rejects.toThrow(LongTermSavingsPromotionError);
 

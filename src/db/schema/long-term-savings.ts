@@ -128,6 +128,12 @@ export const longTermSavingsSnapshots = pgTable(
     // own rates are not a balance. Exact-decimal all the same.
     feeRateDeposit: numeric("fee_rate_deposit"),
     feeRateSavings: numeric("fee_rate_savings"),
+    /**
+     * Investment-management expenses, a cost borne on top of the management
+     * fee. Printed only on some annual reports — the quarterly ones fold it
+     * into the investment result instead — so null on most snapshots.
+     */
+    feeRateInvestmentExpenses: numeric("fee_rate_investment_expenses"),
     fundAvgFeeDeposit: numeric("fund_avg_fee_deposit"),
     fundAvgFeeSavings: numeric("fund_avg_fee_savings"),
 

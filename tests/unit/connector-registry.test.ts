@@ -79,6 +79,16 @@ describe("CONNECTOR_REGISTRY matches israeli-bank-scrapers' SCRAPERS", () => {
         mode: "user_mediated_import",
         loginFields: [],
       }),
+      // One entry covers both the quarterly and the annual קרן השתלמות report:
+      // they are the same layout with sections dropped, so one parser reads
+      // both and the user is not asked to classify the file they are holding.
+      expect.objectContaining({
+        id: "harel_hishtalmut",
+        institutionLabel: "Harel",
+        product: "hishtalmut",
+        mode: "user_mediated_import",
+        loginFields: [],
+      }),
     ]);
   });
 

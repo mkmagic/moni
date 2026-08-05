@@ -10,8 +10,13 @@
  * same containment the existing workers give `israeli-bank-scrapers`.
  */
 import "dotenv/config";
-import { decodeBinaryChildFrame, getConnectorDefinition, readChildStdin } from "@/lib/connectors";
-import { harelPensionQuarterlyParser } from "@/lib/connectors/documents/harel/pension-quarterly";
+import {
+  decodeBinaryChildFrame,
+  getConnectorDefinition,
+  readChildStdin,
+  type ConnectorId,
+} from "@/lib/connectors";
+import { LONG_TERM_SAVINGS_IMPORTERS } from "@/lib/connectors/documents/registry";
 import { loadItems } from "@/lib/connectors/documents/pdf-load";
 import { DocumentParseError } from "@/lib/connectors/documents/types";
 import { promoteLongTermSavingsSnapshot } from "@/domain/long-term-savings-promotion";
@@ -30,37 +35,38 @@ async function main(): Promise<void> {
       typeof connectionId !== "string" ||
       typeof syncRunId !== "string" ||
       typeof accountLabel !== "string" ||
-      // One connector id maps to exactly one parser; today there is one of
-      // each. A second parser makes this a lookup, not a longer condition.
-      connectorId !== "harel_pension_quarterly" ||
+      typeof connectorId !== "string" ||
       segments.length !== 2
     )
       throw new Error("invalid_frame");
 
+    // One connector id maps to exactly one importer. A connection whose id is
+    // not in the map does not import documents at all, which means the frame
+    // was addressed to the wrong worker.
+    const importer = LONG_TERM_SAVINGS_IMPORTERS[connectorId as ConnectorId];
     // The registry is the one place a connector's product is stated (D7);
     // hardcoding it here would make a second parser silently create pension
     // accounts.
     const product = getConnectorDefinition(connectorId)?.product;
-    if (!product) throw new Error("invalid_frame");
+    if (!importer || !product) throw new Error("invalid_frame");
 
     const items = await loadItems(new Uint8Array(segments[1])).catch(() => {
       throw new DocumentParseError("unreadable_document");
     });
     // Recognition is a guard, not a router: the connection already chose this
     // parser, so a mismatch means the user uploaded the wrong statement.
-    if (!harelPensionQuarterlyParser.recognises(items))
-      throw new DocumentParseError("unrecognised_document");
+    if (!importer.recognises(items)) throw new DocumentParseError("unrecognised_document");
 
     await promoteLongTermSavingsSnapshot({
       userId,
       connectionId,
       syncRunId,
       dataKey: segments[0],
-      parserId: harelPensionQuarterlyParser.id,
-      parserVersion: harelPensionQuarterlyParser.version,
+      parserId: importer.parserId,
+      parserVersion: importer.parserVersion,
       product,
       accountLabel,
-      report: harelPensionQuarterlyParser.parse(items),
+      report: importer.read(items),
     });
   } catch (error) {
     // A parse failure never reached promotion, so nothing has marked the run.

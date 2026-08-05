@@ -63,7 +63,8 @@ export type ConnectorId =
   | "ibkr_flex"
   | "schwab_positions_csv"
   | "snaptrade"
-  | "harel_pension_quarterly";
+  | "harel_pension_quarterly"
+  | "harel_hishtalmut";
 
 export interface ConnectorDefinition {
   id: ConnectorId;

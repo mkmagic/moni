@@ -25,9 +25,9 @@ import {
 } from "@/db/schema";
 import type { LongTermSavingsProduct } from "@/lib/connectors";
 import {
-  checkHarelPensionReport,
-  type HarelPensionQuarterlyReport,
-} from "@/lib/connectors/documents/harel/pension-quarterly";
+  checkLongTermSavingsReport,
+  type LongTermSavingsReport,
+} from "@/lib/connectors/documents/long-term-savings-report";
 import { errorLabel, syncLog } from "@/lib/sync-log";
 import { decText, encText } from "./fields";
 import { markSyncRunFailed } from "./sync-promotion";
@@ -102,7 +102,12 @@ export interface LongTermSavingsPromotionInput {
   product: LongTermSavingsProduct;
   /** Shown to the user as the account name until they rename it. */
   accountLabel: string;
-  report: HarelPensionQuarterlyReport;
+  /**
+   * Already normalised by the parser's importer entry, so this layer never
+   * sees a provider's own report shape — that was the seam a second parser
+   * had to widen.
+   */
+  report: LongTermSavingsReport;
 }
 
 /** Reports are denominated in shekels; there is no currency on the page. */
@@ -170,11 +175,17 @@ async function resolveAccount(
     currency: CURRENCY,
     status: "active",
   });
+  const liquidity = LIQUIDITY_BY_PRODUCT[input.product];
   await tx.insert(longTermSavingsDetails).values({
     accountId: id,
     ownerId: input.userId,
     product: input.product,
-    liquidity: LIQUIDITY_BY_PRODUCT[input.product],
+    liquidity,
+    // `liquid_after` means "liquid from a date", and the date has to come from
+    // somewhere: a קרן השתלמות report prints it in section א, and nothing else
+    // does. Only set for that liquidity, so a product that is simply locked or
+    // simply liquid never carries a stray date.
+    liquidFrom: liquidity === "liquid_after" ? input.report.liquidFrom : null,
   });
   return { accountId: id, version: 1 };
 }
@@ -195,7 +206,7 @@ async function promote(
   // equation for section ב, and the deposit column totals for the table. The
   // per-row checks stay recorded and never blocking — they are exactly where
   // shekel rounding produces harmless drift (D9).
-  const { balanceDrift, checks } = checkHarelPensionReport(report);
+  const { balanceDrift, checks } = checkLongTermSavingsReport(report);
   if (new Decimal(balanceDrift).gt(BALANCE_TOLERANCE))
     fail("balance_check_failed", "balance_equation");
   const brokenTotal = checks.find(
@@ -246,7 +257,7 @@ async function promote(
   const optionalMoney = (value: string | null, column: string) =>
     value === null ? null : money(value, column);
   const m = report.movements;
-  const p = report.expectedPayments;
+  const p = report.projections;
   const totals = report.deposits.totals;
 
   await tx.insert(longTermSavingsSnapshots).values({
@@ -267,35 +278,41 @@ async function promote(
     contributionsCt: money(m.contributions, "contributions_ct"),
     investmentResultCt: money(m.investmentResult, "investment_result_ct"),
     feesChargedCt: money(m.managementFeesCharged, "fees_charged_ct"),
-    insuranceDisabilityCt: money(m.disabilityInsuranceCost, "insurance_disability_ct"),
-    insuranceDeathCt: money(m.deathInsuranceCost, "insurance_death_ct"),
-    feeRateDeposit: report.managementFees.onDeposit,
-    feeRateSavings: report.managementFees.onSavings,
-    fundAvgFeeDeposit: report.managementFees.fundAverageOnDeposit,
-    fundAvgFeeSavings: report.managementFees.fundAverageOnSavings,
-    projectionRetirementAge: p.retirementAge,
+    // A product with no insurance component prints no such line, and ₪0 is the
+    // document's own arithmetic rather than a fabricated cell — a קרן השתלמות
+    // charges neither. What makes that safe is the balance equation: a real
+    // insurance cost read as absent would show up as drift, and the ±₪50 gate
+    // above would refuse the import before reaching here.
+    insuranceDisabilityCt: money(m.disabilityInsuranceCost ?? "0", "insurance_disability_ct"),
+    insuranceDeathCt: money(m.deathInsuranceCost ?? "0", "insurance_death_ct"),
+    feeRateDeposit: report.fees.rateDeposit,
+    feeRateSavings: report.fees.rateSavings,
+    feeRateInvestmentExpenses: report.fees.rateInvestmentExpenses,
+    fundAvgFeeDeposit: report.fees.fundAverageDeposit,
+    fundAvgFeeSavings: report.fees.fundAverageSavings,
+    projectionRetirementAge: p?.retirementAge ?? null,
     projectionMonthlyPensionCt: optionalMoney(
-      p.monthlyPensionAtRetirement,
+      p?.monthlyPension ?? null,
       "projection_monthly_pension_ct",
     ),
     projectionSurvivorPensionCt: optionalMoney(
-      p.monthlySurvivorPension,
+      p?.survivorPension ?? null,
       "projection_survivor_pension_ct",
     ),
     projectionOrphanPensionCt: optionalMoney(
-      p.monthlyOrphanPension,
+      p?.orphanPension ?? null,
       "projection_orphan_pension_ct",
     ),
     projectionDependentParentPensionCt: optionalMoney(
-      p.monthlyDependentParentPension,
+      p?.dependentParentPension ?? null,
       "projection_dependent_parent_pension_ct",
     ),
     projectionDisabilityPensionCt: optionalMoney(
-      p.monthlyFullDisabilityPension,
+      p?.disabilityPension ?? null,
       "projection_disability_pension_ct",
     ),
     projectionContributionWaiverCt: optionalMoney(
-      p.contributionWaiverOnDisability,
+      p?.contributionWaiver ?? null,
       "projection_contribution_waiver_ct",
     ),
     depositsTotalEmployeeCt: optionalMoney(
@@ -331,12 +348,18 @@ async function promote(
       salaryCt: row.salary === null ? null : cell(row.salary, "salary_ct"),
       employeeCt: cell(row.employeeContribution, "employee_ct"),
       employerContributionCt: cell(row.employerContribution, "employer_contribution_ct"),
-      severanceCt: cell(row.severance, "severance_ct"),
+      // ₪0 on a product whose table has no severance column — see the movements
+      // note above. Unlike the insurance lines this one has no arithmetic gate
+      // behind it (`column_total:severance` compares 0 against 0 when the
+      // column is absent), so the parser for such a product refuses outright a
+      // document that grows the column, rather than leaving it to be noticed
+      // here.
+      severanceCt: cell(row.severance ?? "0", "severance_ct"),
       totalCt: cell(row.total, "total_ct"),
     });
   }
 
-  for (const [index, track] of report.investmentTracks.entries()) {
+  for (const [index, track] of report.tracks.entries()) {
     const id = randomUUID();
     await tx.insert(longTermSavingsSnapshotTracks).values({
       id,
@@ -401,7 +424,7 @@ async function promote(
     asOf,
     isLatest,
     depositRows: report.deposits.rows.length,
-    trackRows: report.investmentTracks.length,
+    trackRows: report.tracks.length,
     balanceDrift,
   };
 }

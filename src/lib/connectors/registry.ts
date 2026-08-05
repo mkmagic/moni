@@ -136,6 +136,19 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
     mode: "user_mediated_import",
     loginFields: [],
   },
+  // One entry, not one per period: the quarterly and annual קרן השתלמות
+  // reports are the same layout with sections dropped, so one parser reads
+  // both and the user has one thing to pick rather than a guess about which
+  // report they are holding.
+  harel_hishtalmut: {
+    id: "harel_hishtalmut",
+    label: "קרן השתלמות Report (quarterly or annual)",
+    institutionLabel: "Harel",
+    kind: "long_term_savings",
+    product: "hishtalmut",
+    mode: "user_mediated_import",
+    loginFields: [],
+  },
 };
 
 export const CONNECTOR_LIST: ConnectorDefinition[] = Object.values(CONNECTOR_REGISTRY);

@@ -17,8 +17,12 @@
  * deliberately NOT extracted: nothing downstream stores them, and a field that
  * is never parsed cannot later be persisted by accident.
  */
-import Decimal from "decimal.js";
 import { z } from "zod";
+import {
+  checkLongTermSavingsReport,
+  type LongTermSavingsReport,
+  type ReportCheck,
+} from "../long-term-savings-report";
 import {
   SAME_ROW,
   groupRows,
@@ -486,77 +490,58 @@ function parseDeposits(items: Item[]): {
 // ------------------------------------------------------------------ parser
 
 /**
- * Arithmetic the document asserts about itself. Every figure is rounded to the
- * nearest shekel, so exact equality is not available — the caller decides which
- * of these gate a write and with what tolerance (see D9); this function only
- * reports.
+ * Maps the page-faithful shape onto what the domain layer stores.
+ *
+ * This report fills every field of the normalised shape except the liquidity
+ * date: a pension is locked to retirement, so there is no date to print and the
+ * product alone decides. Nothing is lost or invented in the mapping.
  */
-export interface ReportCheck {
-  name: string;
-  drift: string;
-  detail: string;
+export function normaliseHarelPension(report: HarelPensionQuarterlyReport): LongTermSavingsReport {
+  return {
+    fundName: report.fundName,
+    reportDate: report.reportDate,
+    statedPeriodStart: report.statedPeriodStart,
+    statedPeriodEnd: report.statedPeriodEnd,
+    quarter: report.quarter,
+    year: report.year,
+    liquidFrom: null,
+    movements: report.movements,
+    fees: {
+      rateDeposit: report.managementFees.onDeposit,
+      rateSavings: report.managementFees.onSavings,
+      fundAverageDeposit: report.managementFees.fundAverageOnDeposit,
+      fundAverageSavings: report.managementFees.fundAverageOnSavings,
+      // Not printed on this report; the annual קרן השתלמות report carries one.
+      rateInvestmentExpenses: null,
+    },
+    projections: {
+      retirementAge: report.expectedPayments.retirementAge,
+      monthlyPension: report.expectedPayments.monthlyPensionAtRetirement,
+      survivorPension: report.expectedPayments.monthlySurvivorPension,
+      orphanPension: report.expectedPayments.monthlyOrphanPension,
+      dependentParentPension: report.expectedPayments.monthlyDependentParentPension,
+      disabilityPension: report.expectedPayments.monthlyFullDisabilityPension,
+      contributionWaiver: report.expectedPayments.contributionWaiverOnDisability,
+    },
+    tracks: report.investmentTracks,
+    deposits: {
+      // The employer cell is "" rather than absent on a report that omits the
+      // column; the normalised shape distinguishes the two.
+      rows: report.deposits.rows.map((row) => ({ ...row, employer: row.employer || null })),
+      totals: report.deposits.totals,
+    },
+  };
 }
 
+/**
+ * Kept as this parser's own entry point into the shared check, so callers that
+ * hold the raw pension report do not each have to normalise first.
+ */
 export function checkHarelPensionReport(report: HarelPensionQuarterlyReport): {
   balanceDrift: string;
   checks: ReportCheck[];
 } {
-  const d = (value: string | null) => new Decimal(value ?? "0");
-  const m = report.movements;
-
-  const expectedClosing = d(m.openingBalance)
-    .plus(d(m.contributions))
-    .plus(d(m.investmentResult))
-    .plus(d(m.managementFeesCharged))
-    .plus(d(m.disabilityInsuranceCost))
-    .plus(d(m.deathInsuranceCost));
-  const balanceDrift = expectedClosing.minus(d(m.closingBalance)).abs().toString();
-
-  const checks: ReportCheck[] = [
-    {
-      name: "balance_equation",
-      drift: balanceDrift,
-      detail: `opening + movements = ${expectedClosing.toString()}, printed closing = ${m.closingBalance}`,
-    },
-  ];
-
-  for (const row of report.deposits.rows) {
-    const summed = d(row.employeeContribution)
-      .plus(d(row.employerContribution))
-      .plus(d(row.severance));
-    checks.push({
-      name: `deposit_row:${row.forMonth}:${row.depositDate}`,
-      drift: summed.minus(d(row.total)).abs().toString(),
-      detail: `${summed.toString()} vs printed total ${row.total}`,
-    });
-  }
-
-  const totals = report.deposits.totals;
-  if (totals) {
-    for (const key of [
-      "employeeContribution",
-      "employerContribution",
-      "severance",
-      "total",
-    ] as const) {
-      const summed = report.deposits.rows.reduce(
-        (acc, row) => acc.plus(d(row[key])),
-        new Decimal(0),
-      );
-      checks.push({
-        name: `column_total:${key}`,
-        drift: summed.minus(d(totals[key])).abs().toString(),
-        detail: `rows sum to ${summed.toString()}, printed total ${totals[key]}`,
-      });
-    }
-    checks.push({
-      name: "deposits_vs_movements",
-      drift: d(totals.total).minus(d(m.contributions)).abs().toString(),
-      detail: `table total ${totals.total} vs section ב contributions ${m.contributions}`,
-    });
-  }
-
-  return { balanceDrift, checks };
+  return checkLongTermSavingsReport(normaliseHarelPension(report));
 }
 
 export const harelPensionQuarterlyParser: DocumentParser<HarelPensionQuarterlyReport> = {
