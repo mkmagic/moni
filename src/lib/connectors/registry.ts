@@ -123,6 +123,19 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
       { key: "consumerKey", label: "Consumer Key", inputType: "password" },
     ],
   },
+  // One entry per document parser, not per provider: a provider's pension
+  // report and its קרן השתלמות report are different layouts and therefore
+  // different parsers. The provider-then-document picker falls out of the
+  // existing fields — group by `institutionLabel`, list `label` beneath.
+  harel_pension_quarterly: {
+    id: "harel_pension_quarterly",
+    label: "Quarterly Pension Report",
+    institutionLabel: "Harel",
+    kind: "long_term_savings",
+    product: "pension",
+    mode: "user_mediated_import",
+    loginFields: [],
+  },
 };
 
 export const CONNECTOR_LIST: ConnectorDefinition[] = Object.values(CONNECTOR_REGISTRY);

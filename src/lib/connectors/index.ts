@@ -8,7 +8,9 @@ export type {
   ConnectorDefinition,
   LoginFieldDescriptor,
   LoginFieldInputType,
+  LongTermSavingsProduct,
 } from "./types";
+export { SCRAPER_BACKED_KINDS } from "./types";
 export {
   CONNECTOR_REGISTRY,
   CONNECTOR_LIST,

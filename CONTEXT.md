@@ -174,7 +174,7 @@ provident fund as a catch-all.
 
 **Liquidity horizon**:
 When the money in an account becomes the user's to spend — now, on a stated
-future date, or only at retirement. It varies *within* product types: קופת גמל
+future date, or only at retirement. It varies _within_ product types: קופת גמל
 להשקעה is liquid today while קופת גמל לתגמולים is locked to retirement. It never
 removes a balance from net worth; it governs how that balance is presented.
 _Avoid_: Locked, restricted, vesting.

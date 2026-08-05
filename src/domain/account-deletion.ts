@@ -57,6 +57,10 @@ import {
   merchants,
   ruleActions,
   ruleConditions,
+  longTermSavingsDetails,
+  longTermSavingsSnapshotDeposits,
+  longTermSavingsSnapshotTracks,
+  longTermSavingsSnapshots,
   rules,
   syncRuns,
   syncStaging,
@@ -111,6 +115,16 @@ export async function deleteAccount(
     await tx.delete(entryTransactions).where(eq(entryTransactions.ownerId, userId));
     await tx.delete(syncStaging).where(eq(syncStaging.ownerId, userId));
     await tx.delete(transfers).where(eq(transfers.ownerId, userId));
+    await tx
+      .delete(longTermSavingsSnapshotDeposits)
+      .where(eq(longTermSavingsSnapshotDeposits.ownerId, userId));
+    await tx
+      .delete(longTermSavingsSnapshotTracks)
+      .where(eq(longTermSavingsSnapshotTracks.ownerId, userId));
+    // Named explicitly rather than left to the cascades from
+    // `account_balance_snapshots`, so this list stays the single readable
+    // answer to "what does deleting a user remove".
+    await tx.delete(longTermSavingsSnapshots).where(eq(longTermSavingsSnapshots.ownerId, userId));
 
     // `entries` — now unreferenced by the five above.
     await tx.delete(entries).where(eq(entries.ownerId, userId));
@@ -124,6 +138,7 @@ export async function deleteAccount(
 
     // Accounts and their subtype/history tables.
     await tx.delete(creditCardDetails).where(eq(creditCardDetails.ownerId, userId));
+    await tx.delete(longTermSavingsDetails).where(eq(longTermSavingsDetails.ownerId, userId));
     await tx.delete(accountBalanceSnapshots).where(eq(accountBalanceSnapshots.ownerId, userId));
     await tx.delete(accounts).where(eq(accounts.ownerId, userId));
 

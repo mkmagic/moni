@@ -23,6 +23,7 @@ export const accountTypeEnum = pgEnum("account_type", [
   "loan",
   "other_asset",
   "other_liability",
+  "long_term_savings",
 ]);
 export const accountClassificationEnum = pgEnum("account_classification", ["asset", "liability"]);
 export const accountStatusEnum = pgEnum("account_status", ["active", "archived"]);

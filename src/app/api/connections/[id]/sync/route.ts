@@ -77,8 +77,13 @@ export async function POST(
     const form = await req.formData().catch(() => null);
     const file = form?.get("file");
     const valuationCurrency = form?.get("valuationCurrency");
+    if (!(file instanceof File))
+      return NextResponse.json({ error: "invalid request" }, { status: 400 });
+    // A long-term-savings report is denominated in shekels on the page and
+    // needs no FX at import; an investment CSV must say what to value it in.
+    const needsValuationCurrency = definition.kind !== "long_term_savings";
     if (
-      !(file instanceof File) ||
+      needsValuationCurrency &&
       !(typeof valuationCurrency === "string" && Currency.safeParse(valuationCurrency).success)
     )
       return NextResponse.json({ error: "invalid request" }, { status: 400 });
@@ -95,11 +100,20 @@ export async function POST(
       return NextResponse.json({ error: "connection_unavailable" }, { status: 409 });
     }
     const started = await spawnInvestmentSyncWorker({
-      script: "schwab-import-worker.mts",
+      script:
+        definition.kind === "long_term_savings"
+          ? "long-term-savings-import-worker.mts"
+          : "schwab-import-worker.mts",
       metadata: {
         userId: session.userId,
         connectionId: connection.id,
         syncRunId,
+        connectorId: connection.connectorId,
+        // The account's name until the user renames it. Derived here because
+        // the worker has no registry-free way to name what it imported, and
+        // the report itself only carries the fund, not the product.
+        accountLabel:
+          connection.displayName ?? `${definition.institutionLabel} ${definition.label}`,
         valuationCurrency,
       },
       segments: [Buffer.from(session.dataKey), bytes],
