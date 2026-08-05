@@ -31,7 +31,7 @@ export function OnboardingWizard({ today, hasPasskey }: { today: string; hasPass
           setPasskeyReady(true);
           setPhase("connect");
         }}
-        onSchwab={() => setPhase("connect")}
+        onSkip={() => setPhase("connect")}
       />
     );
   }
@@ -72,7 +72,7 @@ export function OnboardingWizard({ today, hasPasskey }: { today: string; hasPass
  * to know. Their transactions and balances are unaffected either way — those
  * are unlocked by the login password.
  */
-function PasskeyStep({ onDone, onSchwab }: { onDone: () => void; onSchwab: () => void }) {
+function PasskeyStep({ onDone, onSkip }: { onDone: () => void; onSkip: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -123,15 +123,29 @@ function PasskeyStep({ onDone, onSchwab }: { onDone: () => void; onSchwab: () =>
           )}
           {busy ? "Waiting for your device…" : "Create passkey"}
         </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          onClick={onSchwab}
-          disabled={busy}
-          className="self-start"
-        >
-          Import a Schwab statement without a passkey
-        </Button>
+        {/* Named by what it costs, not by the one connector it used to name.
+            "Or upload a Schwab csv" was already wrong the day a second file
+            import existed, and it framed the skip as being about one file
+            format rather than about which sources stay out of reach. */}
+        <div className="flex flex-col gap-1.5 border-t border-border pt-5">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={onSkip}
+            disabled={busy}
+            // Not `px-0`: `cn` is a plain join, so the primitive's own `px-4`
+            // wins by stylesheet order and the label sits 16px right of the
+            // sentence under it. A negative margin isn't fighting a utility.
+            className="-ml-4 self-start"
+          >
+            Skip for now
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            {
+              "You can still import files — a broker statement or a provider's report. Linking a bank, card or broker with a stored login needs a passkey; you can set one up later under Settings › Connections."
+            }
+          </p>
+        </div>
       </div>
     </Card>
   );

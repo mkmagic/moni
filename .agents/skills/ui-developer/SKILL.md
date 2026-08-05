@@ -42,6 +42,38 @@ new feedback lands.
 
 ## Feedback log (newest first — append, don't overwrite)
 
+### 2026-08-05 — long-term savings follow-ups: a table scoped to one report, and a skip named after one connector
+
+- **A table fed by "the newest snapshot" is not a history.** The deposits disclosure read
+  `latest.deposits`, so importing Q1 2026 and then backfilling Q3 2025 showed four deposits and hid
+  twenty-one. `deposits` moved from `LongTermSavingsSnapshotView` up to
+  `LongTermSavingsAccountView`, built from **the newest report of each fiscal year** — a quarterly
+  report restates the whole year, so concatenating every report would print January twice while
+  taking only the newest prints one year and drops the rest. **When a figure is per-report and a
+  table is per-account, the domain type has to say which.**
+- **Name a skip by what it costs, not by the one connector that first needed it.** The onboarding
+  passkey step offered "Import a Schwab statement without a passkey", which was already wrong the day
+  a Harel PDF existed. Now "Skip for now" plus a sentence naming what stays out of reach (anything
+  with a stored login) and what does not (file imports).
+- **`px-0` loses to the Button primitive's own `px-4`** — the 2026-07-28 `cn`-is-a-plain-join trap
+  again, computed `padding-left: 16px`, label sitting 16px right of the sentence beneath it. A
+  negative margin (`-ml-4`) isn't fighting a utility and lands it back on the text column. Several
+  existing ghost buttons still carry the ineffective `px-0`.
+- **A picker tile should name the provider, not the document.** "Harel · Quarterly Pension Report"
+  read as a different kind of thing beside "Bank Leumi". The tile is now "Harel" and its reports live
+  one screen in, which is also the shape a second Harel parser needs.
+- **Offer the file where the connection is made.** A `user_mediated_import` connection ended on
+  "Connection created. Import a report from Long-term savings when you're ready" — a detour to
+  another screen with nothing in it. The outcome now carries a primary "Import a file now" that opens
+  the shared `ImportDialog`, whose `connections` prop was narrowed from `ConnectionView` to a local
+  `ImportTarget` so the flow can pass the connection it just created rather than one read back.
+- **Verifying an outcome screen without writing a connection:** stub `window.fetch` to answer
+  `POST /api/connections` with `201 {"id":"…"}` (same technique as the 2026-08-01 busy-state note).
+  The onboarding passkey step needs a *user* with no passkey, though — a throwaway signup
+  (`signupToken: dev-signup-token`), then `DELETE /api/account` with its own password. **Logging in
+  as the throwaway replaces whoever was signed in**, and `dana@moni.demo` is not necessarily that
+  person — check who the session belongs to before you take it.
+
 ### 2026-08-05 (later) — the long-term savings card: an account is a product, and one statement is not a history
 
 - **Name the thing, not the document that reported it.** The card read "Harel Quarterly Pension Report". The owner: *"should show 'Harel Pension'."* A long-term savings statement carries **no** account name and no account number, so everything in `accounts.name_ct` is either a nickname or a string Moni derived — and the derived one was provider + *document* when the account is a pension held at a provider. Fixed at both ends: the sync route now derives provider + `PRODUCT_LABEL[product]`, and `longTermSavingsAccountName` corrects the old default at the display edge so existing rows heal without a re-import. **When a name is Moni's own invention, the display edge may correct it; a nickname must be left alone, so match the old default exactly rather than guessing.**

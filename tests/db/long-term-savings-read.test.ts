@@ -109,7 +109,7 @@ describe("listLongTermSavingsAccounts", () => {
       contributions: { amount: "7076", currency: "ILS" },
       investmentResult: { amount: "-2954", currency: "ILS" },
     });
-    expect(account.latest!.deposits).toHaveLength(4);
+    expect(account.deposits).toHaveLength(4);
     expect(account.latest!.tracks).toEqual([
       {
         rowIndex: 0,
@@ -251,6 +251,36 @@ describe("report history", () => {
       start: "2025-01-01",
       includesEarlierQuarters: true,
     });
+  });
+});
+
+describe("deposit history", () => {
+  it("keeps the deposits of every fiscal year imported, newest first", async () => {
+    const ctx = await fixture();
+    await importReport(ctx, q1);
+    await importReport(ctx, q3);
+
+    const [account] = await listLongTermSavingsAccounts(ctx.session);
+    // 4 rows on the Q1 2026 report, 21 on the Q3 2025 one. Showing only the
+    // newest report's table hid every 2025 deposit the user had just imported.
+    expect(account.deposits).toHaveLength(q1.deposits.rows.length + q3.deposits.rows.length);
+    expect(new Set(account.deposits.map((row) => row.reportAsOf))).toEqual(
+      new Set(["2026-03-31", "2025-09-30"]),
+    );
+    const dates = account.deposits.map((row) => row.depositDate);
+    expect(dates).toEqual([...dates].sort().reverse());
+  });
+
+  it("prints a month once when two reports of the same year restate it", async () => {
+    const ctx = await fixture();
+    await importReport(ctx, q1);
+    await importReport(ctx, q2);
+
+    const [account] = await listLongTermSavingsAccounts(ctx.session);
+    // Q2 restates the whole year, so its table already contains Q1's rows.
+    // Concatenating the reports would print January to March twice.
+    expect(account.deposits).toHaveLength(q2.deposits.rows.length);
+    expect(account.deposits.every((row) => row.reportAsOf === "2026-06-30")).toBe(true);
   });
 });
 

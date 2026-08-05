@@ -64,6 +64,9 @@ export interface LongTermSavingsFees {
 }
 
 export interface LongTermSavingsDepositRow {
+  id: string;
+  /** The report this row was printed on — rows from several reports sit in one table. */
+  reportAsOf: string;
   rowIndex: number;
   employer: string | null;
   depositDate: string;
@@ -139,7 +142,6 @@ export interface LongTermSavingsSnapshotView extends LongTermSavingsReportView {
   investmentResult: Money;
   feesCharged: Money;
   fees: LongTermSavingsFees;
-  deposits: LongTermSavingsDepositRow[];
   tracks: LongTermSavingsTrackRow[];
 }
 
@@ -154,7 +156,15 @@ export interface LongTermSavingsAccountView {
   liquidFrom: string | null;
   /** Newest first. Empty until the first report has been imported. */
   reports: LongTermSavingsReportView[];
-  /** The newest report, with its deposit table and tracks. */
+  /**
+   * Every deposit across every report held, newest first — not the newest
+   * report's table alone. A quarterly report restates its deposits from the
+   * start of the fiscal year, so the newest report of 2026 lists three months
+   * while the Q3 report of 2025 lists nine: showing only the former made a
+   * backfilled year of deposits vanish from the screen it was imported for.
+   */
+  deposits: LongTermSavingsDepositRow[];
+  /** The newest report, with its fees and tracks. */
   latest: LongTermSavingsSnapshotView | null;
 }
 
@@ -336,22 +346,34 @@ export async function listLongTermSavingsAccounts(
     const newest = new Map<string, (typeof snapshots)[number]>();
     for (const snapshot of snapshots)
       if (!newest.has(snapshot.accountId)) newest.set(snapshot.accountId, snapshot);
-    const shownIds = [...newest.values()].map((snapshot) => snapshot.id);
+    const newestIds = [...newest.values()].map((snapshot) => snapshot.id);
 
-    const [depositRows, trackRows] = shownIds.length
+    // One report per fiscal year — its newest, which restates every deposit
+    // made that year. Taking every report instead would print the overlapping
+    // months once per report held. A report with no stated year stands alone,
+    // since nothing can be said about what it supersedes.
+    const newestPerYear = new Map<string, (typeof snapshots)[number]>();
+    for (const snapshot of snapshots) {
+      const key = `${snapshot.accountId}:${snapshot.fiscalYear ?? snapshot.id}`;
+      if (!newestPerYear.has(key)) newestPerYear.set(key, snapshot);
+    }
+    const depositIds = [...newestPerYear.values()].map((snapshot) => snapshot.id);
+
+    const [depositRows, trackRows] = newestIds.length
       ? await Promise.all([
           tx
             .select()
             .from(longTermSavingsSnapshotDeposits)
-            .where(inArray(longTermSavingsSnapshotDeposits.snapshotId, shownIds))
+            .where(inArray(longTermSavingsSnapshotDeposits.snapshotId, depositIds))
             .orderBy(asc(longTermSavingsSnapshotDeposits.rowIndex)),
           tx
             .select()
             .from(longTermSavingsSnapshotTracks)
-            .where(inArray(longTermSavingsSnapshotTracks.snapshotId, shownIds))
+            .where(inArray(longTermSavingsSnapshotTracks.snapshotId, newestIds))
             .orderBy(asc(longTermSavingsSnapshotTracks.rowIndex)),
         ])
       : [[], []];
+    const snapshotById = new Map(snapshots.map((snapshot) => [snapshot.id, snapshot]));
 
     return rows.map(({ account, detail }): LongTermSavingsAccountView => {
       // Oldest first: differencing needs each report's predecessor, and the
@@ -365,6 +387,7 @@ export async function listLongTermSavingsAccounts(
         currency: snapshot!.currency,
       });
       const reports = deriveReports(dataKey, held);
+      const heldIds = new Set(held.map((row) => row.id));
       return {
         accountId: account.id,
         name: decText(dataKey, account.nameCt, account.id, "name_ct", account.version) ?? "",
@@ -375,6 +398,38 @@ export async function listLongTermSavingsAccounts(
         liquidity: detail.liquidity,
         liquidFrom: detail.liquidFrom,
         reports,
+        deposits: depositRows
+          .filter((row) => heldIds.has(row.snapshotId))
+          .map((row): LongTermSavingsDepositRow => {
+            const currency = snapshotById.get(row.snapshotId)!.currency;
+            const cell = (ct: Uint8Array, column: string): Money => ({
+              amount: decText(dataKey, ct, row.id, column, row.version) ?? "0",
+              currency,
+            });
+            return {
+              id: row.id,
+              reportAsOf: snapshotById.get(row.snapshotId)!.asOf,
+              rowIndex: row.rowIndex,
+              employer: row.employerCt
+                ? decText(dataKey, row.employerCt, row.id, "employer_ct", row.version)
+                : null,
+              depositDate: row.depositDate,
+              forMonth: row.forMonth,
+              salary: row.salaryCt ? cell(row.salaryCt, "salary_ct") : null,
+              employee: cell(row.employeeCt, "employee_ct"),
+              employerContribution: cell(row.employerContributionCt, "employer_contribution_ct"),
+              severance: cell(row.severanceCt, "severance_ct"),
+              total: cell(row.totalCt, "total_ct"),
+            };
+          })
+          // Newest first, like the report history above it. Within one deposit
+          // date the printed order is reversed too, so the whole table reads in
+          // one direction.
+          .sort(
+            (a, b) =>
+              `${b.depositDate}|${b.forMonth}`.localeCompare(`${a.depositDate}|${a.forMonth}`) ||
+              b.rowIndex - a.rowIndex,
+          ),
         latest: !snapshot
           ? null
           : {
@@ -394,30 +449,6 @@ export async function listLongTermSavingsAccounts(
                   ...above("savings", snapshot.feeRateSavings, snapshot.fundAvgFeeSavings),
                 ],
               },
-              deposits: depositRows
-                .filter((row) => row.snapshotId === snapshot.id)
-                .map((row): LongTermSavingsDepositRow => {
-                  const cell = (ct: Uint8Array, column: string): Money => ({
-                    amount: decText(dataKey, ct, row.id, column, row.version) ?? "0",
-                    currency: snapshot.currency,
-                  });
-                  return {
-                    rowIndex: row.rowIndex,
-                    employer: row.employerCt
-                      ? decText(dataKey, row.employerCt, row.id, "employer_ct", row.version)
-                      : null,
-                    depositDate: row.depositDate,
-                    forMonth: row.forMonth,
-                    salary: row.salaryCt ? cell(row.salaryCt, "salary_ct") : null,
-                    employee: cell(row.employeeCt, "employee_ct"),
-                    employerContribution: cell(
-                      row.employerContributionCt,
-                      "employer_contribution_ct",
-                    ),
-                    severance: cell(row.severanceCt, "severance_ct"),
-                    total: cell(row.totalCt, "total_ct"),
-                  };
-                }),
               tracks: trackRows
                 .filter((row) => row.snapshotId === snapshot.id)
                 .map((row): LongTermSavingsTrackRow => ({

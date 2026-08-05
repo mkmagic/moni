@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { CheckCircle2, Link2, Loader2, XCircle } from "lucide-react";
+import { CheckCircle2, FileUp, Link2, Loader2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ArmPrompt } from "@/components/arm-prompt";
+import { ImportDialog } from "@/components/import-dialog";
 import { InstitutionPicker } from "@/components/institution-picker";
 import { ConnectForm } from "@/components/connect-form";
 import { ConnectionEditForm } from "@/components/connection-edit-form";
@@ -82,6 +83,9 @@ export function ConnectFlow({
   credentialedEnabled = true,
 }: ConnectFlowProps) {
   const [step, setStep] = useState<Step>({ kind: "pick" });
+  /** The import offered on the outcome screen of a file connection. */
+  const [importing, setImporting] = useState<Target | null>(null);
+  const [imported, setImported] = useState(false);
   /** `null` means "connect but fetch nothing" — see BackfillWindowPicker. */
   const [startDate, setStartDate] = useState<string | null>(() =>
     presetStartDate(DEFAULT_PRESET, today),
@@ -140,6 +144,7 @@ export function ConnectFlow({
 
   function addAnother() {
     setStartDate(presetStartDate(DEFAULT_PRESET, today));
+    setImported(false);
     setStep({ kind: "pick" });
   }
 
@@ -173,7 +178,7 @@ export function ConnectFlow({
           </h2>
           <p className="text-sm text-muted-foreground">
             {isImport
-              ? `Create the connection now, then import ${importDestination(step.connectorId)}.`
+              ? "Create the connection now — you can import your first file on the next step."
               : startDate === null
                 ? "We'll link the account without fetching anything yet."
                 : "We'll fetch your transactions as soon as it's connected."}
@@ -244,35 +249,72 @@ export function ConnectFlow({
 
   if (step.kind === "succeeded" || step.kind === "skipped") {
     const skipped = step.kind === "skipped";
+    const isImport =
+      getConnectorDefinition(step.target.connectorId)?.mode === "user_mediated_import";
     return (
-      <Outcome
-        icon={
-          skipped ? (
-            <Link2 className="h-8 w-8 text-muted-foreground" />
-          ) : (
-            <CheckCircle2 className="h-8 w-8 text-positive" />
-          )
-        }
-        title={skipped ? "Connected" : "All set"}
-        body={
-          getConnectorDefinition(step.target.connectorId)?.mode === "user_mediated_import"
-            ? `Connection created. Import ${importDestination(step.target.connectorId)} when you're ready.`
-            : skipped
-              ? "We haven't fetched anything yet — sync it from the dashboard whenever you're ready."
-              : addedCount > 1
-                ? `${addedCount} accounts connected.`
-                : "Your account is connected and up to date."
-        }
-      >
-        {allowAddAnother && (
-          <Button type="button" variant="outline" onClick={addAnother}>
-            Add another account
+      <>
+        <Outcome
+          icon={
+            skipped && !imported ? (
+              <Link2 className="h-8 w-8 text-muted-foreground" />
+            ) : (
+              <CheckCircle2 className="h-8 w-8 text-positive" />
+            )
+          }
+          title={skipped && !imported ? "Connected" : "All set"}
+          body={
+            isImport
+              ? imported
+                ? // The file has been read and promoted by the time this shows,
+                  // so it says what happened rather than what to do next.
+                  `Imported. You can import ${importDestination(step.target.connectorId)} any time.`
+                : `Connection created. Import your first file now, or ${importDestination(step.target.connectorId)} later.`
+              : skipped
+                ? "We haven't fetched anything yet — sync it from the dashboard whenever you're ready."
+                : addedCount > 1
+                  ? `${addedCount} accounts connected.`
+                  : "Your account is connected and up to date."
+          }
+        >
+          {/* The whole point of a file connection is the file, and making the
+              user leave the wizard to find the screen that accepts it was a
+              detour with nothing in it. */}
+          {isImport && !imported && (
+            <Button type="button" className="gap-1.5" onClick={() => setImporting(step.target)}>
+              <FileUp className="h-3.5 w-3.5" /> Import a file now
+            </Button>
+          )}
+          {allowAddAnother && (
+            <Button type="button" variant="outline" onClick={addAnother}>
+              Add another account
+            </Button>
+          )}
+          <Button
+            type="button"
+            variant={isImport && !imported ? "outline" : "primary"}
+            onClick={onDone}
+          >
+            {doneLabel}
           </Button>
+        </Outcome>
+        {importing && (
+          <ImportDialog
+            open
+            onClose={() => setImporting(null)}
+            connections={[
+              {
+                id: importing.connectionId,
+                connectorId: importing.connectorId,
+                displayName: importing.displayName,
+              },
+            ]}
+            onDone={() => {
+              setImporting(null);
+              setImported(true);
+            }}
+          />
         )}
-        <Button type="button" onClick={onDone}>
-          {doneLabel}
-        </Button>
-      </Outcome>
+      </>
     );
   }
 

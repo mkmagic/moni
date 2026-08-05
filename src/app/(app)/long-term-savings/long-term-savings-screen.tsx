@@ -20,6 +20,7 @@ import { Sparkline } from "@/components/sparkline";
 import type { ConnectionView } from "@/domain/connections";
 import type {
   LongTermSavingsAccountView,
+  LongTermSavingsDepositRow,
   LongTermSavingsReportView,
   LongTermSavingsSnapshotView,
 } from "@/domain/long-term-savings";
@@ -206,9 +207,9 @@ function AccountPanel({ account }: { account: LongTermSavingsAccountView }) {
               open={open === "reports"}
               onToggle={() => setOpen(open === "reports" ? null : "reports")}
             />
-            {snapshot.deposits.length > 0 && (
+            {account.deposits.length > 0 && (
               <Disclosure
-                label={`Deposits (${snapshot.deposits.length})`}
+                label={`Deposits (${account.deposits.length})`}
                 open={open === "deposits"}
                 onToggle={() => setOpen(open === "deposits" ? null : "deposits")}
               />
@@ -227,7 +228,7 @@ function AccountPanel({ account }: { account: LongTermSavingsAccountView }) {
           </div>
 
           {open === "reports" && <ReportTable reports={account.reports} />}
-          {open === "deposits" && <DepositTable snapshot={snapshot} />}
+          {open === "deposits" && <DepositTable deposits={account.deposits} />}
           {open === "tracks" && <TrackTable snapshot={snapshot} />}
         </>
       )}
@@ -376,9 +377,15 @@ function Disclosure({
   );
 }
 
-function DepositTable({ snapshot }: { snapshot: LongTermSavingsSnapshotView }) {
-  const hasEmployer = snapshot.deposits.some((row) => row.employer !== null);
-  const hasSalary = snapshot.deposits.some((row) => row.salary !== null);
+/**
+ * Every deposit across every report imported, not just the newest report's own
+ * table — a quarterly report only restates the fiscal year it belongs to, so a
+ * member who backfills last year would otherwise see this year's few rows and
+ * nothing else.
+ */
+function DepositTable({ deposits }: { deposits: LongTermSavingsDepositRow[] }) {
+  const hasEmployer = deposits.some((row) => row.employer !== null);
+  const hasSalary = deposits.some((row) => row.salary !== null);
   return (
     <div className="overflow-x-auto">
       <table className="w-full border-separate border-spacing-0 text-xs">
@@ -395,8 +402,8 @@ function DepositTable({ snapshot }: { snapshot: LongTermSavingsSnapshotView }) {
           </tr>
         </thead>
         <tbody>
-          {snapshot.deposits.map((row) => (
-            <tr key={row.rowIndex}>
+          {deposits.map((row) => (
+            <tr key={row.id}>
               <Td>{dayLabel(row.depositDate)}</Td>
               <Td>{forMonthLabel(row.forMonth)}</Td>
               {hasEmployer && (

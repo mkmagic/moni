@@ -4,7 +4,6 @@ import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import type { ConnectionView } from "@/domain/connections";
 import { getConnectorDefinition } from "@/lib/connectors";
 import { waitForSyncRun } from "@/lib/sync-client";
 import { syncErrorMessage } from "@/lib/sync-error-message";
@@ -22,6 +21,18 @@ import { syncErrorMessage } from "@/lib/sync-error-message";
  */
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+/**
+ * All this dialog needs of a connection — structurally a `ConnectionView`, so
+ * the screens keep passing theirs. Narrower on purpose: the connect flow offers
+ * the first import from a connection it has only just created, and holds its
+ * id, connector and nickname rather than a row read back from the domain layer.
+ */
+export interface ImportTarget {
+  id: string;
+  connectorId: string;
+  displayName: string | null;
+}
 
 interface ImportShape {
   title: string;
@@ -56,13 +67,13 @@ const REPORT: ImportShape = {
   busyDetail: "Reading the report and checking its figures against each other.",
 };
 
-function shapeFor(connection: ConnectionView | undefined): ImportShape {
+function shapeFor(connection: ImportTarget | undefined): ImportShape {
   return getConnectorDefinition(connection?.connectorId ?? "")?.kind === "long_term_savings"
     ? REPORT
     : STATEMENT;
 }
 
-function connectionLabel(connection: ConnectionView): string {
+function connectionLabel(connection: ImportTarget): string {
   return (
     connection.displayName ??
     getConnectorDefinition(connection.connectorId)?.label ??
@@ -78,7 +89,7 @@ export function ImportDialog({
 }: {
   open: boolean;
   onClose: () => void;
-  connections: ConnectionView[];
+  connections: ImportTarget[];
   onDone: (message: string) => void;
 }) {
   const [file, setFile] = useState<File | null>(null);
