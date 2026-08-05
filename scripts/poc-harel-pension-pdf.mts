@@ -106,6 +106,9 @@ function hasPercentSign(items: Item[], value: Item): boolean {
 // ------------------------------------------------------------------- shapes
 
 interface LabelledAmount {
+  /** Stable English identifier, independent of the printed wording. */
+  key: string;
+  /** The Hebrew label exactly as printed, kept for traceability back to the page. */
   label: string;
   amount: string | null;
 }
@@ -212,23 +215,23 @@ function parseHeader(items: Item[]): HarelPensionReport["header"] {
 
 /** Section א — expected payouts. Labels are stable; the retirement age is inline. */
 function parseExpectedPayments(items: Item[]): HarelPensionReport["expectedPayments"] {
-  const wanted = [
-    /^קצבה חודשית הצפויה לך בפרישה בגיל/,
-    /^קצבה חודשית לאלמן/,
-    /^קצבה חודשית ליתום/,
-    /^קצבה חודשית להורה נתמך/,
-    /^קצבה חודשית במקרה של נכות/,
-    /^שחרור מתשלום הפקדות/,
+  const wanted: [key: string, pattern: RegExp][] = [
+    ["monthlyPensionAtRetirement", /^קצבה חודשית הצפויה לך בפרישה בגיל/],
+    ["monthlySurvivorPension", /^קצבה חודשית לאלמן/],
+    ["monthlyOrphanPension", /^קצבה חודשית ליתום/],
+    ["monthlyDependentParentPension", /^קצבה חודשית להורה נתמך/],
+    ["monthlyFullDisabilityPension", /^קצבה חודשית במקרה של נכות/],
+    ["contributionWaiverOnDisability", /^שחרור מתשלום הפקדות/],
   ];
 
   const rows: LabelledAmount[] = [];
   let retirementAge: string | null = null;
-  for (const re of wanted) {
+  for (const [key, re] of wanted) {
     const label = findLabel(items, (t) => re.test(t));
     if (!label) continue;
     const age = label.text.match(/בגיל (\d+)/);
     if (age) retirementAge = age[1];
-    rows.push({ label: label.text, amount: numberLeftOf(items, label) });
+    rows.push({ key, label: label.text, amount: numberLeftOf(items, label) });
   }
   return { retirementAge, rows };
 }
@@ -457,10 +460,10 @@ function runChecks(report: HarelPensionReport): HarelPensionReport["checks"] {
   const t = report.deposits.totals;
   if (t) {
     for (const [key, label] of [
-      ["employeeContribution", "תגמולי עובד/ת"],
-      ["employerContribution", "תגמולי מעסיק"],
-      ["severance", "פיצויים"],
-      ["total", 'סה"כ'],
+      ["employeeContribution", "employee contribution"],
+      ["employerContribution", "employer contribution"],
+      ["severance", "severance"],
+      ["total", "total"],
     ] as const) {
       const summed = report.deposits.rows.reduce((acc, r) => acc.plus(D(r[key])), new Decimal(0));
       checks.push({
@@ -474,7 +477,7 @@ function runChecks(report: HarelPensionReport): HarelPensionReport["checks"] {
       checks.push({
         name: "deposits table vs movements",
         ok: D(t.total).minus(D(m.deposits)).abs().lte(1),
-        detail: `table total ${t.total} vs "כספים שהופקדו לקרן" ${m.deposits}`,
+        detail: `table total ${t.total} vs section B deposits ${m.deposits}`,
       });
     }
   }
@@ -503,66 +506,83 @@ async function parse(path: string): Promise<HarelPensionReport> {
   return report;
 }
 
+/** Display names for section A, keyed by the stable identifiers set in parseExpectedPayments. */
+const EXPECTED_PAYMENT_LABELS: Record<string, string> = {
+  monthlyPensionAtRetirement: "Monthly pension at retirement",
+  monthlySurvivorPension: "Monthly survivor pension (death)",
+  monthlyOrphanPension: "Monthly orphan pension (death)",
+  monthlyDependentParentPension: "Monthly dependent-parent pension (death)",
+  monthlyFullDisabilityPension: "Monthly pension on full disability",
+  contributionWaiverOnDisability: "Contribution waiver on disability",
+};
+
 function print(r: HarelPensionReport): void {
   const shekel = (v: string | null) =>
     v === null ? "—" : `${Number(v).toLocaleString("en-US")} ₪`;
   const pct = (v: string | null) => (v === null ? "—" : `${v}%`);
   const line = (label: string, value: string) => console.log(`  ${label.padEnd(42)} ${value}`);
 
-  console.log(`\n${r.header.documentType} — ${r.header.fundName}`);
-  console.log(`${r.source.file}  (${r.source.pages}pp, producer: ${r.source.producer})`);
+  console.log(`\n${r.source.file}  (${r.source.pages}pp, producer: ${r.source.producer})`);
 
-  console.log("\nמזהי הדוח");
-  line("שם", r.header.memberName);
-  line("ת.ז.", r.header.nationalId);
-  line("תאריך הדוח", r.header.reportDate);
-  line("תקופת הדיווח", `${r.header.periodStart} → ${r.header.periodEnd}`);
-  line("רבעון / שנה", `Q${r.header.quarter} ${r.header.year}`);
+  // Tags are English; values stay exactly as printed in the source, so proper
+  // nouns (fund, employer, investment track) remain Hebrew on purpose.
+  console.log("\nReport identity");
+  line("Document type", r.header.documentType);
+  line("Fund", r.header.fundName);
+  line("Member name", r.header.memberName);
+  line("National ID", r.header.nationalId);
+  line("Report date", r.header.reportDate);
+  line("Reporting period", `${r.header.periodStart} → ${r.header.periodEnd}`);
+  line("Quarter / year", `Q${r.header.quarter} ${r.header.year}`);
 
   console.log(
-    `\nא. תשלומים צפויים${r.expectedPayments.retirementAge ? ` (גיל פרישה ${r.expectedPayments.retirementAge})` : ""}`,
+    `\nA. Expected payments${r.expectedPayments.retirementAge ? ` (retirement age ${r.expectedPayments.retirementAge})` : ""}`,
   );
-  for (const row of r.expectedPayments.rows) line(row.label, shekel(row.amount));
+  for (const row of r.expectedPayments.rows)
+    line(EXPECTED_PAYMENT_LABELS[row.key], shekel(row.amount));
 
-  console.log("\nב. תנועות בקרן");
+  console.log("\nB. Fund movements");
   const m = r.movements;
-  line("יתרת הכספים בתחילת השנה", shekel(m.openingBalance));
-  line("כספים שהופקדו לקרן", shekel(m.deposits));
-  line("רווחים/הפסדים בניכוי הוצאות ניהול", shekel(m.investmentResult));
-  line("דמי ניהול שנגבו בשנה זו", shekel(m.managementFeesCharged));
-  line("עלות ביטוח לסיכוני נכות", shekel(m.disabilityInsuranceCost));
-  line("עלות ביטוח למקרה מוות", shekel(m.deathInsuranceCost));
-  line("יתרת הכספים בסוף תקופת הדיווח", shekel(m.closingBalance));
+  line("Opening balance (start of year)", shekel(m.openingBalance));
+  line("Deposits into the fund", shekel(m.deposits));
+  line("Gains/losses net of investment costs", shekel(m.investmentResult));
+  line("Management fees charged this year", shekel(m.managementFeesCharged));
+  line("Disability insurance cost", shekel(m.disabilityInsuranceCost));
+  line("Death insurance cost", shekel(m.deathInsuranceCost));
+  line("Closing balance (end of period)", shekel(m.closingBalance));
 
-  console.log("\nג. דמי ניהול");
+  console.log("\nC. Management fees");
   const f = r.managementFees;
-  line("דמי ניהול מהפקדה (שלך)", pct(f.onDeposit));
-  line("דמי ניהול מחיסכון (שלך)", pct(f.onSavings));
-  line("ממוצע בקרן — מהפקדה", pct(f.fundAverageOnDeposit));
-  line("ממוצע בקרן — מחיסכון", pct(f.fundAverageOnSavings));
+  line("Your fee on deposits", pct(f.onDeposit));
+  line("Your fee on savings", pct(f.onSavings));
+  line("Fund average on deposits", pct(f.fundAverageOnDeposit));
+  line("Fund average on savings", pct(f.fundAverageOnSavings));
 
-  console.log("\nד. מסלולי השקעה");
+  console.log("\nD. Investment tracks");
   for (const t of r.investmentTracks) {
     line(
       t.name,
-      `תשואה ${pct(t.returnPercent)} · עלות שנתית צפויה ${pct(t.expectedAnnualCostPercent)}`,
+      `return ${pct(t.returnPercent)} · expected annual cost ${pct(t.expectedAnnualCostPercent)}`,
     );
   }
 
-  console.log("\nה. פירוט הפקדות");
+  console.log("\nE. Deposits");
   const head = [
-    "מעסיק",
-    "מועד הפקדה",
-    "עבור חודש",
-    "משכורת",
-    "תגמולי עובד",
-    "תגמולי מעסיק",
-    "פיצויים",
-    'סה"כ',
+    "Employer",
+    "Deposited",
+    "For month",
+    "Salary",
+    "Employee",
+    "Employer c.",
+    "Severance",
+    "Total",
   ];
-  const widths = [14, 12, 10, 10, 13, 14, 10, 10];
+  const widths = [14, 12, 11, 10, 10, 12, 11, 10];
+  // Group digits so the cells read the same way they do on the page.
+  const grouped = (c: string | null) =>
+    c !== null && NUMBER.test(c) ? Number(c).toLocaleString("en-US") : c;
   const fmt = (cells: (string | null)[]) =>
-    "  " + cells.map((c, i) => (c ?? "—").padEnd(widths[i])).join("");
+    "  " + cells.map((c, i) => (grouped(c) ?? "—").padEnd(widths[i])).join("");
   console.log(fmt(head));
   for (const row of r.deposits.rows) {
     console.log(
@@ -582,7 +602,7 @@ function print(r: HarelPensionReport): void {
     const t = r.deposits.totals;
     console.log(
       fmt([
-        'סה"כ',
+        "TOTAL",
         "",
         "",
         "",
@@ -594,7 +614,7 @@ function print(r: HarelPensionReport): void {
     );
   }
 
-  console.log("\nבדיקות עקביות");
+  console.log("\nConsistency checks");
   for (const c of r.checks) console.log(`  ${c.ok ? "PASS" : "FAIL"}  ${c.name}: ${c.detail}`);
   const failed = r.checks.filter((c) => !c.ok).length;
   console.log(`\n${r.checks.length - failed}/${r.checks.length} checks passed`);
