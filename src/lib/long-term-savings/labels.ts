@@ -121,11 +121,6 @@ export function formatPercent(value: string): string {
   return `${value}%`;
 }
 
-/** "Mar 2026" — the ends of a span the reports cover. */
-export function monthYearLabel(isoDate: string): string {
-  return `${month(isoDate)} ${isoDate.slice(0, 4)}`;
-}
-
 /** "2026-03" as printed in the deposit table's "for month" column. */
 export function forMonthLabel(forMonth: string): string {
   const [year, monthNumber] = forMonth.split("-");

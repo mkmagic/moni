@@ -119,29 +119,6 @@ export interface LongTermSavingsReportView {
   period: LongTermSavingsPeriodFlows;
 }
 
-/**
- * Everything the imported reports add up to, so the card can answer "how much
- * have I put in" rather than only "what did the last statement say".
- *
- * Summed from each report's `period`, which is why differencing has to happen
- * before this: adding four year-to-date figures would count January four times.
- */
-export interface LongTermSavingsTotals {
-  contributions: Money;
-  investmentResult: Money;
-  feesCharged: Money;
-  reportCount: number;
-  /** The span the reports actually cover. */
-  from: string;
-  to: string;
-  /**
-   * True when the covered periods don't join up — a year with no report, or a
-   * quarter that had to fall back to year-to-date. The totals are then a sum of
-   * what was imported, not of the account's whole life, and the view says so.
-   */
-  hasGaps: boolean;
-}
-
 export interface LongTermSavingsSnapshotView extends LongTermSavingsReportView {
   /**
    * The report's stated retirement age, so a locked badge can say "until 67"
@@ -175,8 +152,6 @@ export interface LongTermSavingsAccountView {
   reports: LongTermSavingsReportView[];
   /** The newest report, with its deposit table and tracks. */
   latest: LongTermSavingsSnapshotView | null;
-  /** Null until the first report has been imported. */
-  totals: LongTermSavingsTotals | null;
 }
 
 /** The day after `isoDate` — a differenced period starts where the last one ended. */
@@ -187,7 +162,7 @@ function nextDay(isoDate: string): string {
 }
 
 /**
- * Turns a run of reports into per-period flows and their totals.
+ * Turns a run of reports into each one's own share of the flows.
  *
  * The differencing rule is the fiscal year: an Israeli quarterly report restates
  * its flows from the start of the year, so a report is differenced against the
@@ -197,16 +172,8 @@ function nextDay(isoDate: string): string {
  *
  * Rows arrive oldest first; the returned reports are newest first.
  */
-function deriveReports(
-  dataKey: Uint8Array,
-  held: SnapshotRow[],
-): { reports: LongTermSavingsReportView[]; totals: LongTermSavingsTotals | null } {
+function deriveReports(dataKey: Uint8Array, held: SnapshotRow[]): LongTermSavingsReportView[] {
   const reports: LongTermSavingsReportView[] = [];
-  let contributions = new Decimal(0);
-  let investmentResult = new Decimal(0);
-  let feesCharged = new Decimal(0);
-  let hasGaps = false;
-  let coveredThrough: string | null = null;
 
   for (const [index, row] of held.entries()) {
     const flow = (ct: Uint8Array, column: string) =>
@@ -257,16 +224,6 @@ function deriveReports(
     const periodFees = flow(row.feesChargedCt, "fees_charged_ct").minus(base?.feesCharged ?? 0);
     const start = base ? nextDay(previous.statedPeriodEnd) : row.statedPeriodStart;
 
-    // A hole between what the last report covered and where this one starts
-    // means the totals below are a sum of what was imported, not of the
-    // account's whole life.
-    if (coveredThrough !== null && start > nextDay(coveredThrough)) hasGaps = true;
-    coveredThrough = row.statedPeriodEnd;
-
-    contributions = contributions.plus(periodContributions);
-    investmentResult = investmentResult.plus(periodResult);
-    feesCharged = feesCharged.plus(periodFees);
-
     reports.push({
       id: row.id,
       asOf: row.asOf,
@@ -291,23 +248,7 @@ function deriveReports(
   }
 
   reports.reverse();
-  const first = held[0];
-  const last = held.at(-1);
-  return {
-    reports,
-    totals:
-      first === undefined || last === undefined
-        ? null
-        : {
-            contributions: { amount: contributions.toFixed(), currency: last.currency },
-            investmentResult: { amount: investmentResult.toFixed(), currency: last.currency },
-            feesCharged: { amount: feesCharged.toFixed(), currency: last.currency },
-            reportCount: held.length,
-            from: first.statedPeriodStart,
-            to: last.statedPeriodEnd,
-            hasGaps,
-          },
-  };
+  return reports;
 }
 
 function above(
@@ -415,7 +356,7 @@ export async function listLongTermSavingsAccounts(
         amount: decText(dataKey, ct, snapshot!.id, column, snapshot!.version) ?? "0",
         currency: snapshot!.currency,
       });
-      const { reports, totals } = deriveReports(dataKey, held);
+      const reports = deriveReports(dataKey, held);
       return {
         accountId: account.id,
         name: decText(dataKey, account.nameCt, account.id, "name_ct", account.version) ?? "",
@@ -426,7 +367,6 @@ export async function listLongTermSavingsAccounts(
         liquidity: detail.liquidity,
         liquidFrom: detail.liquidFrom,
         reports,
-        totals,
         latest: !snapshot
           ? null
           : {

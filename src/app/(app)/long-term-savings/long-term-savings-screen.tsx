@@ -22,7 +22,6 @@ import type {
   LongTermSavingsAccountView,
   LongTermSavingsReportView,
   LongTermSavingsSnapshotView,
-  LongTermSavingsTotals,
 } from "@/domain/long-term-savings";
 import { getConnectorDefinition } from "@/lib/connectors";
 import { abs } from "@/lib/money";
@@ -33,22 +32,21 @@ import {
   formatPercent,
   liquidityBadge,
   longTermSavingsAccountName,
-  monthYearLabel,
   statedPeriodLabel,
 } from "@/lib/long-term-savings/labels";
 
 /**
  * Pension, קרן השתלמות and קופת גמל, one card per account.
  *
- * Lead order per account is balance → what the reports add up to → balance
- * trend → fees, with the reports themselves, the deposit table and the tracks
- * behind disclosures.
+ * Lead order per account is balance → balance trend → fees, with the report
+ * history, the deposit table and the tracks behind disclosures.
  *
- * The totals are cumulative on purpose. A single statement answers "what is it
- * worth now"; the question a saver actually has is "how much have I put in and
- * what has it earned", and no one statement says that. They are summed from
- * each report's DIFFERENCED period — adding four year-to-date figures would
- * count January four times.
+ * The card deliberately carries **no cumulative contributed/gains/fees figures**.
+ * They could only ever sum the reports that happen to have been imported, and
+ * someone who joins Moni with a decade of pension behind them would read
+ * "Contributed ₪26,447" as their lifetime contributions. A number whose problem
+ * is that it isn't trustworthy cannot be rescued by a caption — the per-report
+ * figures are exact, and they live one disclosure away under Reports.
  *
  * Fees come last because they are the smallest number, and first in
  * *consequence* because they are the only one the member can act on — so the fee
@@ -199,7 +197,6 @@ function AccountPanel({ account }: { account: LongTermSavingsAccountView }) {
             </span>
           </div>
 
-          {account.totals && <Totals totals={account.totals} />}
           {account.reports.length > 1 && <BalanceTrend reports={account.reports} />}
           <Fees snapshot={snapshot} />
 
@@ -235,57 +232,6 @@ function AccountPanel({ account }: { account: LongTermSavingsAccountView }) {
         </>
       )}
     </Card>
-  );
-}
-
-/**
- * What the imported reports add up to — the question a single statement can't
- * answer. Summed from each report's differenced period, so importing four
- * quarterly statements doesn't count January four times.
- */
-function Totals({ totals }: { totals: LongTermSavingsTotals }) {
-  const span = `${monthYearLabel(totals.from)} – ${monthYearLabel(totals.to)}`;
-  return (
-    <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-2">
-      <dl className="flex min-w-56 flex-1 flex-col gap-1.5 text-sm">
-        <TotalRow label="Contributed" value={totals.contributions} />
-        <TotalRow label="Gains" value={totals.investmentResult} signColor />
-        {/* The report signs fees as a movement — money leaving the balance —
-            but "Fees paid −₪212" reads as a refund. The word already carries
-            the direction, so the figure carries only its size. Gains keep their
-            sign, because there the direction IS the information. */}
-        <TotalRow label="Fees paid" value={abs(totals.feesCharged)} />
-      </dl>
-      <p className="flex flex-col text-xs text-muted-foreground">
-        <span>
-          {totals.reportCount === 1 ? "from 1 report" : `across ${totals.reportCount} reports`}
-        </span>
-        <span className="tabular-nums">{span}</span>
-        {totals.hasGaps && (
-          // A total that quietly skips a year is worse than one that admits it.
-          <span>some periods have no report</span>
-        )}
-      </p>
-    </div>
-  );
-}
-
-function TotalRow({
-  label,
-  value,
-  signColor,
-}: {
-  label: string;
-  value: { amount: string; currency: string };
-  signColor?: boolean;
-}) {
-  return (
-    <div className="flex items-baseline justify-between gap-4">
-      <dt className="text-foreground">{label}</dt>
-      <dd>
-        <Money value={value} signColor={signColor} className="font-medium" />
-      </dd>
-    </div>
   );
 }
 

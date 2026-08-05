@@ -219,25 +219,21 @@ describe("report history", () => {
     });
   });
 
-  it("totals the differenced periods rather than the year-to-date figures", async () => {
+  it("splits the year-to-date figures so no month is counted twice", async () => {
     const ctx = await fixture();
     await importReport(ctx, q1);
     await importReport(ctx, q2);
 
     const [account] = await listLongTermSavingsAccounts(ctx.session);
-    // Adding the two year-to-date figures would give 21,076 and count
-    // January–March twice.
-    expect(account.totals).toMatchObject({
-      contributions: { amount: "14000", currency: "ILS" },
-      investmentResult: { amount: "-1000", currency: "ILS" },
-      reportCount: 2,
-      from: "2026-01-01",
-      to: "2026-06-30",
-      hasGaps: false,
-    });
+    // The two reports state 7,076 and 14,000 year-to-date. Read as periods they
+    // partition the half-year exactly, which is what makes them addable at all.
+    expect(account.reports.map((report) => report.period.contributions.amount).reverse()).toEqual([
+      "7076",
+      "6924",
+    ]);
   });
 
-  it("never differences across a fiscal year, and says the coverage has a hole", async () => {
+  it("never differences across a fiscal year", async () => {
     const ctx = await fixture();
     await importReport(ctx, q3);
     await importReport(ctx, q1);
@@ -248,8 +244,10 @@ describe("report history", () => {
       asOf: "2026-03-31",
       period: { start: "2026-01-01", derived: false },
     });
-    // Oct–Dec 2025 was never imported, and the totals admit it.
-    expect(account.totals).toMatchObject({ reportCount: 2, hasGaps: true });
+    expect(account.reports[1].period).toMatchObject({
+      start: "2025-01-01",
+      derived: false,
+    });
   });
 });
 
