@@ -31,6 +31,23 @@ export const CADENCE_LABELS: Record<Cadence, string> = {
   unknown: "Not enough history",
 };
 
+/**
+ * How many months one payment at this cadence covers — the divisor that
+ * turns "what they charge" into "what it costs per month", which is the only
+ * form in which a quarterly bill and a monthly one can be added together or
+ * budgeted against.
+ *
+ * `irregular` and `unknown` are absent because they have no period: a caller
+ * that needs a monthly figure for those has to derive one from the observed
+ * span and say that it is an estimate.
+ */
+export const CADENCE_MONTHS: Record<SettableCadence, number> = {
+  monthly: 1,
+  "bi-monthly": 2,
+  quarterly: 3,
+  yearly: 12,
+};
+
 /** Narrows a stored override string, which the database types only as `text`. */
 export function asSettableCadence(value: string | null): SettableCadence | null {
   return value != null && (SETTABLE_CADENCES as readonly string[]).includes(value)

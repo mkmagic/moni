@@ -1,0 +1,1 @@
+ALTER TABLE "entry_transactions" ADD COLUMN "installment_total_currency" text;

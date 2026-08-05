@@ -20,6 +20,14 @@ export interface ImportKeyInput {
   originalCurrency: string;
   /** The transaction's purchase date — never `processedDate`. */
   date: string;
+  /**
+   * Which slice of an installment deal this is, or null/absent for an
+   * ordinary charge. Required because Isracard/Amex emit every slice with
+   * the same identifier, the same purchase date and the same deal sum, so
+   * the five fields above cannot tell payment 3 from payment 4 and all
+   * twelve would collapse onto one entry.
+   */
+  installmentNumber?: number | null;
 }
 
 const MISSING_IDENTIFIER_SENTINEL = "no-id";
@@ -44,6 +52,9 @@ export function computeImportKey(input: ImportKeyInput): string {
     input.originalAmount,
     input.originalCurrency,
     input.date,
+    // Absent contributes nothing, so an ordinary charge keeps exactly the
+    // key it already has in the database.
+    ...(input.installmentNumber == null ? [] : [String(input.installmentNumber)]),
   ];
 
   return createHash("sha256").update(parts.join(SEPARATOR), "utf8").digest("hex");

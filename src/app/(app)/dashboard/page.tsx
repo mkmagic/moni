@@ -11,8 +11,10 @@ import { Sparkline } from "@/components/sparkline";
 import { StatCard } from "@/components/stat-card";
 import { IncomeExpenseChart } from "@/components/income-expense-chart";
 import { NeedsReviewCard } from "@/components/needs-review-card";
+import { BudgetCard } from "@/components/budget-card";
 import { listCategories, suggestCategories } from "@/domain/categorization";
 import { listEntries } from "@/domain/transactions";
+import { getBudgetSummary } from "@/domain/budget";
 
 /** Time-of-day greeting from the SERVER's clock. This is a self-hosted,
  * single-household app, so the server and the household share a timezone —
@@ -27,12 +29,13 @@ function timeOfDay(hour: number): string {
 export default async function DashboardPage() {
   const session = await requireSession();
   await requireOnboarded(session.userId);
-  const [overview, profile, needsReview, categories, connections] = await Promise.all([
+  const [overview, profile, needsReview, categories, connections, budget] = await Promise.all([
     getOverview(session),
     getProfile(session.userId),
     listEntries(session, { uncategorized: true, limit: 50 }),
     listCategories(session),
     listConnections(session.userId),
+    getBudgetSummary(session),
   ]);
 
   // The queue is already only uncategorized entries, so every row here is a
@@ -93,7 +96,7 @@ export default async function DashboardPage() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           label="Net Worth"
           value={overview.netWorth}
@@ -119,6 +122,12 @@ export default async function DashboardPage() {
           accent="negative"
           labels={monthLabels}
           series={overview.months.map((m) => m.expenses)}
+        />
+        <BudgetCard
+          hasBudget={budget.hasBudget}
+          spent={budget.spent}
+          ceilingTotal={budget.ceilingTotal}
+          overBudgetCount={budget.overBudgetCount}
         />
       </div>
 

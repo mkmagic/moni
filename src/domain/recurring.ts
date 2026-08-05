@@ -14,7 +14,12 @@ import { categories, entries, merchants } from "@/db/schema";
 import { abs, add, divide, multiply, type Money } from "@/lib/money";
 import { normalizeDescription } from "@/lib/categorization/normalize";
 import { matchCatalog, merchantIdentity } from "@/lib/merchants/catalog";
-import { asSettableCadence, deriveCadence, type Cadence } from "@/lib/recurring/cadence";
+import {
+  CADENCE_MONTHS,
+  asSettableCadence,
+  deriveCadence,
+  type Cadence,
+} from "@/lib/recurring/cadence";
 import type { Session } from "@/lib/auth/session-store";
 import { decText } from "./fields";
 import { countsAsFlow, loadTransferCategoryIds } from "./flows";
@@ -55,6 +60,15 @@ export interface RecurringRow {
   latest: Money;
   /** Mean of the last three payments — or of however many exist below three. */
   averageOfLast3: Money;
+  /** What this payee costs per month: `averageOfLast3` divided by the number
+   * of months one payment covers. Equal to `averageOfLast3` for a monthly
+   * payee; a twelfth of it for an annual one. This is the figure a budget is
+   * built from, and the only one that can be summed across cadences. */
+  monthlyAverage: Money;
+  /** True when the cadence is `irregular`/`unknown`, so `monthlyAverage` had
+   * to be derived from the span of the payments rather than from a period.
+   * Display it hedged. */
+  monthlyAverageIsEstimate: boolean;
   paymentCount: number;
   firstSeen: string;
   /** "since Aug 2025", pre-formatted. */
@@ -68,6 +82,13 @@ export interface RecurringGroup {
   categoryName: string;
   /** Sum of this category's qualifying entries **within the selected range**. */
   total: Money;
+  /** Sum of the rows' `monthlyAverage`. Unlike `total` it does not move when
+   * the range control does, which is what makes it the number to budget
+   * against: a six-month range showed a monthly ₪613 subscription as ₪3,679
+   * and there was no way to tell the two apart. */
+  monthlyAverage: Money;
+  /** True when any row's monthly figure is an estimate. */
+  monthlyAverageIsEstimate: boolean;
   rows: RecurringRow[];
 }
 
@@ -205,18 +226,26 @@ export async function getRecurringView(
     const groups = (classification: "income" | "expense"): RecurringGroup[] =>
       recurring
         .filter((c) => c.classification === classification)
-        .map((c) => ({
-          categoryId: c.id,
-          categoryName: c.name,
-          total: totals.get(c.id) ?? { amount: "0", currency: baseCurrency },
+        .map((c) => {
           // Biggest first, name as the tie-break. Compared through decimal.js
           // — a JS number is never allowed to touch a money value, not even
           // to sort it (AGENTS.md).
-          rows: (rowsByCategory.get(c.id) ?? []).sort((a, b) => {
+          const rows = (rowsByCategory.get(c.id) ?? []).sort((a, b) => {
             const bySize = new Decimal(b.latest.amount).comparedTo(new Decimal(a.latest.amount));
             return bySize !== 0 ? bySize : a.merchantName.localeCompare(b.merchantName);
-          }),
-        }))
+          });
+          return {
+            categoryId: c.id,
+            categoryName: c.name,
+            total: totals.get(c.id) ?? { amount: "0", currency: baseCurrency },
+            monthlyAverage: rows.reduce((acc, row) => add(acc, row.monthlyAverage), {
+              amount: "0",
+              currency: baseCurrency,
+            } as Money),
+            monthlyAverageIsEstimate: rows.some((row) => row.monthlyAverageIsEstimate),
+            rows,
+          };
+        })
         .filter((g) => g.rows.length > 0);
 
     return {
@@ -227,6 +256,32 @@ export async function getRecurringView(
       expenses: groups("expense"),
     };
   });
+}
+
+/**
+ * A monthly figure for a payee whose cadence has no period — everything paid
+ * so far, spread across the calendar months it was paid over.
+ *
+ * Deliberately counts calendar months rather than day-spans: two payments on
+ * the 1st of January and the 1st of March cover three months of the user's
+ * life, not two, and a budget is kept in calendar months. A single payment
+ * spreads over one month, which overstates a rare charge — that is why the
+ * caller flags this branch as an estimate rather than presenting it flat.
+ *
+ * `payments` must be sorted oldest-first and non-empty; `toRow` guarantees both.
+ */
+function spreadOverObservedMonths(payments: RecurringPayment[]): Money {
+  const first = payments[0].date;
+  const last = payments[payments.length - 1].date;
+  const months =
+    (Number(last.slice(0, 4)) - Number(first.slice(0, 4))) * 12 +
+    (Number(last.slice(5, 7)) - Number(first.slice(5, 7))) +
+    1;
+  const total = payments.reduce((acc, p) => add(acc, p.amount), {
+    amount: "0",
+    currency: payments[0].amount.currency,
+  } as Money);
+  return divide(total, String(months));
 }
 
 function toRow(
@@ -250,6 +305,9 @@ function toRow(
   const catalog = matchCatalog(bucket.matchText);
   const override = asSettableCadence(merchant?.cadenceOverride ?? null);
   const firstSeen = magnitudes[0].date;
+  const cadence = override ?? deriveCadence(magnitudes.map((p) => p.date));
+  const averageOfLast3 = divide(sum, String(lastThree.length));
+  const period = cadence === "irregular" || cadence === "unknown" ? null : CADENCE_MONTHS[cadence];
 
   return {
     id: merchant?.id ?? bucket.identity,
@@ -261,10 +319,15 @@ function toRow(
       bucket.matchText,
     logoUrl: merchant?.logoUrl ?? catalog?.logoPath ?? null,
     brandColor: catalog?.brandColor ?? null,
-    cadence: override ?? deriveCadence(magnitudes.map((p) => p.date)),
+    cadence,
     cadenceIsOverride: override != null,
     latest: magnitudes[magnitudes.length - 1].amount,
-    averageOfLast3: divide(sum, String(lastThree.length)),
+    averageOfLast3,
+    monthlyAverage:
+      period === null
+        ? spreadOverObservedMonths(magnitudes)
+        : divide(averageOfLast3, String(period)),
+    monthlyAverageIsEstimate: period === null,
     paymentCount: magnitudes.length,
     firstSeen,
     firstSeenLabel: `since ${MONTH_LABEL.format(new Date(firstSeen))}`,

@@ -105,6 +105,15 @@ export const entryTransactions = pgTable(
     installmentNumber: integer("installment_number"),
     totalInstallments: integer("total_installments"),
     installmentTotalAmountCt: bytea("installment_total_amount_ct"),
+    /**
+     * Which currency `installment_total_amount_ct` is denominated in. It is
+     * NOT always the entry's `entered_currency`: a foreign purchase split
+     * into payments states the deal in the original currency while charging
+     * each payment in the card's, and an amount with no currency beside it
+     * cannot be displayed honestly. Plaintext Tier-2, like every other
+     * currency column.
+     */
+    installmentTotalCurrency: text("installment_total_currency"),
     installmentPurchaseDate: date("installment_purchase_date"),
     installmentGroupId: uuid("installment_group_id"),
     version: integer("version").notNull().default(1),

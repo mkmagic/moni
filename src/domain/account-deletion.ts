@@ -38,6 +38,8 @@ import {
   accountBalanceSnapshots,
   accounts,
   categories,
+  budgetCeilings,
+  budgetIncomes,
   categoryRejections,
   connections,
   creditCardDetails,
@@ -101,6 +103,8 @@ export async function deleteAccount(
     await tx.delete(investmentSnapshotDetails).where(eq(investmentSnapshotDetails.ownerId, userId));
     await tx.delete(instrumentSourceMappings).where(eq(instrumentSourceMappings.ownerId, userId));
     await tx.delete(instruments).where(eq(instruments.ownerId, userId));
+    await tx.delete(budgetCeilings).where(eq(budgetCeilings.ownerId, userId));
+    await tx.delete(budgetIncomes).where(eq(budgetIncomes.ownerId, userId));
     await tx.delete(categoryRejections).where(eq(categoryRejections.ownerId, userId));
     await tx.delete(merchantLookups).where(eq(merchantLookups.ownerId, userId));
     await tx.delete(entryFieldChangelog).where(eq(entryFieldChangelog.ownerId, userId));

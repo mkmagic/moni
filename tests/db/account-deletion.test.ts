@@ -213,6 +213,19 @@ async function seedFullOwner(label: string): Promise<OwnerFixture> {
     matchTextCt: ct(`${label}-rejected`),
   });
 
+  await elevatedDb.insert(schema.budgetCeilings).values({
+    ownerId: userId,
+    categoryId: category.id,
+    amountCt: ct("-2000"),
+    effectiveFrom: "2026-01-01",
+  });
+
+  await elevatedDb.insert(schema.budgetIncomes).values({
+    ownerId: userId,
+    amountCt: ct("18000"),
+    effectiveFrom: "2026-01-01",
+  });
+
   await elevatedDb.insert(schema.merchantLookups).values({
     ownerId: userId,
     matchTextCt: ct(`${label}-lookup`),

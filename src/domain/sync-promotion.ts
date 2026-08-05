@@ -272,18 +272,35 @@ async function promoteTransaction(
   reportingCurrency: string,
   txn: ScraperTransaction,
 ): Promise<TxnOutcome> {
-  const enteredAmount = decimalStringFromScraperNumber(txn.originalAmount);
+  // An installment slice is described by the Israeli card scrapers as an
+  // independent charge that repeats the WHOLE deal's figures: `originalAmount`
+  // is the deal sum rather than the payment (max.js:192,
+  // base-isracard-amex.js:108) and `date` is the purchase date on every slice
+  // (max.js:184). Taking those verbatim valued a ₪12,000 purchase at ₪12,000
+  // twelve times over, all inside the purchase month. The only per-slice
+  // figures the source gives are `chargedAmount` and `processedDate`, so
+  // those are what the entry is built from.
+  const slice = txn.installments ?? null;
+  const dealAmount = decimalStringFromScraperNumber(txn.originalAmount);
   const accountAmount = decimalStringFromScraperNumber(txn.chargedAmount);
-  const enteredCurrency = txn.originalCurrency;
   const accountCurrency = txn.chargedCurrency ?? resolved.currency;
+  const enteredAmount = slice ? accountAmount : dealAmount;
+  const enteredCurrency = slice ? accountCurrency : txn.originalCurrency;
+  const entryDate = slice ? txn.processedDate : txn.date;
 
+  // Keyed on the deal's stable figures — the purchase date and the deal sum,
+  // neither of which moves — plus the slice number, because Isracard gives
+  // every slice one identifier and without it all twelve collapse onto one
+  // entry. `processedDate` is deliberately still not an input: it mutates on
+  // pending -> posted, and a key that moved with it would fork the row.
   const importKey = computeImportKey({
     connectorId,
     accountId: resolved.id,
     identifier: txn.identifier,
-    originalAmount: enteredAmount,
-    originalCurrency: enteredCurrency,
+    originalAmount: dealAmount,
+    originalCurrency: txn.originalCurrency,
     date: txn.date,
+    installmentNumber: slice?.number ?? null,
   });
 
   const newStatus: "posted" | "pending" = txn.status === "completed" ? "posted" : "pending";
@@ -301,14 +318,14 @@ async function promoteTransaction(
   if (!existing) {
     // --- New: insert sync_staging -> insert entries + entry_transactions ---
     const entryId = randomUUID();
-    const fx = await resolveFx(tx, enteredCurrency, reportingCurrency, txn.date);
+    const fx = await resolveFx(tx, enteredCurrency, reportingCurrency, entryDate);
 
     await tx.insert(entries).values({
       id: entryId,
       ownerId,
       accountId: resolved.id,
       entryType: "transaction",
-      date: txn.date,
+      date: entryDate,
       descriptionCt: encText(dataKey, txn.description, entryId, "description_ct", 1),
       notesCt: txn.memo ? encText(dataKey, txn.memo, entryId, "notes_ct", 1) : null,
       status: newStatus,
@@ -319,7 +336,7 @@ async function promoteTransaction(
       accountCurrency,
       reportingCurrency,
       fxRate: fx?.rate ?? null,
-      fxRateDate: txn.date,
+      fxRateDate: entryDate,
       fxSource: fx?.source ?? null,
       fxStatus: fx ? "locked" : "pending",
       importKey,
@@ -331,13 +348,17 @@ async function promoteTransaction(
       entryId,
       ownerId,
       kind: "standard",
-      installmentNumber: txn.installments?.number ?? null,
-      totalInstallments: txn.installments?.total ?? null,
-      // The scraper gives no group id and no installment TOTAL amount
-      // (data-model.md §5/§6 tension 5) — installment_total_amount_ct stays
-      // null rather than a guessed value; installment_group_id stays null
-      // until a future background job stitches slices together.
-      installmentPurchaseDate: txn.installments ? txn.date : null,
+      installmentNumber: slice?.number ?? null,
+      totalInstallments: slice?.total ?? null,
+      // The deal sum the entry no longer carries, kept so the UI can say
+      // "payment 3 of 12 on a ₪12,000 purchase". `installment_group_id`
+      // stays null: the scraper gives no group id, and stitching slices
+      // together needs a background job that doesn't exist yet.
+      installmentTotalAmountCt: slice
+        ? encText(dataKey, dealAmount, entryId, "installment_total_amount_ct", 1)
+        : null,
+      installmentTotalCurrency: slice ? txn.originalCurrency : null,
+      installmentPurchaseDate: slice ? txn.date : null,
     });
 
     await tx.insert(syncStaging).values({
@@ -363,10 +384,27 @@ async function promoteTransaction(
     // unchanged, or it would silently fail to decrypt against the bumped
     // version.
     const newVersion = existing.version + 1;
+    // An installment slice that had not been charged yet reported its charge
+    // date as the purchase date (max.js:183); the real one arrives with this
+    // scrape. Re-date the row and re-resolve FX against the new date rather
+    // than leaving a slice parked in the purchase month.
+    const redate = entryDate.slice(0, 10) !== existing.date;
+    const fx = redate ? await resolveFx(tx, enteredCurrency, reportingCurrency, entryDate) : null;
     await tx
       .update(entries)
       .set({
         status: "posted",
+        // Only when the date really moved — an ordinary charge keeps the
+        // rate it locked at import, and re-resolving could only lose it.
+        ...(redate
+          ? {
+              date: entryDate,
+              fxRate: fx?.rate ?? null,
+              fxRateDate: entryDate,
+              fxSource: fx?.source ?? null,
+              fxStatus: fx ? ("locked" as const) : ("pending" as const),
+            }
+          : {}),
         descriptionCt: encText(dataKey, txn.description, existing.id, "description_ct", newVersion),
         notesCt: txn.memo ? encText(dataKey, txn.memo, existing.id, "notes_ct", newVersion) : null,
         enteredAmountCt: encText(

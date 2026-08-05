@@ -5,7 +5,7 @@
 // (money-and-currency.md §4).
 import { and, desc, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import { withUser } from "@/db/client";
-import { accounts, categories, entries, merchants } from "@/db/schema";
+import { accounts, categories, entries, entryTransactions, merchants } from "@/db/schema";
 import { multiply, type Money } from "@/lib/money";
 import type { Session } from "@/lib/auth/session-store";
 import { normalizeDescription } from "@/lib/categorization/normalize";
@@ -41,6 +41,11 @@ export interface EntryView {
    * transfer is not good or bad news (`src/domain/flows.ts`). */
   isTransfer: boolean;
   merchantName: string | null;
+  /** "3/12" when this entry is one payment of an installment deal, else null.
+   * The row's amount is that payment alone, and its date is when that payment
+   * is charged, so without the label a twelve-payment purchase reads as
+   * twelve unrelated charges. */
+  installmentLabel: string | null;
   /** Reporting (base-currency) amount when the rate is locked; the entered leg when pending. Sign carried. */
   amount: Money;
   /** True when no locked FX rate exists yet — amount is the entered leg, not reporting. */
@@ -119,6 +124,29 @@ export async function listEntries(
     const catName = new Map(catRows.map((c) => [c.id, c.name]));
     const transferCategoryIds = await loadTransferCategoryIds(tx);
 
+    // Installment slice metadata for exactly the rows on screen — plaintext
+    // columns only, so no decryption and no second pass over the ledger.
+    const sliceRows = rows.length
+      ? await tx
+          .select({
+            entryId: entryTransactions.entryId,
+            number: entryTransactions.installmentNumber,
+            total: entryTransactions.totalInstallments,
+          })
+          .from(entryTransactions)
+          .where(
+            inArray(
+              entryTransactions.entryId,
+              rows.map((r) => r.id),
+            ),
+          )
+      : [];
+    const installmentLabel = new Map(
+      sliceRows
+        .filter((r) => r.number != null && r.total != null)
+        .map((r) => [r.entryId, `${r.number}/${r.total}`]),
+    );
+
     const merRows = await tx
       .select({ id: merchants.id, nameCt: merchants.nameCt, version: merchants.version })
       .from(merchants);
@@ -152,6 +180,7 @@ export async function listEntries(
         categoryLocked: isFieldLocked(e.lockedAttributes, "category_id"),
         isTransfer: e.categoryId !== null && transferCategoryIds.has(e.categoryId),
         merchantName: e.merchantId ? (merName.get(e.merchantId) ?? null) : null,
+        installmentLabel: installmentLabel.get(e.id) ?? null,
         amount,
         fxPending,
         excluded: e.excluded,

@@ -42,10 +42,48 @@ new feedback lands.
 
 ## Feedback log (newest first — append, don't overwrite)
 
+### 2026-08-04 (later) — the budget history tab: an estimate is not a fact, and grouped bars are one group
+
+- **The owner cut a feature rather than reword it.** The hero read `27 days left · on track for ₪4,500.00`, and the fix on offer was better wording. Their answer: *"I'm concerned this 'on track' prediction isn't really valid, it's just an estimate. I suggest we drop it."* `projectedSpend` is gone from `BudgetMonthView` entirely — the domain field, the computation, and its tests. **When a number's problem is that it isn't trustworthy, no label rescues it.** The hero now states days-left and nothing more; the pace signal still lives on the Everyday rows, where a marker means something.
+- **`maxBarSize` is the wrong instrument for fat bars in a grouped chart.** Three series across three months filled the whole plot. `maxBarSize={28}` shrank the bars but Recharts keeps each bar centred in a slot it no longer fills, so the group floated apart into three unrelated columns. The space belongs *between* categories: drop `maxBarSize`, set `barCategoryGap`. It is also far more aggressive than it reads — `"45%"` gave ~10px bars where the 10% default gave ~60px; `"25%"` was right. **Tune it in the browser; you cannot compute it.**
+- **A suggestion the API would reject is a broken button.** The "Ceilings worth revisiting" rows offer a one-click "Lower to ₪X". A residual line with a ₪2,000 ceiling and zero spend produced `Lower to ₪0.00` — and `PositiveAmount` in `src/app/api/budget/schema.ts` refuses a ceiling of zero, so the click would have 400'd. Kept the row (the finding is true and useful) and replaced only the button with a plain "Never used": lowering to zero isn't a ceiling, it's `endCeiling`, a different action. **Whenever a component proposes a value to a validated endpoint, check the proposal against that endpoint's own constraints.**
+- **Two baselines in one sentence read as a contradiction.** The verdict line compares the average to the ceiling in force *now*, while "over budget in N of them" counts against each month's *own* ceiling. With an unchanged ceiling they agree; right after an edit they look wrong. Fixed with two words — "at the time" — rather than by dropping one of the numbers.
+- **Recharts tooltip position needs a second screenshot, again.** The first frame after hovering Jul put the tooltip next to May. It was mid-animation; the next capture was correct. Same note as the donut (2026-08-01) and the area chart (2026-08-03) — this is now three for three, so **never file a Recharts bug off one frame.**
+- **The dataviz skill's lightness band fails Moni's own tokens, and Moni wins.** `validate_palette.js` on teal/coral/blue (`chart-2/3/4`) FAILs "Lightness band" while passing chroma, CVD separation (ΔE 9.6 deutan), normal-vision (26.6) and contrast. The band is the skill's default-palette parameter, not a universal; `globals.css` is the token source of truth here. **Run the validator for the CVD and contrast checks — those are real — and expect the band to complain.**
+- **Verification needed the seed backdated, and it is easy to leave litter.** dana's ceilings all start 2026-07, so the window was a single month. Shifting `effective_from` on the *existing* rows works where inserting new ones does not — `encText` binds the ciphertext to `(id, column, version)`, so a copied amount under a fresh id will not decrypt. Two traps on the way back: `effective_from` is a `date`, and a `pg` readout renders it in local time, so `2026-06-30T21:00Z` is **2026-07-01** — restoring the printed string is off by one. And editing a ceiling through the UI *creates* a row for the current month if none existed, which the seed then keeps.
+
+### 2026-08-04 (last) — the residual ceiling: a value import from `@/domain` broke the page
+
+- **A `"use client"` component may import *types* from `@/domain`, never *values*.** Adding `import { RESIDUAL_KEY } from "@/domain/budget"` to `budget-screen.tsx` pulled `src/db/client.ts` and then `pg` into the browser bundle, and every request 500'd with `Can't resolve 'util/types'`. Types are erased; runtime constants are not. The fix is the pattern `src/lib/recurring/range.ts` already documents — the constant lives in `src/lib/budget/residual.ts` and the domain re-exports it for server callers. **The import trace in the Next dev log names the exact chain; read it before guessing.**
+- **Money that moves must be seen to move.** Dropping a category in the wizard now adds its amount to the "Everything else" line, so the budgeted total is unchanged by the removal. Watching ₪150 leave Public Transport and arrive in the residual is what makes the residual's purpose obvious without a paragraph explaining it.
+- **Don't show the same money in two places.** Once an "Everything else" ceiling exists it is an ordinary Everyday row, so the standalone "Unbudgeted spending" card is suppressed and the hero's "a further X went to categories with no ceiling" line was deleted outright. That card is now the place the residual is *offered*, not a second display of it.
+- **No link is better than a link that lies.** Every budget row drills into `/transactions?category=…`; the residual has no single category, and no filter expresses "whatever no other ceiling reaches". It renders as plain text with a muted "everything not budgeted above" gloss instead.
+- **Editing a migration in place needs both databases pushed.** Drizzle records migrations as applied by filename, and the test harness (`tests/db/setup-test-db.ts`) keeps its own applied-files table — so an edited `0023` re-runs for neither. `DROP DATABASE moni_test WITH (FORCE)` as the superuser (`TEST_SUPERUSER_URL`, not `DATABASE_URL_MIGRATE` — the app role doesn't own it) rebuilds the test DB; the dev DB needs the ALTERs applied by hand.
+
+### 2026-08-04 (later) — the budget planner (issue #69): a question with no way to say yes
+
+- **The affordance has to match the question.** The empty state asked *"Create a budget from your existing history?"* and then offered pills labelled `Last 3 months` / `Last 6 months`. Clicking one *was* the yes — and with only three months seeded, exactly one pill rendered beside "Set ceilings manually", so there was visibly nothing to agree to. The owner's report: *"I see 'Create a budget from your existing history?' but nowhere to choose 'yes'."* One primary **Plan my budget** button now answers the question; the window became a detail inside the flow. **When a control's label names a parameter, it cannot also be the answer to a yes/no question.**
+- **Split a wizard by the kind of question, not to shorten a form.** Fixed costs are near-certain and get *confirmed*; everyday spending is a judgement and gets shown against the months it came from; income is the verdict on both. Three steps, one Card, `Step N of 3 · <what>` headings, Back left / forward right in a footer rule.
+- **A mean nobody can see behind is just an assertion.** Everyday rows carry one small bar per month of the window plus Tight / Typical / Roomy chips priced from the user's own cheapest, mean and dearest months — never an invented percentage. Bar heights are the only floats; every figure still goes through `<Money>`.
+- **Round a proposed number at the display edge, and round it up.** The wizard first pre-filled `1242.68333333` into an input. The domain is forbidden from rounding (`money-and-currency.md` §3), so `roundCeiling` lives in the component — up to the next ₪10, because a ceiling rounded *down* is one the user's own history already breaks.
+- **A projection must not extrapolate a lump.** The new hero card read *"on track for ₪34,875"* on the 4th, because ₪4,500 of rent paid on the 1st got scaled by the fraction of the month elapsed. Fixed costs are now counted once at what they have already cost, and only everyday spending is extrapolated. Same reasoning retired the hero's pace marker: the total includes rent, which is 100% spent on day one by design — exactly why Fixed rows never had one.
+- **Two figures side by side must be comparable.** The hero it replaced showed Planned (`income − ceilings`, assuming every ceiling is spent to the brim, budgeted categories only) against Actual (`income − everything that left`). Different universes, and a part-finished month against a whole month's plan reads euphoric on the 4th. **When the owner says a card is "confusing", check first whether its two halves are even measuring the same thing.**
+- **Re-seeding logs you out, and `/login` will not show while a stale session cookie exists** — it redirects to `/onboarding` for a user that no longer exists. `POST /api/auth/logout` first, then log in.
+- **Identical demo months teach nothing.** Every seeded month had the same grocery amounts, so Tight / Typical / Roomy were one number three times. `MONTHLY_SPEND` now varies per month, and the seed derives a partial **current** month so the budget page — whose whole subject is the month you are in — doesn't open empty.
+
+### 2026-08-04 — the budget page (issue #69): a bar's colour is a fact about the numbers, not about its own width
+
+- **A progress ratio cannot decide "over budget" once rollover exists.** `BudgetBar` computed `ratio = spent / available` and called it over when `ratio > 1`. With rollover on, a carried deficit drives `available` to zero or below — Groceries showed ₪581.40 spent against a ₪300 ceiling with −₪562.80 carried in, so the row said "₪844.20 over" in coral **next to a full teal bar**. The guard `available > 0 ? spent > available : spent > 0` fixes it. **Whenever a denominator can legitimately reach zero, decide the state on the operands and use the ratio only for geometry.**
+- **An empty state on a past month must not offer to create things.** `/budget?month=2026-07` rendered the whole "Create a budget from your existing history?" flow, because "no ceiling in force this month" and "no budget at all" are the same boolean. Accepting it there would have backdated ceilings the user never lived under. The setup flow is now gated on `isCurrentMonth`, and a finished month with no ceiling says so instead. **A view that is parameterised by time needs its empty states parameterised too.**
+- **A `Number()` in a UI component is fine when it produces a CSS width.** The money-at-the-edge rule is about _rendered_ values; a bar width is never read as a figure. Said so at the call site so the next reader doesn't "fix" it. The genuinely risky version — client-side money arithmetic — was avoided by returning `available` (`ceiling + carriedIn`) from the domain layer as an exact string rather than adding two Money values in the component.
+- **`{"Total budgeted "}` survived Prettier.** The 2026-07-26 Turbopack space-eating trap did not recur, because every mixed text/expression line here is written as its own string expression from the start. Worth keeping as the default habit rather than a fix applied after seeing the bug.
+- **Named a state variable `chosenWindow`, not `window`** — the 2026-07-29 note, applied preemptively.
+- **Verification needed data the seed doesn't have.** The demo seed's newest entry is July while "today" is August, so every current-month figure is ₪0 and the interesting states (over budget, carried deficit, pace) are unreachable from a fresh seed. Backdating ceilings to May via `fetch` from the page console — the session cookie is already there — put real spend under real ceilings without touching the seed script. **When a feature's interesting states depend on the current month, expect the seed to be the blocker and drive the API from the page rather than editing fixtures.**
+
 ### 2026-08-03 (later) — the history graph (issue #37): a share of a portfolio is not a portfolio's worth
 
 - **"How did my money change" is a money axis, not a percentage axis.** The graph was a 0–100%
-  stacked composition and the owner called it *"completely wrong"*. A 100%-stacked chart has a flat
+  stacked composition and the owner called it _"completely wrong"_. A 100%-stacked chart has a flat
   top edge by construction, so the one question the screen exists to answer — what is this worth,
   and is it going up — was the one thing it could not show. Plotting the ILS value instead keeps
   every other affordance (the Holding/Account switch, the stack, the brush, the tooltip) and simply
@@ -67,8 +105,8 @@ new feedback lands.
 
 - **Never show the user a connector id.** The Accounts page rendered "snaptrade (EE23)" and
   "ibkr_flex (3443)" because `resolveAccount` named the account `${source} (${last4})` and set
-  `institution` to the source id. The user's words: *"A user doesn't need to see 'Snaptrade' in his
-  accounts — he should see 'Schwab'."* Two halves to the fix: `ConnectorDefinition.institutionLabel`
+  `institution` to the source id. The user's words: _"A user doesn't need to see 'Snaptrade' in his
+  accounts — he should see 'Schwab'."_ Two halves to the fix: `ConnectorDefinition.institutionLabel`
   for direct connectors (ibkr_flex → "Interactive Brokers"), and the payload's own
   `institution_name` for an **aggregator**, which by definition can reach many brokerages and so
   cannot be named from the registry. `institutionDisplayName(institution, connectorId)` in
@@ -91,7 +129,7 @@ new feedback lands.
   the button is only expressible once it's a `Set`. The button also flips to "Collapse all" when
   everything is open, and hides entirely below two connections.
 - **A hero figure and its own components must not read as siblings.** `Cash ₪1,343 · US$437.54 USD ·
-  ₪6 ILS` was correct arithmetic (the ₪1,343 is the ILS conversion of the other two) and still read
+₪6 ILS` was correct arithmetic (the ₪1,343 is the ILS conversion of the other two) and still read
   as three cash piles. Dropping the converted total fixed it — the portfolio total above already
   carries that number. **When a line lists parts, don't lead it with the whole.**
 - **Don't offer a control whose dialog would be empty.** "Import statement" showed with no
@@ -128,9 +166,9 @@ new feedback lands.
   `target="_blank" rel="noreferrer noopener"`.
 - **The timeframe control belongs under the chart as a draggable window.** Two `<input type="range">`
   labelled Start and End were the wrong instrument — Recharts' own `<Brush>` (as the prototype in
-  commit `f57b0fd` already had it) is one control that shows the window *and* the dates it covers.
+  commit `f57b0fd` already had it) is one control that shows the window _and_ the dates it covers.
   Consequence worth knowing: with a Brush you must pass the chart the **full** data array and let
-  `startIndex`/`endIndex` window it. Pre-slicing the array *and* brushing it feeds the brush its own
+  `startIndex`/`endIndex` window it. Pre-slicing the array _and_ brushing it feeds the brush its own
   output. Reset the indices to `null` whenever new history loads, since indices into a new range are
   meaningless.
 - **A worker's safe failure code is not a user-facing message.** "Last sync failed,
@@ -141,12 +179,12 @@ new feedback lands.
   (`send_flex_1012` → "Your Flex token has expired. Create a new token…"). **Any new worker error
   code needs an entry there or it surfaces raw.**
 - **A button that un-presses while the work continues is worse than no feedback.** The import dialog
-  called `setBusy(false)` right after the POST returned 202 — but the POST only *starts* a worker,
+  called `setBusy(false)` right after the POST returned 202 — but the POST only _starts_ a worker,
   and the real wait is `waitForSyncRun`. The busy flag has to span the whole promise (`try/finally`),
   and the dialog swaps its whole body for a spinner rather than only disabling the button.
 - **Style `<input type="file">` with the `file:` variants.** The native "Choose File" button is
   unstyled and reads as plain text on a dark card; `file:rounded-[var(--radius)] file:border
-  file:border-border file:bg-muted file:px-3 file:py-1.5` makes it a button.
+file:border-border file:bg-muted file:px-3 file:py-1.5` makes it a button.
 - **Don't name a shared surface after one provider.** "Import Schwab statement" and a hardcoded
   `?? "Schwab"` fallback assumed the only importer there will ever be. Fall back to
   `getConnectorDefinition(connectorId)?.label` instead.
@@ -165,7 +203,7 @@ new feedback lands.
   `snapshotTotal`/`estimatedTotal`). That phantom line also encoded nothing — a constant `0` on a
   0–100% composition axis — so it was removed rather than restructured.
 - **My first diagnosis was wrong and the owner's second report corrected it.** I read "tooltip
-  doesn't match the graph" as a date-convention mismatch (the axis showed week *start* dates while
+  doesn't match the graph" as a date-convention mismatch (the axis showed week _start_ dates while
   the tooltip said "Week ending"), which was real and worth fixing, but it was not what they were
   seeing. **A constant offset and a stuck value are different symptoms — establish which one before
   fixing.** Hovering two known x positions and comparing the tooltip against the tick under the
@@ -182,7 +220,7 @@ new feedback lands.
 
 ### 2026-07-30 (later) — delete account (issue #31): the confirm flow the Remove button was waiting for
 
-- **The 2026-07-30 rule below was a "not yet", not a "never".** "Don't offer a destructive control with no undo" ended with *"until there's a confirm flow that can say what is lost"*. This is that flow, so the copy enumerates the loss ("your transactions and their history, your accounts and balances, your categories, rules and merchants, and every bank connection along with its encrypted login") instead of asking "are you sure?". The owner chose **password re-entry** over a type-your-email confirmation when asked: a typed email stops a misclick, a password also stops a borrowed session.
+- **The 2026-07-30 rule below was a "not yet", not a "never".** "Don't offer a destructive control with no undo" ended with _"until there's a confirm flow that can say what is lost"_. This is that flow, so the copy enumerates the loss ("your transactions and their history, your accounts and balances, your categories, rules and merchants, and every bank connection along with its encrypted login") instead of asking "are you sure?". The owner chose **password re-entry** over a type-your-email confirmation when asked: a typed email stops a misclick, a password also stops a borrowed session.
 - **A destructive control needed a `Button` variant, not utilities through `className`.** First instinct was `variant="outline"` plus `bg-negative/10 text-negative` — which is exactly the 2026-07-28 `cn`-is-a-plain-join trap, since the variant's own `bg-transparent` wins by stylesheet order, not class order. Added `variant="destructive"` (coral outline, hover-fill) to `src/components/ui/button.tsx` and documented the pattern in `ui-and-feel.md` §6. **When a new state needs conflicting utilities, extend the primitive.**
 - **Coral has a second meaning now.** §3 says coral = negative amount. `variant="destructive"` makes it also mean "this destroys something". Worth watching: a destructive button next to a coral money value in the same view has not happened yet and would read ambiguously.
 - **A destructive control goes in its own card, last.** Putting "Delete account" inside the same Card as the name field would mean the form you use to change your name is also the form that erases you. Two Cards in a `flex-col gap-8`, delete last.
@@ -195,14 +233,14 @@ new feedback lands.
 - **Removing an input can remove a whole step.** The Moni-password field disappeared from the connect form, the connection-edit form, and the arm prompt — bank credentials are now unlocked by a passkey, so there is nothing to type. The arm prompt went from a `<form>` with an `Input` to a single outline `Button` with a `KeyRound` icon and a spinner while the ceremony is open. The 423 handling that used to surface as "Wrong password" now shows the ceremony's own message, which is the only thing that distinguishes "you cancelled" from "this deployment moved and your passkey is bound to the old domain".
 - **A prerequisite goes above the thing it gates, not below it.** `PasskeyManager` sits above `ConnectionsList` on Settings › Connections: with no passkey there is no key to encrypt a bank login under, so it is the precondition, not a footnote. It owns that view's amber **only while nothing is enrolled** (`variant={none ? "primary" : "outline"}`) — once a passkey exists, "Add connection" is the primary action again, so the amber moves rather than duplicating. Per the per-view accent rule, "Add connection" was demoted to `variant="outline"` because the empty-state passkey CTA outranks it.
 - **Don't offer a destructive control with no undo.** `PasskeyManager` deliberately has no "Remove". With no recovery path for CK, a Remove button beside the last passkey is a one-click way to destroy every stored bank login. Listing without removing is the honest shape until there's a confirm flow that can say what is lost.
-- **`throw` at module load in a `lib/` file fails `next build`, not just a bad request.** `webauthn-config.ts` validated `MONI_WEBAUTHN_RP_ID` at import — correct-looking, and it broke the build: "Collecting page data" imports every route module in an environment that legitimately has no runtime env, so the build failed instead of the misconfiguration. Fixed by validating on first *use* and memoizing (`relyingParty()`), which keeps the loud failure exactly where it matters (first passkey request) without making a build depend on deployment config. **Any env validation that throws must be lazy if a route module imports it.**
+- **`throw` at module load in a `lib/` file fails `next build`, not just a bad request.** `webauthn-config.ts` validated `MONI_WEBAUTHN_RP_ID` at import — correct-looking, and it broke the build: "Collecting page data" imports every route module in an environment that legitimately has no runtime env, so the build failed instead of the misconfiguration. Fixed by validating on first _use_ and memoizing (`relyingParty()`), which keeps the loud failure exactly where it matters (first passkey request) without making a build depend on deployment config. **Any env validation that throws must be lazy if a route module imports it.**
 - **The gates all passed with the build broken.** typecheck, lint, format and 386 tests were green while `npm run build` failed outright. CI runs `build` as a fifth step for exactly this reason — run it locally too whenever a change adds module-level side effects.
 - **Not visually verified by me.** The owner took the browser pass this session. Worth checking specifically: the onboarding passkey step (first screen a new user sees now), the Settings › Connections stack order and where the amber lands with 0 vs 1 passkeys, and the arm button's spinner state while a biometric prompt is open.
 
 ### 2026-07-29 (later) — the recurring tab (issue #15): icon toggles over Switches, and a disable comment that disabled nothing
 
 - **A per-row boolean is an icon toggle, not a `Switch`.** The recurring flag needed a control on every
-  category *and* every subcategory — the shipped set puts Salary under Income, so a group-level flag
+  category _and_ every subcategory — the shipped set puts Salary under Income, so a group-level flag
   would drag refunds and dividends in with it. `Switch` is amber "on", and a two-column grid of ~20
   groups would have put dozens of amber tracks in one view. A `Repeat` icon that goes `text-primary`
   when set is the same signal at a fraction of the weight, matching the category picker's
@@ -211,7 +249,7 @@ new feedback lands.
 - **`// eslint-disable-next-line` with a wrapped description disables nothing.** The waiver for
   `@next/next/no-img-element` in `merchant-icon.tsx` had its justification spilling onto a second
   comment line, so "next line" pointed at the comment rather than the `<img>`. Lint still reported the
-  warning and it read as a phantom. Put the reason on the lines *above* and the bare disable directive
+  warning and it read as a phantom. Put the reason on the lines _above_ and the bare disable directive
   immediately before the element.
 - **Don't name a state variable `window`.** `const [window, setWindow]` in a row component sat a few
   lines from a `window.location.search` read in the same file. Renamed to `paymentWindow`.
