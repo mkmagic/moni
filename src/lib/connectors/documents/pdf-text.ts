@@ -98,3 +98,59 @@ export function joinRtl(items: Item[]): string {
     .map((item) => item.text)
     .join(" ");
 }
+
+export function findLabel(items: Item[], pattern: RegExp): Item | undefined {
+  return items.find((item) => pattern.test(item.text));
+}
+
+/** The value cell of the RTL label/value pair whose label matches `pattern`. */
+export function valueAt(items: Item[], pattern: RegExp): string | null {
+  const label = findLabel(items, pattern);
+  return label ? numberLeftOf(items, label) : null;
+}
+
+/** One column of a table, anchored by the horizontal midpoint cells match to. */
+export interface Column {
+  title: string;
+  centre: number;
+}
+
+/**
+ * Derives a table's columns from its stacked header fragments: merges fragments
+ * that overlap in x, so "תגמולי" over "עובד/ת" becomes one column whose centre
+ * anchors the cells beneath it. `headerAnchor` is a cell on the header's own
+ * baseline; the band it defines reaches ~14pt above to catch a stacked fragment.
+ * Derived per page — no coordinate is hardcoded, so a table that omits a column
+ * still parses.
+ */
+export function depositColumns(items: Item[], headerAnchor: Item): Column[] {
+  const band = items.filter(
+    (item) =>
+      item.page === headerAnchor.page &&
+      item.y <= headerAnchor.y + SAME_ROW &&
+      item.y >= headerAnchor.y - 14,
+  );
+
+  const groups: Item[][] = [];
+  for (const item of [...band].sort((a, b) => b.x - a.x)) {
+    const overlapping = groups.find((group) =>
+      group.some((other) => item.x < other.right && other.x < item.right),
+    );
+    if (overlapping) overlapping.push(item);
+    else groups.push([item]);
+  }
+
+  return groups
+    .map((group) => {
+      const left = Math.min(...group.map((item) => item.x));
+      const right = Math.max(...group.map((item) => item.right));
+      return {
+        title: [...group]
+          .sort((a, b) => b.y - a.y)
+          .map((item) => item.text)
+          .join(" "),
+        centre: (left + right) / 2,
+      };
+    })
+    .sort((a, b) => b.centre - a.centre);
+}

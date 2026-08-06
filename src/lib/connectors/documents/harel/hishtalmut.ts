@@ -29,21 +29,32 @@ import { z } from "zod";
 import type { LongTermSavingsReport } from "../long-term-savings-report";
 import {
   SAME_ROW,
+  depositColumns,
+  findLabel,
   groupRows,
   hasPercentSign,
   isNumber,
   joinRtl,
-  numberLeftOf,
   toDecimalString,
+  valueAt,
+  type Column,
   type Item,
 } from "../pdf-text";
+import {
+  DATE,
+  DEPOSITS_SECTION,
+  TOTALS_CELL,
+  decimalString,
+  isoDate,
+  isoDateString,
+  isoMonth,
+  isoMonthString,
+  parseDeposits,
+  requiredValueAt,
+} from "./shared";
 import { DocumentParseError, type DocumentParser } from "../types";
 
 // ------------------------------------------------------------------- shape
-
-const decimalString = z.string().regex(/^-?\d+(\.\d+)?$/);
-const isoDateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-const isoMonthString = z.string().regex(/^\d{4}-\d{2}$/);
 
 /**
  * Section ב. Israeli reports state these from the start of the fiscal year, not
@@ -118,11 +129,6 @@ export type HarelHishtalmutReport = z.infer<typeof harelHishtalmutReportSchema>;
 
 // ------------------------------------------------------------------ anchors
 
-const DATE = String.raw`\d{2}\/\d{2}\/\d{4}`;
-const DEPOSITS_SECTION = /^ה\. פירוט הפקדות/;
-const DEPOSITS_HEADER_ANCHOR = "מועד";
-const TOTALS_CELL = /^סה"כ$/;
-
 /**
  * The titles the deposits table is expected to print. Geometry alone cannot say
  * which of the derived header groups are the table's: the "check your payslip"
@@ -152,47 +158,6 @@ const COLUMN_TITLES = [
  * visible.
  */
 const UNSUPPORTED_COLUMN_TITLES = [/^פיצויים/];
-
-/**
- * `dd/mm/yyyy` → `yyyy-mm-dd`, rejecting a date the calendar does not have.
- * The schema above only checks the shape, so without this a misread "31/13/2026"
- * would travel all the way to a Postgres `date` column and surface as a
- * promotion failure rather than as the parse failure it is.
- */
-function isoDate(ddmmyyyy: string): string {
-  const [d, m, y] = ddmmyyyy.split("/");
-  const date = new Date(Date.UTC(Number(y), Number(m) - 1, Number(d)));
-  if (
-    date.getUTCFullYear() !== Number(y) ||
-    date.getUTCMonth() !== Number(m) - 1 ||
-    date.getUTCDate() !== Number(d)
-  )
-    throw new DocumentParseError("malformed_document");
-  return `${y}-${m}-${d}`;
-}
-
-function isoMonth(mmyyyy: string): string {
-  const [m, y] = mmyyyy.split("/");
-  if (Number(m) < 1 || Number(m) > 12) throw new DocumentParseError("malformed_document");
-  return `${y}-${m}`;
-}
-
-function findLabel(items: Item[], pattern: RegExp): Item | undefined {
-  return items.find((item) => pattern.test(item.text));
-}
-
-/** The value cell of the RTL label/value pair whose label matches `pattern`. */
-function valueAt(items: Item[], pattern: RegExp): string | null {
-  const label = findLabel(items, pattern);
-  return label ? numberLeftOf(items, label) : null;
-}
-
-/** A section-ב figure the document must carry; its absence means a misparse. */
-function requiredValueAt(items: Item[], pattern: RegExp): string {
-  const value = valueAt(items, pattern);
-  if (value === null) throw new DocumentParseError("malformed_document");
-  return value;
-}
 
 // ------------------------------------------------------------------- header
 
@@ -366,11 +331,6 @@ function parseTracks(items: Item[]): z.infer<typeof trackSchema>[] {
 
 // -------------------------------------------------------- section ה (table)
 
-interface Column {
-  title: string;
-  centre: number;
-}
-
 /**
  * A row as read off the page, before validation. Every money cell may be null
  * here — that is how a cell the column matcher could not find travels to the
@@ -388,43 +348,6 @@ interface DepositRowCandidate {
 }
 
 type DepositTotalsCandidate = Record<keyof z.infer<typeof depositTotalsSchema>, string | null>;
-
-/**
- * Merges the stacked header fragments into columns by x-overlap, so "תגמולי"
- * over "עובד/ת" becomes one column whose centre anchors the cells beneath it.
- * Derived per page — no coordinates are hardcoded.
- */
-function depositColumns(items: Item[], headerAnchor: Item): Column[] {
-  const band = items.filter(
-    (item) =>
-      item.page === headerAnchor.page &&
-      item.y <= headerAnchor.y + SAME_ROW &&
-      item.y >= headerAnchor.y - 14,
-  );
-
-  const groups: Item[][] = [];
-  for (const item of [...band].sort((a, b) => b.x - a.x)) {
-    const overlapping = groups.find((group) =>
-      group.some((other) => item.x < other.right && other.x < item.right),
-    );
-    if (overlapping) overlapping.push(item);
-    else groups.push([item]);
-  }
-
-  return groups
-    .map((group) => {
-      const left = Math.min(...group.map((item) => item.x));
-      const right = Math.max(...group.map((item) => item.right));
-      return {
-        title: [...group]
-          .sort((a, b) => b.y - a.y)
-          .map((item) => item.text)
-          .join(" "),
-        centre: (left + right) / 2,
-      };
-    })
-    .sort((a, b) => b.centre - a.centre);
-}
 
 /** Reads one page's worth of the deposits table. */
 function parseDepositsPage(
@@ -543,40 +466,6 @@ function parseDepositsPage(
   return { rows, totals: null };
 }
 
-/**
- * Section ה, which continues across pages: Harel repeats the section heading
- * and the column header on each page it spills onto, and prints the totals row
- * only on the last. Columns are re-derived per page rather than carried over,
- * because each page's header is the authority for its own cells.
- */
-function parseDeposits(items: Item[]): {
-  rows: DepositRowCandidate[];
-  totals: DepositTotalsCandidate | null;
-} {
-  const rows: DepositRowCandidate[] = [];
-  let totals: DepositTotalsCandidate | null = null;
-
-  for (const heading of items.filter((item) => DEPOSITS_SECTION.test(item.text))) {
-    const anchor = items.find(
-      (item) =>
-        item.page === heading.page &&
-        item.text === DEPOSITS_HEADER_ANCHOR &&
-        item.y < heading.y &&
-        heading.y - item.y < 30,
-    );
-    // A page carrying the section heading without a column header means the
-    // layout moved. Skipping it would drop that page's deposits silently, and
-    // the only check that could notice needs the totals row — printed on the
-    // last page alone.
-    if (!anchor) throw new DocumentParseError("malformed_document");
-    const page = parseDepositsPage(items, anchor);
-    rows.push(...page.rows);
-    if (page.totals) totals = page.totals;
-  }
-
-  return { rows, totals };
-}
-
 // ------------------------------------------------------------------ parser
 
 /**
@@ -662,7 +551,7 @@ export const harelHishtalmutParser: DocumentParser<HarelHishtalmutReport> = {
       movements: parseMovements(items),
       fees: parseFees(items),
       tracks: parseTracks(items),
-      deposits: parseDeposits(items),
+      deposits: parseDeposits(items, parseDepositsPage),
     });
     if (!parsed.success) throw new DocumentParseError("malformed_document");
     return parsed.data;
