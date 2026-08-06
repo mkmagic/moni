@@ -2,14 +2,23 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { RefreshCw, X, Loader2 } from "lucide-react";
+import { FileUp, RefreshCw, X, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ArmPrompt } from "@/components/arm-prompt";
+import { ImportDialog } from "@/components/import-dialog";
+import type { ConnectionView } from "@/domain/connections";
 import { useSyncAll } from "@/lib/use-sync-all";
 
 interface DashboardSyncProps {
   connectionIds: string[];
+  /**
+   * Every connection Moni cannot fetch on its own — a broker CSV and a pension
+   * PDF alike. Deliberately not scoped to long-term savings: two file
+   * connections behaving differently here would follow no rule a user could
+   * infer, and Schwab gains the same discoverability (#77 §4).
+   */
+  importConnections: ConnectionView[];
   /** The user asked to be reminded and has been away a while. */
   showReminder: boolean;
   title: string;
@@ -29,6 +38,7 @@ interface DashboardSyncProps {
  */
 export function DashboardSync({
   connectionIds,
+  importConnections,
   showReminder,
   title,
   greeting,
@@ -36,6 +46,7 @@ export function DashboardSync({
   const router = useRouter();
   const [dismissed, setDismissed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   const sync = useSyncAll({
     onRunFinished: (_id, status, runError) => {
@@ -94,29 +105,53 @@ export function DashboardSync({
           <p className="text-sm text-muted-foreground">{greeting}</p>
         </div>
         <div className="flex flex-col items-end gap-1.5">
-          {sync.state.kind === "locked" ? (
-            <ArmPrompt label="Unlock to continue" onArm={() => sync.arm()} />
-          ) : (
-            // Outline, not the amber primary: the dashboard's accent belongs
-            // to the reminder card's own call to action when it's showing.
-            <Button
-              type="button"
-              variant="outline"
-              onClick={startAll}
-              disabled={progress !== null || connectionIds.length === 0}
-              className="gap-1.5"
-            >
-              {progress ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="h-3.5 w-3.5" />
-              )}
-              {progress ? `Syncing ${progress.done + 1} of ${progress.total}…` : "Sync all"}
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            {/* Only offered when there is something to import — a dialog whose
+                connection picker would be empty is a broken button. */}
+            {importConnections.length > 0 && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setImportOpen(true)}
+                className="gap-1.5"
+              >
+                <FileUp className="h-3.5 w-3.5" /> Import file
+              </Button>
+            )}
+            {sync.state.kind === "locked" ? (
+              <ArmPrompt label="Unlock to continue" onArm={() => sync.arm()} />
+            ) : (
+              // Outline, not the amber primary: the dashboard's accent belongs
+              // to the reminder card's own call to action when it's showing.
+              <Button
+                type="button"
+                variant="outline"
+                onClick={startAll}
+                disabled={progress !== null || connectionIds.length === 0}
+                className="gap-1.5"
+              >
+                {progress ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5" />
+                )}
+                {progress ? `Syncing ${progress.done + 1} of ${progress.total}…` : "Sync all"}
+              </Button>
+            )}
+          </div>
           {error && <span className="max-w-xs break-words text-xs text-negative">{error}</span>}
         </div>
       </div>
+
+      <ImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        connections={importConnections}
+        onDone={() => {
+          setImportOpen(false);
+          router.refresh();
+        }}
+      />
     </>
   );
 }

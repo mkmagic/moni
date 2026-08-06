@@ -161,6 +161,41 @@ not a separately stored container; users can drill down from it by connection an
 account.
 _Avoid_: A user-created or broker-owned grouping.
 
+### Long-term savings
+
+**Long-term savings account**:
+One institutional savings product held at one provider — a pension fund, קרן
+השתלמות, קופת גמל, קופת גמל להשקעה, or ביטוח מנהלים. All of them are reported
+periodically as an official statement rather than as a transaction feed, which is
+the property that decides how Moni reads them. What separates them from each
+other is their **liquidity horizon**, not their name.
+_Avoid_: Pension account (that's one product of several), retirement account,
+provident fund as a catch-all.
+
+**Liquidity horizon**:
+When the money in an account becomes the user's to spend — now, on a stated
+future date, or only at retirement. It varies _within_ product types: קופת גמל
+להשקעה is liquid today while קופת גמל לתגמולים is locked to retirement. It never
+removes a balance from net worth; it governs how that balance is presented.
+_Avoid_: Locked, restricted, vesting.
+
+**Long-term savings snapshot**:
+The complete state of one long-term savings account as asserted by one official
+statement: the closing balance, the flows the statement reports for its period,
+and the individual deposits behind them. It is evidence a provider published, not
+an observation Moni made, and it never becomes ledger entries — a contribution is
+part of the snapshot that reports it, not a transaction in the account it came
+from.
+_Avoid_: Import, statement import, pension transaction.
+
+**Stated period**:
+The span a statement itself claims its flows cover — which is year-to-date on an
+Israeli quarterly report, not the quarter. A snapshot's flows always belong to the
+stated period and are stored exactly as published. Per-quarter figures are derived
+in the view by differencing consecutive snapshots, and are simply unavailable when
+the earlier snapshot is missing.
+_Avoid_: Quarter, reporting quarter, period (unqualified).
+
 **Portfolio value history**:
 The calculated weekly series of a portfolio's total market value, including the
 effect of deposits and withdrawals. A missing account snapshot may be carried

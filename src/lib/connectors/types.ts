@@ -9,8 +9,24 @@
 /** What kind of account a connector represents — drives account-type
  * inference at scrape-promotion time (src/domain/sync-promotion.ts) and the
  * onboarding picker's grouping (a later cluster, not built here). */
-export type ConnectorKind = "bank" | "credit_card" | "investment";
+export type ConnectorKind = "bank" | "credit_card" | "investment" | "long_term_savings";
 export type ConnectorMode = "credentialed_fetch" | "user_mediated_import";
+
+/**
+ * The kinds whose connector id is an israeli-bank-scrapers `SCRAPERS` key. The
+ * registry drift gate only applies to these; everything else reaches its
+ * provider by some other route entirely.
+ */
+export const SCRAPER_BACKED_KINDS: readonly ConnectorKind[] = ["bank", "credit_card"];
+
+/**
+ * Which long-term-savings product a connector's documents describe. Set only
+ * on `long_term_savings` connectors — one parser reads one product's report
+ * layout, so the product is a property of the connector, not something the
+ * user picks.
+ */
+export type LongTermSavingsProduct =
+  "pension" | "hishtalmut" | "gemel" | "gemel_investment" | "managers_insurance";
 
 export type LoginFieldInputType = "text" | "password";
 
@@ -46,7 +62,9 @@ export type ConnectorId =
   | "yahav"
   | "ibkr_flex"
   | "schwab_positions_csv"
-  | "snaptrade";
+  | "snaptrade"
+  | "harel_pension_quarterly"
+  | "harel_hishtalmut";
 
 export interface ConnectorDefinition {
   id: ConnectorId;
@@ -60,6 +78,8 @@ export interface ConnectorDefinition {
    */
   institutionLabel?: string;
   kind: ConnectorKind;
+  /** Set exactly when `kind` is `long_term_savings`. */
+  product?: LongTermSavingsProduct;
   mode: ConnectorMode;
   /** Ordered to match the scraper's expected credentials-object key order. */
   loginFields: LoginFieldDescriptor[];

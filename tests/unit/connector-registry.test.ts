@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { SCRAPERS } from "israeli-bank-scrapers";
 import { CONNECTOR_REGISTRY } from "@/lib/connectors/registry";
+import { SCRAPER_BACKED_KINDS } from "@/lib/connectors/types";
 
 describe("CONNECTOR_REGISTRY matches israeli-bank-scrapers' SCRAPERS", () => {
   const scrapersById = SCRAPERS as unknown as Record<
@@ -14,8 +15,12 @@ describe("CONNECTOR_REGISTRY matches israeli-bank-scrapers' SCRAPERS", () => {
     { name: string; loginFields: string[] }
   >;
 
-  for (const [id, def] of Object.entries(CONNECTOR_REGISTRY).filter(
-    ([, definition]) => definition.kind !== "investment",
+  // An allowlist of the scraper-backed kinds, not a denylist of the one kind
+  // that isn't. A denylist quietly stops gating the moment a connector kind is
+  // added that the library has never heard of — and then asserts the library
+  // has an entry for it, which fails for the wrong reason.
+  for (const [id, def] of Object.entries(CONNECTOR_REGISTRY).filter(([, definition]) =>
+    SCRAPER_BACKED_KINDS.includes(definition.kind),
   )) {
     it(`${id}: field keys (in order) match SCRAPERS["${id}"].loginFields`, () => {
       const libEntry = scrapersById[id];
@@ -57,5 +62,41 @@ describe("CONNECTOR_REGISTRY matches israeli-bank-scrapers' SCRAPERS", () => {
         ],
       }),
     ]);
+  });
+
+  it("defines exactly the supported long-term-savings connectors", () => {
+    expect(
+      Object.values(CONNECTOR_REGISTRY).filter(
+        (definition) => definition.kind === "long_term_savings",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        id: "harel_pension_quarterly",
+        institutionLabel: "Harel",
+        product: "pension",
+        // A quarterly report is uploaded by the user; there is nothing to log
+        // in to and therefore no credential to hold.
+        mode: "user_mediated_import",
+        loginFields: [],
+      }),
+      // One entry covers both the quarterly and the annual קרן השתלמות report:
+      // they are the same layout with sections dropped, so one parser reads
+      // both and the user is not asked to classify the file they are holding.
+      expect.objectContaining({
+        id: "harel_hishtalmut",
+        institutionLabel: "Harel",
+        product: "hishtalmut",
+        mode: "user_mediated_import",
+        loginFields: [],
+      }),
+    ]);
+  });
+
+  it("carries a product on every long-term-savings connector and on no other", () => {
+    for (const definition of Object.values(CONNECTOR_REGISTRY)) {
+      expect(definition.product !== undefined, `${definition.id} (${definition.kind})`).toBe(
+        definition.kind === "long_term_savings",
+      );
+    }
   });
 });

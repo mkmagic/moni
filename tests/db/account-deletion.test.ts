@@ -335,6 +335,87 @@ async function seedFullOwner(label: string): Promise<OwnerFixture> {
     promotedEntryId: inflow.id,
   });
 
+  await elevatedDb.transaction(async (tx) => {
+    const [savingsAccount] = await tx
+      .insert(schema.accounts)
+      .values({
+        ownerId: userId,
+        accountType: "long_term_savings",
+        classification: "asset",
+        connectionId: connection.id,
+        nameCt: ct(`${label}-pension`),
+        currency: "ILS",
+        status: "active",
+      })
+      .returning({ id: schema.accounts.id });
+
+    await tx.insert(schema.longTermSavingsDetails).values({
+      ownerId: userId,
+      accountId: savingsAccount.id,
+      product: "pension",
+      liquidity: "locked_retirement",
+    });
+
+    const [balance] = await tx
+      .insert(schema.accountBalanceSnapshots)
+      .values({
+        ownerId: userId,
+        accountId: savingsAccount.id,
+        date: "2026-03-31",
+        nativeBalanceCt: ct("76243"),
+        currency: "ILS",
+        source: "long_term_savings",
+      })
+      .returning({ id: schema.accountBalanceSnapshots.id });
+
+    const [snapshot] = await tx
+      .insert(schema.longTermSavingsSnapshots)
+      .values({
+        ownerId: userId,
+        accountBalanceSnapshotId: balance.id,
+        accountId: savingsAccount.id,
+        connectionId: connection.id,
+        syncRunId: syncRun.id,
+        asOf: "2026-03-31",
+        statedPeriodStart: "2026-01-01",
+        statedPeriodEnd: "2026-03-31",
+        currency: "ILS",
+        closingBalanceCt: ct("76243"),
+        openingBalanceCt: ct("72306"),
+        contributionsCt: ct("7076"),
+        investmentResultCt: ct("-2954"),
+        feesChargedCt: ct("0"),
+        insuranceDisabilityCt: ct("-131"),
+        insuranceDeathCt: ct("-53"),
+        balanceDriftCt: ct("1"),
+        checkResultsCt: ct("[]"),
+        parserId: "harel_pension_quarterly",
+        parserVersion: 1,
+      })
+      .returning({ id: schema.longTermSavingsSnapshots.id });
+
+    await tx.insert(schema.longTermSavingsSnapshotDeposits).values({
+      ownerId: userId,
+      snapshotId: snapshot.id,
+      rowIndex: 0,
+      depositDate: "2026-01-01",
+      forMonth: "2025-12",
+      employeeCt: ct("729"),
+      employerContributionCt: ct("781"),
+      severanceCt: ct("625"),
+      totalCt: ct("2135"),
+    });
+
+    await tx.insert(schema.longTermSavingsSnapshotTracks).values({
+      ownerId: userId,
+      snapshotId: snapshot.id,
+      rowIndex: 0,
+      nameCt: ct(`${label}-track`),
+      returnPct: "-3.81",
+      annualCostPct: "0.10",
+    });
+  });
+
   return { userId, email };
 }
 

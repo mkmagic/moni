@@ -47,4 +47,26 @@ describe("syncErrorMessage", () => {
     expect(syncErrorMessage("some_new_code")).toBe("some_new_code");
     expect(syncErrorMessage(null)).toBe("Last sync failed");
   });
+
+  it("explains every way an imported document can fail", () => {
+    // A document import has exactly one failure path (#76 D9), so a code
+    // missing here is the whole thing the user sees. `balance_check_failed`
+    // arrives with the failing check appended; the advice hangs off the code in
+    // front of it, and the check name is a log diagnostic, not a message.
+    for (const code of [
+      "balance_check_failed",
+      "account_type_mismatch",
+      "unrecognised_document",
+      "malformed_document",
+      "unreadable_document",
+    ])
+      expect(syncErrorMessage(code)).not.toBe(code);
+
+    expect(syncErrorMessage("balance_check_failed: balance_equation")).toBe(
+      syncErrorMessage("balance_check_failed"),
+    );
+    expect(syncErrorMessage("balance_check_failed: column_total:severance")).toBe(
+      syncErrorMessage("balance_check_failed"),
+    );
+  });
 });

@@ -64,7 +64,11 @@ function start(script: string, frame: Buffer, captureStdout = false): ReturnType
 
 /** Starts a source worker and preserves the existing guarded failed-run fallback. */
 export async function spawnInvestmentSyncWorker(input: {
-  script: "ibkr-worker.mts" | "schwab-import-worker.mts" | "snaptrade-worker.mts";
+  script:
+    | "ibkr-worker.mts"
+    | "schwab-import-worker.mts"
+    | "snaptrade-worker.mts"
+    | "long-term-savings-import-worker.mts";
   metadata: Record<string, unknown>;
   segments: Buffer[];
   userId: string;

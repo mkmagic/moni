@@ -18,6 +18,7 @@ import {
   type ChildStdinPayload,
 } from "@/lib/connectors";
 import { spawnInvestmentSyncWorker } from "@/lib/investments";
+import { PRODUCT_LABEL } from "@/lib/long-term-savings/labels";
 import { redactSecrets } from "@/lib/redact-secrets";
 
 const Params = z.object({ id: z.uuid() });
@@ -44,6 +45,8 @@ const Json = z
   .strict();
 const Currency = z.string().regex(/^[A-Z]{3}$/);
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+/** Every PDF opens with this, whatever the browser claimed the type was. */
+const PDF_MAGIC = Buffer.from("%PDF-", "ascii");
 /** Cap on retained child stderr — enough for a stack trace, bounded so a
  * chatty (or hostile) scrape can't grow the server's heap. */
 const MAX_STDERR_CHARS = 8 * 1024;
@@ -77,8 +80,13 @@ export async function POST(
     const form = await req.formData().catch(() => null);
     const file = form?.get("file");
     const valuationCurrency = form?.get("valuationCurrency");
+    if (!(file instanceof File))
+      return NextResponse.json({ error: "invalid request" }, { status: 400 });
+    // A long-term-savings report is denominated in shekels on the page and
+    // needs no FX at import; an investment CSV must say what to value it in.
+    const needsValuationCurrency = definition.kind !== "long_term_savings";
     if (
-      !(file instanceof File) ||
+      needsValuationCurrency &&
       !(typeof valuationCurrency === "string" && Currency.safeParse(valuationCurrency).success)
     )
       return NextResponse.json({ error: "invalid request" }, { status: 400 });
@@ -89,17 +97,41 @@ export async function POST(
       bytes.fill(0);
       return NextResponse.json({ error: "source_too_large" }, { status: 400 });
     }
+    // A long-term-savings report is handed straight to pdfjs. Refuse anything
+    // that is not a PDF here, where it costs one comparison and produces a
+    // message, rather than in the worker as an opaque crash. The browser's
+    // Content-Type is the uploader's claim; these five bytes are the file's.
+    if (definition.kind === "long_term_savings" && !bytes.subarray(0, 5).equals(PDF_MAGIC)) {
+      bytes.fill(0);
+      return NextResponse.json({ error: "unreadable_document" }, { status: 400 });
+    }
     const syncRunId = await startActiveConnectionSyncRun(session.userId, connection.id);
     if (!syncRunId) {
       bytes.fill(0);
       return NextResponse.json({ error: "connection_unavailable" }, { status: 409 });
     }
     const started = await spawnInvestmentSyncWorker({
-      script: "schwab-import-worker.mts",
+      script:
+        definition.kind === "long_term_savings"
+          ? "long-term-savings-import-worker.mts"
+          : "schwab-import-worker.mts",
       metadata: {
         userId: session.userId,
         connectionId: connection.id,
         syncRunId,
+        connectorId: connection.connectorId,
+        // The account's name until the user renames it. Derived here because
+        // the worker has no registry-free way to name what it imported, and
+        // the report itself carries no account name or number at all.
+        //
+        // Provider + PRODUCT, never provider + document: the account is a
+        // pension held at Harel, and "Harel Quarterly Pension Report" names the
+        // statement that reported it rather than the thing itself.
+        accountLabel:
+          connection.displayName ??
+          (definition.product
+            ? `${definition.institutionLabel} ${PRODUCT_LABEL[definition.product]}`
+            : `${definition.institutionLabel} ${definition.label}`),
         valuationCurrency,
       },
       segments: [Buffer.from(session.dataKey), bytes],

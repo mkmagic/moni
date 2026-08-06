@@ -8,6 +8,7 @@ import {
   Landmark,
   Settings,
   LogOut,
+  PiggyBank,
   Target,
   TrendingUp,
 } from "lucide-react";
@@ -19,6 +20,7 @@ const NAV_ITEMS = [
   { href: "/budget", label: "Budget", icon: Target },
   { href: "/accounts", label: "Accounts", icon: Landmark },
   { href: "/investments", label: "Investments", icon: TrendingUp },
+  { href: "/long-term-savings", label: "Long-term savings", icon: PiggyBank },
 ] as const;
 
 // Sits at the bottom of the rail, above the account block — Connections now

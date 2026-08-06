@@ -16,6 +16,7 @@ export const accountBalanceSnapshotSourceEnum = pgEnum("account_balance_snapshot
   "scrape",
   "manual",
   "investment",
+  "long_term_savings",
 ]);
 
 /**

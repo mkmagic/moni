@@ -42,6 +42,60 @@ new feedback lands.
 
 ## Feedback log (newest first — append, don't overwrite)
 
+### 2026-08-05 — long-term savings follow-ups: a table scoped to one report, and a skip named after one connector
+
+- **A table fed by "the newest snapshot" is not a history.** The deposits disclosure read
+  `latest.deposits`, so importing Q1 2026 and then backfilling Q3 2025 showed four deposits and hid
+  twenty-one. `deposits` moved from `LongTermSavingsSnapshotView` up to
+  `LongTermSavingsAccountView`, built from **the newest report of each fiscal year** — a quarterly
+  report restates the whole year, so concatenating every report would print January twice while
+  taking only the newest prints one year and drops the rest. **When a figure is per-report and a
+  table is per-account, the domain type has to say which.**
+- **Name a skip by what it costs, not by the one connector that first needed it.** The onboarding
+  passkey step offered "Import a Schwab statement without a passkey", which was already wrong the day
+  a Harel PDF existed. Now "Skip for now" plus a sentence naming what stays out of reach (anything
+  with a stored login) and what does not (file imports).
+- **`px-0` loses to the Button primitive's own `px-4`** — the 2026-07-28 `cn`-is-a-plain-join trap
+  again, computed `padding-left: 16px`, label sitting 16px right of the sentence beneath it. A
+  negative margin (`-ml-4`) isn't fighting a utility and lands it back on the text column. Several
+  existing ghost buttons still carry the ineffective `px-0`.
+- **A picker tile should name the provider, not the document.** "Harel · Quarterly Pension Report"
+  read as a different kind of thing beside "Bank Leumi". The tile is now "Harel" and its reports live
+  one screen in, which is also the shape a second Harel parser needs.
+- **Offer the file where the connection is made.** A `user_mediated_import` connection ended on
+  "Connection created. Import a report from Long-term savings when you're ready" — a detour to
+  another screen with nothing in it. The outcome now carries a primary "Import a file now" that opens
+  the shared `ImportDialog`, whose `connections` prop was narrowed from `ConnectionView` to a local
+  `ImportTarget` so the flow can pass the connection it just created rather than one read back.
+- **Verifying an outcome screen without writing a connection:** stub `window.fetch` to answer
+  `POST /api/connections` with `201 {"id":"…"}` (same technique as the 2026-08-01 busy-state note).
+  The onboarding passkey step needs a *user* with no passkey, though — a throwaway signup
+  (`signupToken: dev-signup-token`), then `DELETE /api/account` with its own password. **Logging in
+  as the throwaway replaces whoever was signed in**, and `dana@moni.demo` is not necessarily that
+  person — check who the session belongs to before you take it.
+
+### 2026-08-05 (later) — the long-term savings card: an account is a product, and one statement is not a history
+
+- **Name the thing, not the document that reported it.** The card read "Harel Quarterly Pension Report". The owner: *"should show 'Harel Pension'."* A long-term savings statement carries **no** account name and no account number, so everything in `accounts.name_ct` is either a nickname or a string Moni derived — and the derived one was provider + *document* when the account is a pension held at a provider. Fixed at both ends: the sync route now derives provider + `PRODUCT_LABEL[product]`, and `longTermSavingsAccountName` corrects the old default at the display edge so existing rows heal without a re-import. **When a name is Moni's own invention, the display edge may correct it; a nickname must be left alone, so match the old default exactly rather than guessing.**
+- **The pinned vocabulary had already decided the thing I deferred.** `CONTEXT.md`'s "Stated period" entry says per-quarter figures are *"derived in the view by differencing consecutive snapshots"*. I shipped only the latest snapshot's year-to-date flows and flagged the gap in prose — and the owner hit it immediately: *"Shouldn't 'contributions' show all contributions up until this point?"* **A deferral that contradicts a term in CONTEXT.md is a bug, not a scope decision. Grep it before deciding something is out of scope.**
+- **Differencing is keyed on the fiscal year, not on adjacency.** An Israeli report restates flows from January, so a report is differenced against the previous report *of the same year* and stands alone otherwise. That makes Q1 correct with no predecessor, and makes a Q3 with no Q2 fall back to the document's own year-to-date figures — labelled "year to date" in the table rather than passed off as a quarter. Summing the differenced periods is also the only way the totals can be right: adding four year-to-date figures counts January four times.
+- **Two rows called "Fees" on one card is a puzzle.** The cumulative row and the rates row both said Fees. Renamed to "Fees paid" and "Management fees".
+- **A cost's sign belongs in its label, not its figure.** The report signs fees as a movement, so "Fees paid −₪1.00" read as a refund. The row now shows `abs()`; Gains keeps its sign, because there the direction *is* the information. **Ask per row whether the sign carries meaning or just bookkeeping direction.**
+- **The cumulative figures came back out the same session they went in, and the owner's reason generalises.** "Contributed ₪26,447 across 2 reports" is only ever the sum of the reports you happen to have imported — *"it's confusing if someone joins Moni with already existing data"*. Same call as `projectedSpend` on 2026-08-04: **when a number's problem is that it isn't trustworthy, no caption rescues it**, and here the trustworthy version already existed one disclosure away under Reports. The hero is now balance → trend → fees and nothing else. Worth noticing that the *caveat I was proud of* ("some periods have no report") was the tell: a figure that needs to disclaim itself on every render is a figure that shouldn't be there. The per-report differencing stayed — it feeds the Reports table and is exact.
+- **"What does this label mean?" is a bug report.** The Reports table tagged undifferenced rows "year to date". It was accurate and useless: it names the *mechanism* (the statement restates from January) rather than the *consequence* (this row's ₪19,371 is nine months, not a quarter). Worse, it fired on every Q1 row, where the year-to-date figures already are the quarter and there is nothing to warn about — **a caveat shown when nothing is wrong trains the reader to ignore it when something is.** Now `includesEarlierQuarters`, computed in the domain, and the words say the cost. A report with no stated quarter counts as wider, since a caveat shown in error is cheaper than one withheld.
+- **`next dev` refuses to start at all when another dev server is running — even on a free port.** It prints the port it wanted, then `⨯ Another next dev server is already running` and exits; `curl` on the new port fails while the *old* server is still serving your worktree happily. Check `lsof -p <pid>` for the existing server's cwd before starting a second one; if it's your worktree, just use it.
+
+### 2026-08-05 — long-term savings UI (issue #77): a shared dialog, and a provider's name in three more places
+
+- **"Confirm rather than design" turned up two things that didn't work.** #77 put the onboarding path out of scope on the assumption it would fall out of the existing connect flow. It didn't: `institution-picker.tsx` enumerates three hardcoded kinds, so a Harel connector was unreachable — the feature had no way in at all — and once the group was added, the connect flow told the user *"Create the connection now, then import a Schwab Positions CSV from Investments"* with a **"Create Schwab connection"** button. That is the 2026-08-01 "don't name a shared surface after one provider" note recurring in three new files (`connect-flow.tsx`, `connect-form.tsx`, and the connect page's own subtitle). **When an issue says a path should already work, click it — the confirmation is the deliverable.**
+- **A long-term savings account is named `<provider> <document>`, so `title === source` never fires.** The card read "Harel Quarterly Pension Report / via Quarterly Pension Report". The existing suppression tested equality; it needs `title.includes(source)`. Same bug class as SnapTrade's, one layer subtler.
+- **Two Hebrew phrases in one English sentence need one `<bdi>` each.** *"Your pension, קרן השתלמות and קופת גמל, from the reports you import"* rendered with the two terms **swapped** — the English "and" between them got absorbed into a single RTL run. Wrapping the whole line, or trusting the string because it looks right in the editor, does not work. Caught only by zooming the rendered subtitle.
+- **Subtotals belong in the domain layer, not the page.** Grouping assets by liquidity horizon needs an ILS figure per group, which needs the FX rule net worth already uses (BOI observation ≤7 days). Summing in the server component would have been money arithmetic at the display edge; instead `usableIlsRate` moved out of `dashboard.ts` into `src/domain/ils-rate.ts` and both callers share it — two ILS totals derived by two rate rules are two numbers the user cannot reconcile. The group also reports `unvaluedCount`, so a subtotal smaller than the cards above it says why.
+- **A callout that fires on every visit gets the app closed.** The fee row states the rates quietly and promotes itself to an amber callout **only** when the member is above the fund average. Because that callout owns the view's accent when it shows, "Import document" is `variant="outline"` — same yielding rule as the dashboard's reminder card.
+- **Verifying the loud branch meant editing the DB.** The real report is below average, so the callout was unreachable. `fee_rate_deposit` is a plaintext `numeric`, so a superuser `UPDATE` shows it without touching ciphertext — `DATABASE_URL_MIGRATE`'s role is RLS-bound and silently updates **zero rows**, which looks exactly like a failed query. Restore the value afterwards.
+- **`file_upload` can only reach files the session may read.** `~/Downloads` is refused; copying the PDF into the session scratchpad first works, and that is how the import was exercised end to end rather than simulated.
+- **The dev server was already on :3000 (another session) and quietly took :3002.** Read the startup line rather than assuming the port.
+
 ### 2026-08-04 (later) — the budget history tab: an estimate is not a fact, and grouped bars are one group
 
 - **The owner cut a feature rather than reword it.** The hero read `27 days left · on track for ₪4,500.00`, and the fix on offer was better wording. Their answer: *"I'm concerned this 'on track' prediction isn't really valid, it's just an estimate. I suggest we drop it."* `projectedSpend` is gone from `BudgetMonthView` entirely — the domain field, the computation, and its tests. **When a number's problem is that it isn't trustworthy, no label rescues it.** The hero now states days-left and nothing more; the pace signal still lives on the Everyday rows, where a marker means something.

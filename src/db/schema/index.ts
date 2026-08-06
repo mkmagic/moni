@@ -10,3 +10,4 @@ export * from "./dashboard";
 export * from "./budget";
 export * from "./reference";
 export * from "./investments";
+export * from "./long-term-savings";
