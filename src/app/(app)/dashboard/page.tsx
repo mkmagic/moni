@@ -157,14 +157,13 @@ export default async function DashboardPage() {
     busyItems.push({
       tone: "action",
       icon: Inbox,
+      // No link — the "Needs categorizing" card sits directly below.
       content: (
         <>
           <span className="font-medium tabular-nums">{needsReview.length}</span> transaction
           {needsReview.length === 1 ? "" : "s"} to categorize
         </>
       ),
-      href: "/transactions",
-      linkLabel: "Review",
     });
   }
   if (budget.overBudgetCount > 0) {
