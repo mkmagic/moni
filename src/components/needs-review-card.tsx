@@ -70,37 +70,41 @@ export function NeedsReviewCard({
         <CardContent className="px-0">
           <ul className="max-h-[22rem] divide-y divide-border overflow-y-auto">
             {queue.map((entry) => (
-              // The chip carries its own buttons, so it sits BESIDE the row
-              // button rather than inside it — a button inside a button is
-              // invalid and swallows the inner click.
-              <li key={entry.id} className="flex items-center gap-2 pr-5 transition hover:bg-muted">
+              <li
+                key={entry.id}
+                className="relative flex items-center gap-4 px-5 py-3 transition hover:bg-muted"
+              >
+                {/* The whole row opens the categorize dialog, but the chip
+                    carries its own accept/reject buttons — a button inside a
+                    button is invalid. So the click target is a transparent
+                    overlay sibling, and the chip sits ABOVE it (`z-10`) so its
+                    buttons still receive the click. This lets the suggestion sit
+                    right beside the name rather than in a far-right slot. */}
                 <button
                   type="button"
                   onClick={() => setSelected(entry)}
-                  className="flex min-w-0 flex-1 items-center gap-4 px-5 py-3 text-left focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring"
-                >
-                  <span className="w-24 shrink-0 whitespace-nowrap text-xs tabular-nums text-muted-foreground">
-                    {entry.dateLabel}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                  aria-label={`Categorize ${entry.merchantName ?? entry.description}`}
+                  className="absolute inset-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring"
+                />
+                <span className="w-20 shrink-0 whitespace-nowrap text-xs tabular-nums text-muted-foreground">
+                  {entry.dateLabel}
+                </span>
+                <div className="flex min-w-0 flex-1 items-center gap-2">
+                  <span className="min-w-0 truncate text-sm text-foreground">
                     <bdi>{entry.merchantName ?? entry.description}</bdi>
                   </span>
-                  <span className="shrink-0 text-sm">
-                    <Money value={entry.amount} signColor />
-                  </span>
-                </button>
-                {/* Fixed-width slot, rendered whether or not there is a
-                    suggestion. The row button is `flex-1`, so letting this
-                    column size to its content would shift every amount left
-                    by a different distance and break the money column. */}
-                <span className="flex w-44 shrink-0 justify-end">
                   {suggestions[entry.id] && (
-                    <SuggestionChip
-                      entryId={entry.id}
-                      matchText={entry.matchText}
-                      suggestion={suggestions[entry.id]}
-                    />
+                    <span className="relative z-10 shrink-0">
+                      <SuggestionChip
+                        entryId={entry.id}
+                        matchText={entry.matchText}
+                        suggestion={suggestions[entry.id]}
+                      />
+                    </span>
                   )}
+                </div>
+                <span className="shrink-0 text-sm">
+                  <Money value={entry.amount} signColor />
                 </span>
               </li>
             ))}

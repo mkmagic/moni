@@ -1337,6 +1337,15 @@ export async function createCeilings(session: Session, inputs: SetCeilingInput[]
   });
 }
 
+/** A category that finished the month over what its ceiling allowed. */
+export interface OverBudgetCategory {
+  /** Null is the residual — "everything else". */
+  categoryId: string | null;
+  categoryName: string;
+  /** How far past the available ceiling, as a positive magnitude. */
+  over: Money;
+}
+
 /** The one line the dashboard card needs. Deliberately the same computation
  * as the page, not a second one that could disagree with it. */
 export async function getBudgetSummary(session: Session): Promise<{
@@ -1345,9 +1354,22 @@ export async function getBudgetSummary(session: Session): Promise<{
   spent: Money;
   ceilingTotal: Money;
   overBudgetCount: number;
+  /** Which categories are over, worst first — so the dashboard can name them
+   * instead of only counting. Derived from the same rows `overBudgetCount` is,
+   * so the two can never disagree. */
+  overCategories: OverBudgetCategory[];
 }> {
   const month = currentMonth();
   const view = await getBudgetMonth(session, month);
+  const overCategories = [...view.fixed.rows, ...view.everyday.rows]
+    // `remaining` is `available - spent`, already exact; negative means over.
+    .filter((row) => new Decimal(row.remaining.amount).isNegative())
+    .map((row) => ({
+      categoryId: row.categoryId,
+      categoryName: row.categoryName,
+      over: money(new Decimal(row.remaining.amount).negated(), view.currency),
+    }))
+    .sort((a, b) => new Decimal(b.over.amount).comparedTo(new Decimal(a.over.amount)));
   return {
     hasBudget: view.hasBudget,
     month,
@@ -1356,5 +1378,6 @@ export async function getBudgetSummary(session: Session): Promise<{
     spent: view.budgetedSpend,
     ceilingTotal: view.ceilingTotal,
     overBudgetCount: view.overBudgetCount,
+    overCategories,
   };
 }
