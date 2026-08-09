@@ -89,8 +89,11 @@ export function NeedsReviewCard({
                 <span className="w-20 shrink-0 whitespace-nowrap text-xs tabular-nums text-muted-foreground">
                   {entry.dateLabel}
                 </span>
-                <div className="flex min-w-0 flex-1 items-center gap-2">
-                  <span className="min-w-0 truncate text-sm text-foreground">
+                {/* Wraps when the row is too narrow for name + chip on one
+                    line, dropping the chip beneath the name rather than
+                    ellipsising the merchant (dashboard-redesign/plan.md). */}
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1.5">
+                  <span className="min-w-0 max-w-full truncate text-sm text-foreground">
                     <bdi>{entry.merchantName ?? entry.description}</bdi>
                   </span>
                   {suggestions[entry.id] && (

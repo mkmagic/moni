@@ -130,6 +130,7 @@ export function Sidebar({ baseCurrency }: SidebarProps) {
   const [open, setOpen] = useState(false);
   const openerRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
 
   async function onLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -145,7 +146,32 @@ export function Sidebar({ baseCurrency }: SidebarProps) {
     // point the ref lint rule (rightly, in general) won't trust `.current`.
     const opener = openerRef.current;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        setOpen(false);
+        return;
+      }
+      // Trap Tab within the dialog: the background isn't inert, so without this
+      // a keyboard user could tab onto the obscured page while `aria-modal`
+      // announces a modal. Cycle to the other end at each boundary, and pull
+      // focus back if it has somehow escaped the panel.
+      if (e.key === "Tab") {
+        const panel = panelRef.current;
+        if (!panel) return;
+        const focusables = panel.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        );
+        if (focusables.length === 0) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        const active = document.activeElement;
+        if (e.shiftKey && (active === first || !panel.contains(active))) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && (active === last || !panel.contains(active))) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
     };
     document.addEventListener("keydown", onKey);
     const previousOverflow = document.body.style.overflow;
@@ -204,6 +230,7 @@ export function Sidebar({ baseCurrency }: SidebarProps) {
         )}
       />
       <aside
+        ref={panelRef}
         inert={!open}
         role="dialog"
         aria-modal="true"

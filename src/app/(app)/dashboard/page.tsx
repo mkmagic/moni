@@ -124,31 +124,42 @@ export default async function DashboardPage() {
   const [curYear, curMonth] = overview.currentMonth.split("-").map(Number);
   const monthLabel = monthLongFmt.format(new Date(Date.UTC(curYear, curMonth - 1, 1)));
 
-  // --- Last sync: a quiet footer, or a nag when it's gone stale --------------
-  const syncTimes = connections
-    .map((c) => c.lastSyncAt)
-    .filter((d): d is Date => d != null)
-    .map((d) => d.getTime());
-  const lastSyncAt = syncTimes.length ? new Date(Math.max(...syncTimes)) : null;
-
+  // --- Last sync -------------------------------------------------------------
+  // The dashboard is only as current as its STALEST source: a bank synced today
+  // beside a week-old or never-synced connection still leaves it missing that
+  // source's data. So freshness is judged per connection and the stale ones are
+  // surfaced — never hidden behind the freshest sync.
   let syncMeta: string | undefined;
   let syncItem: InsightItem | undefined;
-  if (lastSyncAt) {
-    const days = daysSince(lastSyncAt);
-    const label = lastSyncLabel(days);
-    if (days >= STALE_SYNC_DAYS) {
+  if (connections.length > 0) {
+    const staleCount = connections.filter(
+      (c) => c.lastSyncAt == null || daysSince(c.lastSyncAt) >= STALE_SYNC_DAYS,
+    ).length;
+    const freshestTime = connections
+      .map((c) => c.lastSyncAt)
+      .filter((d): d is Date => d != null)
+      .reduce((max, d) => Math.max(max, d.getTime()), 0);
+
+    if (staleCount > 0) {
       syncItem = {
         tone: "warning",
         icon: RefreshCw,
-        content: label,
+        content:
+          staleCount === 1 ? (
+            "A connection is out of date"
+          ) : (
+            <>
+              <span className="font-medium tabular-nums">{staleCount}</span> connections are out of
+              date
+            </>
+          ),
         href: "/settings/connections",
         linkLabel: "Sync",
       };
     } else {
-      syncMeta = label;
+      // Every connection is fresh, so the most recent sync represents them all.
+      syncMeta = lastSyncLabel(daysSince(new Date(freshestTime)));
     }
-  } else if (connections.length > 0) {
-    syncMeta = "Not synced yet";
   }
 
   // --- Insight items ---------------------------------------------------------
