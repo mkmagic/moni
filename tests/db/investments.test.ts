@@ -235,17 +235,19 @@ describe("portfolio public reads", () => {
     const first = await listPortfolioHoldings(o.session, { limit: 2 });
     expect(first.rows.map((r) => r.ilsValue)).toEqual(["70", "35"]);
     // The cursor must expose no holding value or label. Its `revision` is an
-    // opaque HMAC-derived hex digest, so substring-matching the whole envelope
-    // for "70" is flaky (hex collides with the two chars a few percent of runs).
-    // Check the only fields carrying user data instead: the filter string and
-    // the opaque row id.
+    // opaque HMAC-derived hex digest and its `lastId` is a random row UUID, so
+    // substring-matching either for "70" is flaky (hex/UUID digits collide with
+    // the two chars a few percent of runs). Assert the value-bearing field — the
+    // filter string — carries neither, and that `lastId` is an opaque UUID,
+    // which structurally cannot be the "70" value or the "AAA" label.
     const cursorPayload = JSON.parse(
       Buffer.from(first.nextCursor!.split(".")[0], "base64url").toString("utf8"),
     ) as { revision: string; filters: string; lastId: string };
     expect(cursorPayload.filters).not.toContain("70");
     expect(cursorPayload.filters).not.toContain("AAA");
-    expect(cursorPayload.lastId).not.toContain("70");
-    expect(cursorPayload.lastId).not.toContain("AAA");
+    expect(cursorPayload.lastId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
     const second = await listPortfolioHoldings(o.session, { limit: 2, cursor: first.nextCursor! });
     expect(second.rows).toHaveLength(2);
     expect(
