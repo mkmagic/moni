@@ -12,7 +12,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const session = await requireSession();
 
   return (
-    <div className="flex min-h-screen">
+    // Column on mobile so the sidebar's top bar stacks above the content; the
+    // fixed rail returns as the left column at `md` and up.
+    <div className="flex min-h-screen flex-col md:flex-row">
       <Sidebar baseCurrency={session.baseCurrency} />
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-6xl px-6 py-8 md:px-8">{children}</div>

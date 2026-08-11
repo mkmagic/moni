@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { eq } from "drizzle-orm";
@@ -20,6 +20,9 @@ import { cleanupOwners, elevatedDb } from "./helpers";
 const SIGNUP_TOKEN = process.env.MONI_SIGNUP_TOKEN!;
 const owners: string[] = [];
 afterAll(() => cleanupOwners(owners));
+// Some tests pin the wall clock (Tiingo-quote freshness is a 7-day window
+// relative to `now`); make sure the real clock is always restored between them.
+afterEach(() => vi.useRealTimers());
 
 type Owner = { userId: string; dataKey: Buffer; session: Session; connectionIds: string[] };
 async function owner(): Promise<Owner> {
@@ -231,8 +234,18 @@ describe("portfolio public reads", () => {
     expect(overview.accounts).toHaveLength(2);
     const first = await listPortfolioHoldings(o.session, { limit: 2 });
     expect(first.rows.map((r) => r.ilsValue)).toEqual(["70", "35"]);
-    expect(first.nextCursor).not.toContain("70");
-    expect(first.nextCursor).not.toContain("AAA");
+    // The cursor must expose no holding value or label. Its `revision` is an
+    // opaque HMAC-derived hex digest, so substring-matching the whole envelope
+    // for "70" is flaky (hex collides with the two chars a few percent of runs).
+    // Check the only fields carrying user data instead: the filter string and
+    // the opaque row id.
+    const cursorPayload = JSON.parse(
+      Buffer.from(first.nextCursor!.split(".")[0], "base64url").toString("utf8"),
+    ) as { revision: string; filters: string; lastId: string };
+    expect(cursorPayload.filters).not.toContain("70");
+    expect(cursorPayload.filters).not.toContain("AAA");
+    expect(cursorPayload.lastId).not.toContain("70");
+    expect(cursorPayload.lastId).not.toContain("AAA");
     const second = await listPortfolioHoldings(o.session, { limit: 2, cursor: first.nextCursor! });
     expect(second.rows).toHaveLength(2);
     expect(
@@ -261,6 +274,12 @@ describe("portfolio public reads", () => {
   });
 
   it("uses one current quote decision across holdings and overview while history stays broker-only", async () => {
+    // The "safe" LIVE quote is dated 2026-07-31; the current-quote decision
+    // only trusts a quote within seven days of `now`. Pin the clock (Date only,
+    // so the pg pool's real timers are untouched) or this test rots into a
+    // broker-value fallback once the calendar passes 2026-08-07.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-02T00:00:00Z"));
     const o = await owner();
     await fx("USD", "2026-07-31", "3.5");
     const quoted = await connection(o);

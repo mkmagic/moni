@@ -1,0 +1,487 @@
+<style>
+  /* ---- Moni tokens (verbatim from docs/design/ui-and-feel.md / globals.css).
+         v1.0 is dark-only by product spec, so this mockup deliberately commits
+         to the single dark world rather than theming light. ---- */
+  :root {
+    --background: #0c0e14;
+    --card: #14171f;
+    --popover: #1a1e28;
+    --muted: #20242f;
+    --foreground: #e8eaef;
+    --muted-foreground: #98a0b0;
+    --border: #252a36;
+    --primary: #f5a623;                 /* amber accent — sparingly */
+    --positive: oklch(0.74 0.13 172);   /* teal */
+    --negative: oklch(0.66 0.19 20);    /* coral */
+    --transfer: oklch(0.68 0.12 264);   /* blue */
+    --radius: 0.625rem;
+    --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  body, .page {
+    margin: 0;
+    background: radial-gradient(1200px 600px at 50% -10%, #10131b 0%, var(--background) 55%);
+    color: var(--foreground);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.45;
+  }
+  .page { min-height: 100vh; padding: 28px 20px 64px; }
+  .wrap { max-width: 1120px; margin: 0 auto; }
+
+  /* ---------- mockup chrome (not part of the app) ---------- */
+  .chrome { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-bottom: 22px; }
+  .chrome h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  .chrome h1 span { color: var(--muted-foreground); font-weight: 400; }
+  .toggles { display: flex; gap: 10px; margin-left: auto; flex-wrap: wrap; }
+  .seg { display: inline-flex; background: var(--popover); border: 1px solid var(--border); border-radius: 999px; padding: 3px; }
+  .seg button { font: inherit; font-size: 12px; font-weight: 500; color: var(--muted-foreground); background: transparent; border: 0; padding: 5px 13px; border-radius: 999px; cursor: pointer; transition: color .15s, background .15s; }
+  .seg button:hover { color: var(--foreground); }
+  .seg button[aria-pressed="true"] { background: var(--muted); color: var(--foreground); }
+  .seg button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  .seg-label { font-size: 11px; color: var(--muted-foreground); align-self: center; text-transform: uppercase; letter-spacing: .07em; }
+
+  /* ---------- device frame ---------- */
+  .stage { display: flex; justify-content: center; }
+  .device { width: 100%; border: 1px solid var(--border); border-radius: 18px; background: var(--background); overflow: hidden; display: grid; grid-template-columns: 64px 1fr; transition: width .35s ease; }
+  .stage[data-view="mobile"] .device { width: 402px; grid-template-columns: 1fr; }
+
+  .rail { background: var(--background); border-right: 1px solid var(--border); padding: 18px 0; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .stage[data-view="mobile"] .rail { display: none; }
+  .rail .logo { width: 30px; height: 30px; border-radius: 9px; margin-bottom: 14px; background: color-mix(in oklab, var(--primary) 18%, transparent); color: var(--primary); display: grid; place-items: center; font-weight: 800; font-size: 15px; }
+  .rail .nav { width: 40px; height: 40px; border-radius: 10px; color: var(--muted-foreground); display: grid; place-items: center; position: relative; }
+  .rail .nav svg { width: 18px; height: 18px; }
+  .rail .nav.active { color: var(--primary); }
+  .rail .nav.active::before { content: ""; position: absolute; left: -12px; top: 9px; bottom: 9px; width: 3px; border-radius: 3px; background: var(--primary); }
+
+  .app { padding: 26px 26px 34px; min-width: 0; }
+  .stage[data-view="mobile"] .app { padding: 20px 16px 28px; }
+
+  .apphead { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+  .apphead .kicker { font-size: 11px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted-foreground); margin: 0 0 6px; }
+  .apphead h2 { margin: 0; font-size: 21px; font-weight: 600; letter-spacing: -0.015em; }
+  .stage[data-view="mobile"] .apphead h2 { font-size: 18px; }
+  .btn-outline { font: inherit; font-size: 13px; font-weight: 500; color: var(--foreground); background: transparent; border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; }
+  .btn-outline:hover { background: var(--muted); }
+  .btn-outline svg { width: 14px; height: 14px; }
+
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); }
+  .card-pad { padding: 22px; }
+  .label { font-size: 11px; text-transform: uppercase; letter-spacing: .085em; color: var(--muted-foreground); font-weight: 500; }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .pos { color: var(--positive); } .neg { color: var(--negative); }
+  .amber { color: var(--primary); } .coral { color: var(--negative); } .teal { color: var(--positive); } .blue { color: var(--transfer); }
+  .amt { font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+
+  /* ---------- flow + adaptive ordering ---------- */
+  .flow { display: flex; flex-direction: column; gap: 18px; }
+  [data-day="busy"] .only-clear { display: none; }
+  [data-day="clear"] .only-busy { display: none; }
+  /* busy: summary panel + queue lead, health last */
+  [data-day="busy"] .insight-busy { order: 0; }
+  [data-day="busy"] .triage       { order: 1; }
+  [data-day="busy"] .health       { order: 2; }
+  /* clear: net worth + graphs lead, summary drops to the bottom, no queue */
+  [data-day="clear"] .health        { order: 0; }
+  [data-day="clear"] .insight-clear { order: 1; }
+
+  /* ---------- summary panel (was the pill strip) ---------- */
+  .summary { display: flex; flex-direction: column; gap: 13px; padding: 18px 20px; }
+  .insight-head { display: flex; align-items: center; gap: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted-foreground); }
+  .insight-head svg { width: 14px; height: 14px; }
+  [data-day="clear"] .insight-head { color: var(--positive); }
+
+  /* style A: briefing prose */
+  .briefing { margin: 0; font-size: 15px; line-height: 1.6; max-width: 62ch; color: var(--foreground); }
+  .briefing b { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .briefing a { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in oklab, currentColor 40%, transparent); text-underline-offset: 3px; cursor: pointer; }
+
+  /* style B: feed list */
+  .feed { display: flex; flex-direction: column; }
+  .feed-row { display: flex; align-items: center; gap: 12px; padding: 10px 2px; }
+  .feed-row:not(:last-child) { border-bottom: 1px solid var(--border); }
+  .ficon { width: 27px; height: 27px; border-radius: 8px; display: grid; place-items: center; flex: none; }
+  .ficon svg { width: 15px; height: 15px; }
+  .tone-amber .ficon { background: color-mix(in oklab, var(--primary) 16%, transparent); color: var(--primary); }
+  .tone-coral .ficon { background: color-mix(in oklab, var(--negative) 15%, transparent); color: var(--negative); }
+  .tone-teal .ficon  { background: color-mix(in oklab, var(--positive) 15%, transparent); color: var(--positive); }
+  .tone-blue .ficon  { background: color-mix(in oklab, var(--transfer) 16%, transparent); color: var(--transfer); }
+  .ftext { flex: 1; font-size: 13.5px; min-width: 0; }
+  .ftext b { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .flink { margin-left: auto; flex: none; color: var(--muted-foreground); font-size: 12.5px; display: inline-flex; align-items: center; gap: 4px; text-decoration: none; cursor: pointer; }
+  .flink svg { width: 12px; height: 12px; }
+  .flink:hover { color: var(--foreground); }
+
+  /* shared meta (last sync) */
+  .meta { display: flex; align-items: center; gap: 8px; padding-top: 11px; border-top: 1px solid var(--border); font-size: 12.5px; color: var(--muted-foreground); }
+  .meta svg { width: 13px; height: 13px; }
+  .meta b { font-family: var(--mono); font-weight: 500; }
+  .meta .metalink { margin-left: auto; color: var(--muted-foreground); text-decoration: none; cursor: pointer; }
+  .meta .metalink:hover { color: var(--foreground); }
+
+  /* insight style toggle */
+  [data-style="briefing"] .feed { display: none; }
+  [data-style="feed"] .briefing { display: none; }
+
+  /* ---------- needs-categorizing (triage) ---------- */
+  .triage .card-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px 14px; }
+  .triage .card-head .title { display: flex; align-items: baseline; gap: 10px; }
+  .triage .card-head h3 { margin: 0; font-size: 15px; font-weight: 600; }
+  .triage .count { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted-foreground); }
+  .smart { font: inherit; font-size: 12.5px; color: var(--primary); background: transparent; border: 1px solid color-mix(in oklab, var(--primary) 40%, var(--border)); border-radius: var(--radius); padding: 6px 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .smart svg { width: 13px; height: 13px; }
+  .rows { border-top: 1px solid var(--border); }
+  .row { display: grid; grid-template-columns: 58px 1fr auto; align-items: center; gap: 14px; padding: 11px 22px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background .12s; }
+  .row:hover { background: var(--muted); }
+  .row .date { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted-foreground); white-space: nowrap; }
+  .namecell { min-width: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .merchant { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px dashed var(--border); border-radius: 999px; padding: 3px 5px 3px 10px; font-size: 12px; color: var(--muted-foreground); background: transparent; white-space: nowrap; flex: none; }
+  .chip .cat { color: var(--foreground); }
+  .chip .yn { width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; border: 0; background: transparent; cursor: pointer; color: var(--muted-foreground); }
+  .chip .yn svg { width: 13px; height: 13px; }
+  .chip .yn.y:hover { color: var(--positive); background: color-mix(in oklab, var(--positive) 14%, transparent); }
+  .chip .yn.n:hover { color: var(--negative); background: color-mix(in oklab, var(--negative) 14%, transparent); }
+  .row .amt { font-size: 14px; text-align: right; white-space: nowrap; }
+  .row:last-child { border-bottom: 0; }
+  .more { padding: 12px 22px; font-size: 13px; color: var(--muted-foreground); text-align: center; cursor: pointer; }
+  .more:hover { color: var(--foreground); }
+
+  /* ---------- health: net worth hero + this month ---------- */
+  .health { display: grid; grid-template-columns: 1.15fr 1fr; gap: 18px; }
+  .stage[data-view="mobile"] .health { grid-template-columns: 1fr; }
+  [data-day="clear"] .networth .big { font-size: 40px; }
+
+  .networth { display: flex; flex-direction: column; gap: 14px; }
+  .networth .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .networth .big { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.05; }
+  .networth .sub { font-size: 12.5px; color: var(--muted-foreground); margin-top: 6px; }
+  .delta { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 13px; }
+  .delta svg { width: 13px; height: 13px; }
+  .spark { display: block; width: 100%; }
+  .spark svg { display: block; width: 100%; height: auto; }
+  .networth .spark { margin-top: auto; }
+
+  .month { padding: 0; overflow: hidden; }
+  .month .mhead { padding: 15px 20px 10px; }
+  .month .cells { display: grid; grid-template-columns: 1fr 1fr; }
+  .cell { padding: 14px 20px 16px; border-top: 1px solid var(--border); }
+  .cell:nth-child(odd) { border-right: 1px solid var(--border); }
+  .cell.full { grid-column: 1 / -1; }
+  .cell .clabel { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .cell .cval { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 19px; font-weight: 600; margin-top: 5px; letter-spacing: -0.01em; }
+  .cell .cnote { font-size: 11.5px; color: var(--muted-foreground); margin-top: 3px; }
+  .cell .cspark { height: 26px; margin-top: 8px; }
+  .cell .cspark svg { height: 26px; width: 100%; }
+
+  .bbar { height: 6px; border-radius: 4px; background: var(--muted); margin-top: 9px; overflow: hidden; position: relative; }
+  .bbar > i { display: block; height: 100%; border-radius: 4px; }
+  .bbar .pace { position: absolute; top: -2px; bottom: -2px; width: 1px; background: color-mix(in oklab, var(--foreground) 55%, transparent); }
+  .overlink { font-size: 11.5px; color: var(--negative); text-decoration: none; cursor: pointer; font-weight: 500; }
+  .overlink:hover { text-decoration: underline; }
+  /* over-budget categories, named inline */
+  .overlist { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-top: 11px; }
+  .overitem { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; border: 1px solid color-mix(in oklab, var(--negative) 32%, var(--border)); background: color-mix(in oklab, var(--negative) 7%, transparent); border-radius: 999px; padding: 3px 10px; color: var(--foreground); text-decoration: none; cursor: pointer; }
+  .overitem:hover { background: color-mix(in oklab, var(--negative) 13%, transparent); }
+  .overitem .ov { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--negative); }
+
+  .cell.combo { grid-column: 1 / -1; }
+  .combo .legend { display: flex; gap: 14px; font-size: 11.5px; color: var(--muted-foreground); }
+  .combo .legend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; margin-right: 5px; vertical-align: middle; }
+  .combo .cspark { height: 40px; }
+  .combo .cspark svg { height: 40px; }
+
+  /* ---------- rationale notes ---------- */
+  .notes { max-width: 1120px; margin: 34px auto 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; }
+  .note { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; }
+  .note h4 { margin: 0 0 8px; font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .note h4 .n { font-family: var(--mono); font-size: 11px; color: var(--primary); border: 1px solid color-mix(in oklab, var(--primary) 40%, var(--border)); border-radius: 5px; padding: 1px 5px; }
+  .note p { margin: 0 0 8px; font-size: 13px; color: var(--muted-foreground); line-height: 1.5; }
+  .note p:last-child { margin-bottom: 0; }
+  .note code { font-family: var(--mono); font-size: 12px; color: var(--foreground); background: var(--muted); padding: 1px 5px; border-radius: 4px; }
+  .foot { max-width: 1120px; margin: 22px auto 0; font-size: 12px; color: var(--muted-foreground); text-align: center; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="page">
+  <div class="wrap">
+    <div class="chrome">
+      <h1>Moni dashboard <span>· layout redesign mockup</span></h1>
+      <div class="toggles">
+        <div class="seg" role="group" aria-label="Day state">
+          <button data-day-btn="busy" aria-pressed="true">Busy day</button>
+          <button data-day-btn="clear" aria-pressed="false">Clear day</button>
+        </div>
+        <div class="seg" role="group" aria-label="Insight style">
+          <span class="seg-label" style="padding:0 8px">Insights:</span>
+          <button data-style-btn="briefing" aria-pressed="false">Briefing</button>
+          <button data-style-btn="feed" aria-pressed="true">Feed</button>
+        </div>
+        <div class="seg" role="group" aria-label="Viewport">
+          <button data-view-btn="desktop" aria-pressed="true">Desktop</button>
+          <button data-view-btn="mobile" aria-pressed="false">Mobile</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="stage" data-view="desktop" data-day="busy" data-style="feed">
+      <div class="device">
+        <aside class="rail" aria-hidden="true">
+          <div class="logo">M</div>
+          <div class="nav active" title="Dashboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg></div>
+          <div class="nav" title="Accounts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg></div>
+          <div class="nav" title="Transactions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h13l-3-3m9 13H10l3 3"/></svg></div>
+          <div class="nav" title="Budget"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg></div>
+          <div class="nav" title="Investments"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V5m0 14h16M8 15l3-4 3 2 4-6"/></svg></div>
+        </aside>
+
+        <main class="app">
+          <div class="apphead">
+            <div>
+              <p class="kicker">Overview</p>
+              <h2>Good morning, Dana — here's your financial picture</h2>
+            </div>
+            <button class="btn-outline">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 4v4h-4"/></svg>
+              Sync all
+            </button>
+          </div>
+
+          <div class="flow">
+            <!-- ===== SUMMARY PANEL — busy (top) ===== -->
+            <section id="sum-busy" class="card summary only-busy insight-busy" aria-label="Needs you today"></section>
+
+            <!-- ===== NEEDS CATEGORIZING — only when non-empty ===== -->
+            <section class="triage only-busy card">
+              <div class="card-head">
+                <div class="title"><h3>Needs categorizing</h3><span class="count">12</span></div>
+                <button class="smart">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>
+                  Smart categorize
+                </button>
+              </div>
+              <div class="rows">
+                <div class="row">
+                  <span class="date">3 Aug</span>
+                  <span class="namecell"><span class="merchant"><bdi>רמי לוי</bdi></span><span class="chip"><span class="cat">Groceries</span><button class="yn y" aria-label="Accept"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m5 12 5 5L20 7"/></svg></button><button class="yn n" aria-label="Reject"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 6l12 12M18 6 6 18"/></svg></button></span></span>
+                  <span class="amt neg">−₪241.90</span>
+                </div>
+                <div class="row">
+                  <span class="date">2 Aug</span>
+                  <span class="namecell"><span class="merchant"><bdi>פז</bdi></span><span class="chip"><span class="cat">Fuel</span><button class="yn y" aria-label="Accept"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m5 12 5 5L20 7"/></svg></button><button class="yn n" aria-label="Reject"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 6l12 12M18 6 6 18"/></svg></button></span></span>
+                  <span class="amt neg">−₪310.00</span>
+                </div>
+                <div class="row">
+                  <span class="date">1 Aug</span>
+                  <span class="namecell"><span class="merchant">Salary · ACME Ltd</span><span class="chip"><span class="cat">Salary</span><button class="yn y" aria-label="Accept"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m5 12 5 5L20 7"/></svg></button><button class="yn n" aria-label="Reject"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 6l12 12M18 6 6 18"/></svg></button></span></span>
+                  <span class="amt pos">+₪18,240.00</span>
+                </div>
+                <div class="row">
+                  <span class="date">1 Aug</span>
+                  <span class="namecell"><span class="merchant"><bdi>סופר־פארם</bdi></span><span class="chip"><span class="cat">Health</span><button class="yn y" aria-label="Accept"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m5 12 5 5L20 7"/></svg></button><button class="yn n" aria-label="Reject"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 6l12 12M18 6 6 18"/></svg></button></span></span>
+                  <span class="amt neg">−₪88.40</span>
+                </div>
+                <div class="row">
+                  <span class="date">31 Jul</span>
+                  <span class="namecell"><span class="merchant">Netflix</span><span class="chip"><span class="cat">Subscriptions</span><button class="yn y" aria-label="Accept"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m5 12 5 5L20 7"/></svg></button><button class="yn n" aria-label="Reject"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 6l12 12M18 6 6 18"/></svg></button></span></span>
+                  <span class="amt neg">−₪54.90</span>
+                </div>
+              </div>
+              <div class="more">Show 7 more →</div>
+            </section>
+
+            <!-- ===== HEALTH: net worth + this month ===== -->
+            <section class="health">
+              <div class="card card-pad networth">
+                <div class="top">
+                  <div>
+                    <div class="label">Total net worth</div>
+                    <div class="big amt">₪1,340,220</div>
+                    <div class="sub">Assets <span class="mono">₪1,412,000</span> · Liabilities <span class="mono">₪71,780</span></div>
+                  </div>
+                  <div class="delta pos">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M7 17 17 7M9 7h8v8"/></svg>
+                    +3.1% · 6mo
+                  </div>
+                </div>
+                <span class="spark" data-points="1298,1305,1288,1312,1326,1340" data-color="var(--primary)"></span>
+              </div>
+
+              <div class="card month">
+                <div class="mhead label">This month · August</div>
+                <div class="cells">
+                  <div class="cell">
+                    <div class="clabel"><span class="label">Income</span></div>
+                    <div class="cval pos">₪18,240</div>
+                    <div class="cnote">of ₪18,240 expected</div>
+                  </div>
+                  <div class="cell">
+                    <div class="clabel"><span class="label">Expenses</span><span class="delta pos" style="font-size:11.5px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M7 7 17 17M9 17h8V9"/></svg>8%</span></div>
+                    <div class="cval neg">₪12,410</div>
+                    <div class="cnote">was ₪13,490 last month</div>
+                  </div>
+                  <div class="cell full">
+                    <div class="clabel">
+                      <span class="label">Budget · links to Budget →</span>
+                      <span class="only-busy"><a class="overlink">2 categories over →</a></span>
+                      <span class="only-clear cnote" style="margin:0">78% used · on pace</span>
+                    </div>
+                    <div class="cval">₪10,920 <span class="cnote" style="display:inline">of ₪14,000</span></div>
+                    <div class="bbar"><i style="width:78%;background:var(--primary)"></i><span class="pace" style="left:19%"></span></div>
+                    <div class="overlist only-busy">
+                      <a class="overitem"><bdi>Groceries</bdi> <span class="ov">+₪120</span></a>
+                      <a class="overitem">Dining out <span class="ov">+₪80</span></a>
+                    </div>
+                  </div>
+                  <div class="cell combo">
+                    <div class="clabel">
+                      <span class="label">Income vs. expenses · 6mo</span>
+                      <span class="legend"><span><i style="background:var(--positive)"></i>In</span><span><i style="background:var(--negative)"></i>Out</span></span>
+                    </div>
+                    <div class="cspark" style="position:relative">
+                      <span class="spark" data-points="16800,17200,16400,17600,18100,18240" data-color="var(--positive)" style="position:absolute;inset:0"></span>
+                      <span class="spark" data-points="13100,12800,13600,13200,13490,12410" data-color="var(--negative)" style="position:absolute;inset:0"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- ===== SUMMARY PANEL — clear (bottom) ===== -->
+            <section id="sum-clear" class="card summary only-clear insight-clear" aria-label="All caught up"></section>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- ===== rationale ===== -->
+    <div class="notes">
+      <div class="note">
+        <h4><span class="n">A</span> Two insight styles</h4>
+        <p>Toggle <b>Briefing / Feed</b> above. <b>Briefing</b> is one plain-language line with colored figures — reads like a morning brief, no button shapes. <b>Feed</b> is a quiet notification list: soft severity icon, text, and an inline "→ Budget" link on the right.</p>
+        <p>Both live inside a single panel, so it reads as content, not a toolbar. Tell me which you prefer (or a hybrid).</p>
+      </div>
+      <div class="note">
+        <h4><span class="n">B</span> Last sync, surfaced</h4>
+        <p>Every panel carries a <b>Last synced N days ago</b> meta line with a "Sync now" link. When it goes stale (say &gt; 7 days) it escalates from this quiet footer into a colored feed row — the same escalation the over-budget and categorize items use.</p>
+      </div>
+      <div class="note">
+        <h4><span class="n">C</span> Clear day: summary at the bottom</h4>
+        <p>On a clear day the panel is gone from the top — net worth and the graphs lead, and the summary drops <b>below</b> as a calm "all caught up" footer. The Needs-categorizing card isn't rendered at all when the queue is empty.</p>
+      </div>
+      <div class="note">
+        <h4><span class="n">D</span> Which categories are over</h4>
+        <p>The budget block links to <code>/budget</code>, and the over-budget categories are <b>named inline</b> with their overage — <span class="coral">Groceries +₪120</span>, <span class="coral">Dining +₪80</span> — each a link to that category's transactions. No drilling to find out what's red.</p>
+        <p>Alternatives if you'd rather: (1) tiny per-category bars showing the overshoot, or (2) a dedicated "Over budget" mini-card. Say the word and I'll mock either.</p>
+      </div>
+      <div class="note">
+        <h4><span class="n">E</span> Still one net worth, grouped month</h4>
+        <p>One net-worth hero (the duplicate grid card that plotted <code>m.net</code> is gone). Income, expenses and budget share one "This month" card; Income-vs-Expenses is a compact two-line sparkline, not a full area chart.</p>
+      </div>
+      <div class="note">
+        <h4><span class="n">F</span> Chip beside the name · mobile</h4>
+        <p>The category suggestion sits right after the merchant. Switch to <b>Mobile</b>: the rail collapses, the health split stacks, and because the top is adaptive a busy phone opens onto the summary + queue, a clear one onto net worth.</p>
+      </div>
+    </div>
+    <p class="foot">Rendered in Moni's own tokens (dark-only per spec). Geist is substituted by system fonts here — the CSP blocks webfont loading in the preview; the real app keeps Geist / Geist Mono.</p>
+  </div>
+</div>
+
+<script>
+  // ---- sparklines (uniform scaling so the endpoint dot stays round) ----
+  function drawSpark(el) {
+    var pts = el.dataset.points.split(",").map(Number);
+    var color = el.dataset.color;
+    var W = 100, H = 30, pad = 3;
+    var min = Math.min.apply(null, pts), max = Math.max.apply(null, pts);
+    var range = (max - min) || 1;
+    var step = (W - pad * 2) / (pts.length - 1);
+    var xy = pts.map(function (p, i) { return [pad + i * step, pad + (H - pad * 2) * (1 - (p - min) / range)]; });
+    var line = xy.map(function (p) { return p[0].toFixed(1) + "," + p[1].toFixed(1); }).join(" ");
+    var area = pad + "," + H + " " + line + " " + (W - pad) + "," + H;
+    var last = xy[xy.length - 1];
+    var id = "g" + Math.random().toString(36).slice(2, 8);
+    el.innerHTML =
+      '<svg viewBox="0 0 ' + W + ' ' + (H + 2) + '" preserveAspectRatio="none" aria-hidden="true">' +
+      '<defs><linearGradient id="' + id + '" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0" stop-color="' + color + '" stop-opacity="0.26"/>' +
+      '<stop offset="1" stop-color="' + color + '" stop-opacity="0"/></linearGradient></defs>' +
+      '<polygon points="' + area + '" fill="url(#' + id + ')"/>' +
+      '<polyline points="' + line + '" fill="none" stroke="' + color + '" stroke-width="1.6" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '<circle cx="' + last[0].toFixed(1) + '" cy="' + last[1].toFixed(1) + '" r="2" fill="' + color + '"/></svg>';
+  }
+
+  // ---- insight panels: two styles from one data model ----
+  var IC = {
+    list:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h12"/></svg>',
+    alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4m0 4h.01"/></svg>',
+    down:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 7 7 17M7 11v6h6"/></svg>',
+    check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>',
+    target:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg>',
+    bell:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>',
+    ok:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg>',
+    sync:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 4v4h-4"/></svg>',
+    arrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>'
+  };
+  var DATA = {
+    busy: {
+      icon: IC.bell, heading: "Needs you today",
+      briefing: '<b class="amber">12</b> transactions to categorize · <b class="coral">2</b> categories over budget '
+              + '(<a class="coral">Groceries, Dining</a>). Spending is <b class="teal">down 8%</b> this month.',
+      feed: [
+        { tone: "amber", icon: IC.list,  text: '<b>12</b> transactions need a category', link: "Review" },
+        { tone: "coral", icon: IC.alert, text: '<b>2</b> categories over budget — <span class="coral">Groceries +₪120</span> · <span class="coral">Dining +₪80</span>', link: "Budget" },
+        { tone: "teal",  icon: IC.down,  text: 'Spending <b>down 8%</b> vs last month' }
+      ],
+      sync: 'Last synced <b>3 days</b> ago'
+    },
+    clear: {
+      icon: IC.ok, heading: "All caught up",
+      briefing: 'Nothing to categorize and no category over budget. Spending is <b class="teal">down 8%</b> this month; '
+              + 'net worth is <b class="teal">up 3.1%</b> over six months.',
+      feed: [
+        { tone: "teal", icon: IC.check,  text: 'Everything categorized' },
+        { tone: "teal", icon: IC.down,   text: 'Spending <b>down 8%</b> vs last month' },
+        { tone: "blue", icon: IC.target, text: 'Budget <b>78%</b> used · on pace' }
+      ],
+      sync: 'Last synced <b>3 days</b> ago'
+    }
+  };
+  function feedRow(it) {
+    return '<div class="feed-row tone-' + it.tone + '">' +
+      '<span class="ficon">' + it.icon + '</span>' +
+      '<span class="ftext">' + it.text + '</span>' +
+      (it.link ? '<a class="flink">' + it.link + IC.arrow + '</a>' : '') +
+      '</div>';
+  }
+  function renderPanel(el, d) {
+    el.innerHTML =
+      '<div class="insight-head">' + d.icon + '<span>' + d.heading + '</span></div>' +
+      '<p class="briefing">' + d.briefing + '</p>' +
+      '<div class="feed">' + d.feed.map(feedRow).join("") + '</div>' +
+      '<div class="meta">' + IC.sync + '<span>' + d.sync + '</span><a class="metalink">Sync now</a></div>';
+  }
+  renderPanel(document.getElementById("sum-busy"), DATA.busy);
+  renderPanel(document.getElementById("sum-clear"), DATA.clear);
+  document.querySelectorAll(".spark").forEach(drawSpark);
+
+  // ---- toggles ----
+  var stage = document.querySelector(".stage");
+  function wire(attr, key) {
+    document.querySelectorAll("[" + attr + "]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        stage.dataset[key] = b.getAttribute(attr);
+        document.querySelectorAll("[" + attr + "]").forEach(function (x) {
+          x.setAttribute("aria-pressed", String(x === b));
+        });
+      });
+    });
+  }
+  wire("data-day-btn", "day");
+  wire("data-style-btn", "style");
+  wire("data-view-btn", "view");
+</script>

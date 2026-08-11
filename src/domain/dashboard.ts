@@ -27,6 +27,14 @@ export interface MonthPoint {
   net: string;
 }
 
+/** A rounded direction + magnitude for a headline change. `pct` is a whole
+ * percentage (a ratio, never money) computed and rounded in the domain so the
+ * display edge does no arithmetic. */
+export interface Trend {
+  direction: "up" | "down";
+  pct: number;
+}
+
 export interface Overview {
   baseCurrency: string;
   currentMonth: string;
@@ -37,6 +45,16 @@ export interface Overview {
   months: MonthPoint[];
   netWorthHistory: Array<{ month: string; amount: string; metadata: ValuationMetadata }>;
   netWorthMetadata: ValuationMetadata;
+  /**
+   * Spending so far this month vs the SAME day-span of the previous month — a
+   * like-for-like comparison. Deliberately not month-to-date-vs-full-month
+   * (which always reads "down" early in the month) and not a projection (which
+   * is why `projectedSpend` was retired). Null when the prior period had no
+   * spend to compare against, or the change rounds to nothing.
+   */
+  expenseTrend: Trend | null;
+  /** Net worth now vs six months ago. Null without a positive baseline. */
+  netWorthTrend: Trend | null;
 }
 
 function monthKey(isoDate: string): string {
@@ -172,6 +190,13 @@ export async function getOverview(session: Session): Promise<Overview> {
 
     const transferCategoryIds = await loadTransferCategoryIds(tx);
 
+    // For the like-for-like spending trend: the previous month, and how far
+    // into today's day-of-month we are. Comparing full months would read the
+    // in-progress current month against a complete prior one.
+    const prevMonth = monthKey(monthsBefore(today, 1));
+    const todayDay = Number(today.slice(8, 10));
+    let priorSamePeriodExpenses = new Decimal(0);
+
     const buckets = new Map<string, { income: Decimal; expenses: Decimal }>();
     for (const e of entryRows) {
       // Excluded legs and transfer-classified categories are neither income
@@ -186,7 +211,12 @@ export async function getOverview(session: Session): Promise<Overview> {
       const key = monthKey(e.date);
       const b = buckets.get(key) ?? { income: new Decimal(0), expenses: new Decimal(0) };
       if (reporting.isPositive()) b.income = b.income.plus(reporting);
-      else b.expenses = b.expenses.plus(reporting.abs());
+      else {
+        b.expenses = b.expenses.plus(reporting.abs());
+        if (key === prevMonth && Number(e.date.slice(8, 10)) <= todayDay) {
+          priorSamePeriodExpenses = priorSamePeriodExpenses.plus(reporting.abs());
+        }
+      }
       buckets.set(key, b);
     }
 
@@ -266,6 +296,25 @@ export async function getOverview(session: Session): Promise<Overview> {
       });
     }
 
+    // Direction + rounded whole-percent magnitude. A ratio, not money, so it is
+    // computed and rounded here rather than at the display edge; null when there
+    // is no positive baseline or the change rounds away.
+    const trendFrom = (from: Decimal, to: Decimal): Trend | null => {
+      if (!from.greaterThan(0)) return null;
+      const pct = to
+        .minus(from)
+        .dividedBy(from)
+        .times(100)
+        .toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
+      if (pct.isZero()) return null;
+      return { direction: pct.isNegative() ? "down" : "up", pct: Math.abs(pct.toNumber()) };
+    };
+    const expenseTrend = trendFrom(priorSamePeriodExpenses, current.expenses);
+    const netWorthBaseline = netWorthHistory[0]; // oldest point, six months ago
+    const netWorthTrend = netWorthBaseline
+      ? trendFrom(new Decimal(netWorthBaseline.amount), netWorth)
+      : null;
+
     return {
       baseCurrency: "ILS",
       currentMonth,
@@ -276,6 +325,8 @@ export async function getOverview(session: Session): Promise<Overview> {
       months,
       netWorthHistory,
       netWorthMetadata,
+      expenseTrend,
+      netWorthTrend,
     };
   });
 }
