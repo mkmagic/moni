@@ -24,9 +24,16 @@ skill (Chrome/Puppeteer specifics) and `db-schema` (migrations).
 
 - **x86_64 only** — Chrome-for-Testing has no `linux-arm64` build (#48). Shared vCPU is fine; size
   for **RAM** (~1.3–1.6 GB peak per scrape, #54), not disk (DB is hundreds of MB). On 4 GB, **add
-  swap** (OOM insurance) — two concurrent scrapes do not fit in 4 GB.
+  swap** as OOM insurance for the rest of the box — but the app itself must be barred from it (next
+  bullet). Two concurrent scrapes do not fit in 4 GB; rely on the concurrency guard, not swap, there.
 - Harden: SSH keys only (DigitalOcean images already disable password auth), `ufw` open on 22/80/443
   only, unattended-upgrades.
+- **`moni.service` must set `MemorySwapMax=0`** (drop-in or unit). The app holds Tier-0 keys and
+  plaintext bank credentials in RAM only (`AGENTS.md`; `security-design-principles.md` §20) — with
+  swap enabled on the box, memory pressure could otherwise page them to disk, where a stolen disk or
+  swap image recovers them. `MemorySwapMax=0` forbids the app cgroup — and the scrape/worker children
+  it `spawn()`s, which inherit that cgroup — from ever swapping, so the app is OOM-killed (safe) rather
+  than paged out. Verify during a real scrape: `grep VmSwap /proc/$(pgrep -f 'next start')/status` = 0.
 - **Chrome runtime libs** (Ubuntu 24.04 `t64` names) + `kernel.apparmor_restrict_unprivileged_userns=0`
   (keeps the sandbox — **never** `--no-sandbox` on a box holding real credentials). Full list and
   reasoning: `israeli-scraper` skill.
@@ -65,13 +72,17 @@ skill (Chrome/Puppeteer specifics) and `db-schema` (migrations).
 
 ## Releasing a version
 
-- **`/opt/moni/release.sh [ref]`** (in `deploy/` in the repo, copied to the box): pre-deploy
-  `pg_dump`, fetch + checkout, `npm ci` (`PUPPETEER_SKIP_DOWNLOAD=true`), reconcile Chrome version,
-  build, migrate (`moni_owner`, forward-only), restart, health-check. **Forward-only and
-  non-destructive** — it never drops or recreates the DB.
+- **`/opt/moni/release.sh [ref]`** (in `deploy/` in the repo, copied to the box): **age-encrypted**
+  pre-deploy backup (needs `AGE_RECIPIENT` from `/root/moni-backup.env`), fetch + checkout, `npm ci`
+  (`PUPPETEER_SKIP_DOWNLOAD=true`), reconcile Chrome version, build, migrate (`moni_owner`,
+  forward-only), restart, then health-check **`/api/health`** (checks Postgres connectivity + schema —
+  a plain `/` only 307s regardless of DB). **Forward-only and non-destructive** — it never drops or
+  recreates the DB. It is **not** atomic (in-place `npm ci`/build under the live service) and does not
+  roll back on a failed health check — tracked, acceptable for a low-frequency single-owner deploy.
 - **CI:** `.github/workflows/deploy.yml` fires on a **published GitHub Release** and SSHes the tag to
-  the box, where a **forced-command** key in root's `authorized_keys` runs only `release.sh`. Secrets:
-  `DEPLOY_HOST`, `DEPLOY_SSH_KEY`.
+  the box, where a **forced-command** key in root's `authorized_keys` runs only `release.sh`. It first
+  **refuses to deploy a SHA without a successful `ci.yml` run** (the four gates + build), so an
+  un-green commit can't ship. Secrets: `DEPLOY_HOST`, `DEPLOY_SSH_KEY`.
 - **Rewriting the DB** (beta only, when the owner explicitly asks) is a **separate** guarded script,
   `reset-db.sh --yes-destroy-moni-data` — never part of a release or CI.
 - This Next version rewrites `tsconfig.json` and re-adds the CLAUDE.md agent block on `build`/`start`

@@ -22,7 +22,34 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Read-only: resolve the ref to a SHA and read that SHA's CI runs.
+    permissions:
+      contents: read
+      actions: read
     steps:
+      # Refuse to ship a commit CI hasn't passed. ci.yml runs the
+      # typecheck/lint/format/test/build gates on every push to dev and on PRs;
+      # a release tag is cut from a commit already on dev, so a *successful* CI
+      # run for this exact SHA must exist. No green run == untested == refuse.
+      # (A tag pins its SHA immutably; a workflow_dispatch branch is gated on
+      # whatever SHA it points to at this moment — the manual escape hatch.)
+      - name: Require green CI for the exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.event.release.tag_name || inputs.ref }}
+        run: |
+          test -n "$REF" || { echo "no ref to deploy"; exit 1; }
+          SHA=$(gh api "repos/$REPO/commits/$REF" --jq .sha)
+          echo "Resolving $REF -> $SHA"
+          ok=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&status=completed" \
+                 --jq '[.workflow_runs[] | select(.conclusion=="success")] | length')
+          if [ "${ok:-0}" -lt 1 ]; then
+            echo "::error::No successful CI run for $SHA — refusing to deploy. Push the commit to dev (or open a PR) so CI runs green, then re-release."
+            exit 1
+          fi
+          echo "CI is green for $SHA ($ok successful run(s)) — proceeding."
+
       - name: Ship the ref to the box
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
