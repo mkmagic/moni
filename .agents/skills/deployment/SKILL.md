@@ -125,16 +125,9 @@ systemctl daemon-reload && systemctl enable --now moni-backup.timer
 /opt/moni/backup.sh && rclone ls r2:moni-backups   # verify an object lands off-box
 ```
 
-**Restore test (#62):** the dump is `pg_dump --create` (embeds `CREATE DATABASE moni` + `\connect
-moni`), so restore ONLY into an **isolated** cluster that has no `moni` DB — a stray `\connect` on the
-live cluster would load into production. From a machine that HAS the private age key:
-
-```bash
-age -d -i key.txt moni-<ts>.sql.age | psql "postgresql://postgres@127.0.0.1/postgres"
-```
-
-Pragmatic bar: row counts match, `moni_owner`/`moni_app` roles + RLS policies present, `*_ct` columns
-byte-intact. A full decrypt check needs the app's per-user key (passkey/password), so it is out of scope.
+**Restoring — see the `backup-restore` skill.** It owns the restore model and both paths:
+`scripts/restore.sh` to recover a live box, and an isolated test cluster for the #62 restore test —
+plus the safety rules (the private age key stays off-box; verify a backup decrypts before any wipe).
 
 ## Verified vs NOT (be honest about coverage)
 
@@ -142,10 +135,11 @@ byte-intact. A full decrypt check needs the app's per-user key (passkey/password
   worked from a DO datacenter IP, which **contradicts #49** ("Isracard/Amex broken from cloud ASNs");
   worth revisiting #49. Adding connections works. Login from **macOS** and **Android (Pixel 9A)** over
   HTTPS.
-- **Off-box backups wired + verified (2026-08-12):** nightly timer armed; a manual `backup.sh`
-  uploaded an age-encrypted dump to R2. The **restore test (#62) is still pending** (needs the private
-  age key, off-box).
+- **Off-box backups + restore verified end-to-end (2026-08-12):** nightly timer armed; a manual
+  `backup.sh` uploaded an age-encrypted dump to R2; and a full **wipe + restore (#62)** ran on the live
+  box — `reset-db.sh` destroyed the DB, then `restore.sh` reloaded it and a real user logged in (so the
+  `*_ct` columns decrypted). Login from **macOS** and **Android (Pixel 9A)** over HTTPS.
 - **NOT yet verified from the box:** the other scrapers (Hapoalim, Discount, Cal, Max, One Zero, …),
-  the investments workers (IBKR/SnapTrade/Schwab), BOI FX + Tiingo quote workers; the backup
-  **restore test (#62)**; **scraper egress filtering (#56, still unbuilt)**; peak memory under a real scrape
-  and concurrent-scrape behavior (no concurrency guard yet — `connector-interface.md` §7).
+  the investments workers (IBKR/SnapTrade/Schwab), BOI FX + Tiingo quote workers; **scraper egress
+  filtering (#56, still unbuilt)**; peak memory under a real scrape and concurrent-scrape behavior (no
+  concurrency guard yet — `connector-interface.md` §7).
