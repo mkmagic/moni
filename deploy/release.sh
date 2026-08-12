@@ -20,17 +20,27 @@ APP=/opt/moni/app
 DOMAIN=moni-fin.tech
 # shellcheck disable=SC1091
 source /root/moni-secrets.env    # provides MIGRATE_STEADY (moni_owner DDL URL)
+# Pre-deploy dumps are age-encrypted (below), same as backup.sh — the globals
+# stream carries role SCRAM hashes, so it must never sit on disk in plaintext.
+[ -f /root/moni-backup.env ] || { echo "missing /root/moni-backup.env — arm off-box backups first (deployment skill)"; exit 1; }
+# shellcheck disable=SC1091
+source /root/moni-backup.env     # provides AGE_RECIPIENT (PUBLIC key)
+: "${AGE_RECIPIENT:?AGE_RECIPIENT unset in /root/moni-backup.env}"
 
 log(){ echo "[release $(date -u +%H:%M:%S)] $*"; }
 asmoni(){ sudo -u moni -H "$@"; }
 
-log "pre-deploy backup"
+log "pre-deploy backup (age-encrypted — the box can't read it back; restore needs the off-box key)"
 mkdir -p /root/moni-backups
 TS=$(date -u +%Y%m%dT%H%M%SZ)
-sudo -u postgres pg_dump -Fc moni          > "/root/moni-backups/moni-$TS.dump"
-sudo -u postgres pg_dumpall --globals-only > "/root/moni-backups/globals-$TS.sql"
-log "backup moni-$TS.dump ($(du -h "/root/moni-backups/moni-$TS.dump" | cut -f1))"
-ls -1t /root/moni-backups/moni-*.dump 2>/dev/null | tail -n +15 | xargs -r rm -f  # keep 14
+OUT="/root/moni-backups/predeploy-$TS.sql.age"
+# One restore-complete stream (roles+SCRAM THEN a --create dump), age-encrypted
+# to the PUBLIC recipient — byte-for-byte the same shape as backup.sh.
+{ sudo -u postgres pg_dumpall --globals-only
+  sudo -u postgres pg_dump --create moni
+} | age -r "$AGE_RECIPIENT" > "$OUT"
+log "backup $(basename "$OUT") ($(du -h "$OUT" | cut -f1))"
+ls -1t /root/moni-backups/predeploy-*.sql.age 2>/dev/null | tail -n +15 | xargs -r rm -f  # keep 14
 
 log "fetch $REF"
 asmoni git -C "$APP" fetch origin --tags --prune --quiet
@@ -69,9 +79,11 @@ log "restart"
 systemctl restart moni
 code=000
 for _ in $(seq 1 12); do
-  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 6 "https://$DOMAIN/" 2>/dev/null || echo 000)
-  { [ "$code" = "307" ] || [ "$code" = "200" ]; } && break
+  # /api/health checks Postgres connectivity + schema, so a 200 means the DB is
+  # actually reachable — unlike `/`, which 307s to /dashboard regardless of DB.
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 6 "https://$DOMAIN/api/health" 2>/dev/null || echo 000)
+  [ "$code" = "200" ] && break
   sleep 2
 done
-log "done — $(asmoni git -C "$APP" rev-parse --short HEAD), https $code"
-{ [ "$code" = "307" ] || [ "$code" = "200" ]; } || { log "WARNING: app not healthy (https $code)"; exit 1; }
+log "done — $(asmoni git -C "$APP" rev-parse --short HEAD), health $code"
+[ "$code" = "200" ] || { log "WARNING: app not healthy (health $code)"; exit 1; }
