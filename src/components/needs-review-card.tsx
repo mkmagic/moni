@@ -60,7 +60,7 @@ export function NeedsReviewCard({
   return (
     <>
       <Card>
-        <CardHeader className="flex-row items-center justify-between pt-6">
+        <CardHeader className="flex-col items-start gap-3 pt-6 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <div className="flex items-center gap-3">
             <CardTitle>Needs categorizing</CardTitle>
             <span className="text-sm tabular-nums text-foreground">{entries.length}</span>

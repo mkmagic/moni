@@ -162,19 +162,19 @@ export function ConnectionsList({ initialConnections }: ConnectionsListProps) {
               : null;
         return (
           <Card key={c.id}>
-            <div className="flex items-center justify-between gap-4 px-6 py-5">
-              <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-[var(--radius)] bg-muted text-muted-foreground">
+            <div className="flex flex-col gap-3 px-6 py-5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius)] bg-muted text-muted-foreground">
                   <Icon className="h-4 w-4" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="text-sm font-medium text-foreground">
                     {c.displayName ?? def?.label ?? c.connectorId}
                   </p>
                   <p className="text-xs text-muted-foreground">{c.lastSyncLabel}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                 <StatusBadge status={c.status} />
                 {state.kind === "syncing" ? (
                   <span className="flex items-center gap-2 text-xs text-muted-foreground">
