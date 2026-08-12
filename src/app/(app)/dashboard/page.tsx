@@ -235,7 +235,10 @@ export default async function DashboardPage() {
               </span>
             )}
           </div>
-          <Money value={overview.netWorth} className="text-4xl font-bold text-foreground" />
+          <Money
+            value={overview.netWorth}
+            className="text-3xl font-bold text-foreground sm:text-4xl"
+          />
           <p className="text-sm text-muted-foreground">
             Assets <Money value={overview.assetsTotal} />
           </p>
