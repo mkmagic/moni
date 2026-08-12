@@ -1,0 +1,6 @@
+[Unit]
+Description=Moni nightly backup
+
+[Service]
+Type=oneshot
+ExecStart=/opt/moni/backup.sh

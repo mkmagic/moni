@@ -77,13 +77,64 @@ skill (Chrome/Puppeteer specifics) and `db-schema` (migrations).
 - This Next version rewrites `tsconfig.json` and re-adds the CLAUDE.md agent block on `build`/`start`
   — expected, not a release failure.
 
+## Off-box backups
+
+`deploy/backup.sh` → `/opt/moni/backup.sh`, run nightly by `deploy/moni-backup.{service,timer}`. Dumps
+roles + a `--create` DB as one stream, **age**-encrypts to a PUBLIC recipient (the box cannot read its
+own backups), and uploads to Cloudflare R2 via rclone; keeps 14 encrypted copies locally.
+
+Arm on a host (secrets never leave the box — the private age key stays off it):
+
+```bash
+apt-get install -y age
+# rclone: do NOT apt-get it — Ubuntu's v1.60 throws `501 NotImplemented` against R2 (survives only
+# via rclone's retry). Install the official binary instead:
+curl -fsSL https://downloads.rclone.org/rclone-current-linux-amd64.zip -o /tmp/r.zip
+unzip -oq /tmp/r.zip -d /tmp && install -m755 /tmp/rclone-*-linux-amd64/rclone /usr/bin/rclone
+
+mkdir -p /root/.config/rclone
+cat > /root/.config/rclone/rclone.conf <<EOF   # then chmod 600
+[r2]
+type = s3
+provider = Cloudflare
+region = auto
+access_key_id = <R2_ACCESS_KEY_ID>             # an Object Read & Write token
+secret_access_key = <R2_SECRET>
+endpoint = https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+no_check_bucket = true                          # REQUIRED — else rclone pre-flights CreateBucket,
+EOF                                             # which an object-scoped token 403s (mimics "no write")
+cat > /root/moni-backup.env <<EOF               # then chmod 600
+AGE_RECIPIENT=age1…                             # PUBLIC key only
+RCLONE_REMOTE=r2:moni-backups
+EOF
+chmod 600 /root/.config/rclone/rclone.conf /root/moni-backup.env
+
+install -m644 deploy/moni-backup.service deploy/moni-backup.timer /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now moni-backup.timer
+/opt/moni/backup.sh && rclone ls r2:moni-backups   # verify an object lands off-box
+```
+
+**Restore test (#62):** the dump is `pg_dump --create` (embeds `CREATE DATABASE moni` + `\connect
+moni`), so restore ONLY into an **isolated** cluster that has no `moni` DB — a stray `\connect` on the
+live cluster would load into production. From a machine that HAS the private age key:
+
+```bash
+age -d -i key.txt moni-<ts>.sql.age | psql "postgresql://postgres@127.0.0.1/postgres"
+```
+
+Pragmatic bar: row counts match, `moni_owner`/`moni_app` roles + RLS policies present, `*_ct` columns
+byte-intact. A full decrypt check needs the app's per-user key (passkey/password), so it is out of scope.
+
 ## Verified vs NOT (be honest about coverage)
 
 - **Verified on the box (2026-08-11):** **Leumi** and **Isracard** scrape end-to-end — note Isracard
   worked from a DO datacenter IP, which **contradicts #49** ("Isracard/Amex broken from cloud ASNs");
   worth revisiting #49. Adding connections works. Login from **macOS** and **Android (Pixel 9A)** over
   HTTPS.
+- **Off-box backups wired + verified (2026-08-12):** nightly timer armed; a manual `backup.sh`
+  uploaded an age-encrypted dump to R2. The **restore test (#62) is still pending** (needs the private
+  age key, off-box).
 - **NOT yet verified from the box:** the other scrapers (Hapoalim, Discount, Cal, Max, One Zero, …),
-  the investments workers (IBKR/SnapTrade/Schwab), BOI FX + Tiingo quote workers; **off-box backups +
-  a restore test**; **scraper egress filtering (#56, still unbuilt)**; peak memory under a real scrape
+  the investments workers (IBKR/SnapTrade/Schwab), BOI FX + Tiingo quote workers; the backup
+  **restore test (#62)**; **scraper egress filtering (#56, still unbuilt)**; peak memory under a real scrape
   and concurrent-scrape behavior (no concurrency guard yet — `connector-interface.md` §7).
