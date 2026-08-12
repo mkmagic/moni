@@ -1,0 +1,40 @@
+name: Deploy (dev server)
+
+# Fires when a GitHub Release is published: the release's tag is what ships to the box,
+# so "cut a release" == "deploy that tag". workflow_dispatch allows a manual ref deploy.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref (tag or branch) to deploy
+        required: true
+        default: dev
+
+# One deploy at a time — never let two releases race the box. Do not cancel a
+# deploy in progress; a half-applied release is worse than a queued one.
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Ship the ref to the box
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          REF: ${{ github.event.release.tag_name || inputs.ref }}
+        run: |
+          test -n "$REF" || { echo "no ref to deploy"; exit 1; }
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          # The box pins this key to a forced command (/opt/moni/release.sh) in root's
+          # authorized_keys, so REF is the only thing we influence. release.sh backs up
+          # before migrating, runs forward-only migrations, and never deletes data.
+          ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes "root@$DEPLOY_HOST" "$REF"
