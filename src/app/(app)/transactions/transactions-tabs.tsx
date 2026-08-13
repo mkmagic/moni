@@ -18,27 +18,33 @@ export function TransactionsTabs() {
   const pathname = usePathname();
 
   return (
-    <div className="flex gap-1 border-b border-border">
-      {TABS.map(({ href, label, icon: Icon }) => {
-        // "/transactions" must not light up while on "/transactions/rules",
-        // so the parent tab matches exactly rather than by prefix.
-        const active = href === "/transactions" ? pathname === href : pathname.startsWith(href);
-        return (
-          <Link
-            key={href}
-            href={href}
-            className={cn(
-              "-mb-px flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm transition",
-              active
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground",
-            )}
-          >
-            <Icon className="h-4 w-4" />
-            {label}
-          </Link>
-        );
-      })}
+    // The strip scrolls sideways within itself on a narrow screen rather than
+    // pushing the page into horizontal overflow. `w-max min-w-full` keeps the
+    // underline spanning the full width at desktop (content narrower than the
+    // rail) while letting it grow past the viewport on mobile.
+    <div className="overflow-x-auto">
+      <div className="flex w-max min-w-full gap-1 border-b border-border">
+        {TABS.map(({ href, label, icon: Icon }) => {
+          // "/transactions" must not light up while on "/transactions/rules",
+          // so the parent tab matches exactly rather than by prefix.
+          const active = href === "/transactions" ? pathname === href : pathname.startsWith(href);
+          return (
+            <Link
+              key={href}
+              href={href}
+              className={cn(
+                "-mb-px flex shrink-0 items-center gap-2 border-b-2 px-4 py-2.5 text-sm transition",
+                active
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Icon className="h-4 w-4" />
+              {label}
+            </Link>
+          );
+        })}
+      </div>
     </div>
   );
 }
