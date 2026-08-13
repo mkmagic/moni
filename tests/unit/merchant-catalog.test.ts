@@ -55,6 +55,13 @@ describe("matchCatalog", () => {
     }
   });
 
+  it("points every catalog merchant at its bundled SVG", () => {
+    for (const raw of ALL_SAMPLES) {
+      const entry = match(raw);
+      expect(entry?.logoPath).toBe(`/merchants/${entry?.key}.svg`);
+    }
+  });
+
   it("gives every catalog entry a unique key, so a merchant can't be seeded twice", () => {
     const keys = CATALOG_KEYS();
     expect(new Set(keys).size).toBe(keys.length);
