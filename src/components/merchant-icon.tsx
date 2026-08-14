@@ -27,32 +27,35 @@ export function MerchantIcon({ name, logoUrl, brandColor, className }: MerchantI
 
   return (
     <span
-      className={cn(
-        "flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] border border-border text-xs font-medium",
-        !brandColor && "bg-muted text-muted-foreground",
-        className,
-      )}
-      style={
-        brandColor
-          ? {
-              backgroundColor: `${brandColor}2e`,
-              color: brandColor,
-              borderColor: `${brandColor}55`,
-            }
-          : undefined
-      }
+      className={cn("flex h-8 w-12 shrink-0 items-center justify-center", className)}
       aria-hidden
     >
-      {logoUrl ? (
-        // A bundled image at a known local path. next/image would add an
-        // optimizer round-trip for no benefit, so the rule is waived here —
-        // the disable has to sit on the line immediately before the element,
-        // with no wrapped description, or it silently applies to nothing.
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={logoUrl} alt="" className="h-5 w-5 object-contain" />
-      ) : (
-        <bdi>{initial}</bdi>
-      )}
+      <span
+        className={cn(
+          "flex h-8 min-w-8 max-w-12 items-center justify-center rounded-[var(--radius)] border border-border px-1 text-xs font-medium",
+          !brandColor && "bg-muted text-muted-foreground",
+        )}
+        style={
+          brandColor
+            ? {
+                backgroundColor: `${brandColor}2e`,
+                color: brandColor,
+                borderColor: `${brandColor}55`,
+              }
+            : undefined
+        }
+      >
+        {logoUrl ? (
+          // A bundled image at a known local path. next/image would add an
+          // optimizer round-trip for no benefit, so the rule is waived here —
+          // the disable has to sit on the line immediately before the element,
+          // with no wrapped description, or it silently applies to nothing.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={logoUrl} alt="" className="h-5 w-auto max-w-10 object-contain" />
+        ) : (
+          <bdi>{initial}</bdi>
+        )}
+      </span>
     </span>
   );
 }
