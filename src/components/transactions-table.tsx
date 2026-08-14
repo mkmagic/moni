@@ -36,12 +36,15 @@ interface TransactionsTableProps {
   smartCategorizeEnabled?: boolean;
 }
 
+// Payee and amount lead: they are what a ledger is scanned for, and putting
+// them first means the two useful columns are visible before the table has to
+// be scrolled sideways on a phone (#91).
 const COLUMNS: { column: SortColumn; label: string; align?: "right" }[] = [
-  { column: "date", label: "Date" },
-  { column: "account", label: "Account" },
-  { column: "category", label: "Category" },
   { column: "payee", label: "Payee" },
   { column: "amount", label: "Amount", align: "right" },
+  { column: "category", label: "Category" },
+  { column: "date", label: "Date" },
+  { column: "account", label: "Account" },
 ];
 
 /** Client component so a row can open the categorize dialog, and so search,
@@ -210,25 +213,6 @@ export function TransactionsTable({
                     entry.excluded && "opacity-50",
                   )}
                 >
-                  <td className="whitespace-nowrap border-b border-border px-5 py-3 tabular-nums text-muted-foreground">
-                    {entry.dateLabel}
-                  </td>
-                  <td className="border-b border-border px-5 py-3 text-foreground">
-                    {entry.accountName}
-                  </td>
-                  <td className="border-b border-border px-5 py-3">
-                    {entry.categoryName ? (
-                      <Badge>{entry.categoryName}</Badge>
-                    ) : suggestions[entry.id] ? (
-                      <SuggestionChip
-                        entryId={entry.id}
-                        matchText={entry.matchText}
-                        suggestion={suggestions[entry.id]}
-                      />
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </td>
                   <td className="border-b border-border px-5 py-3 text-foreground">
                     {/* Hebrew payee names reorder an adjacent LTR badge unless
                         they are bidi-isolated. */}
@@ -244,6 +228,25 @@ export function TransactionsTable({
                         it gets blue, not teal/coral. */}
                     <Money value={entry.amount} signColor transfer={entry.isTransfer} />
                     {entry.fxPending && <Badge className="ml-2">pending FX</Badge>}
+                  </td>
+                  <td className="border-b border-border px-5 py-3">
+                    {entry.categoryName ? (
+                      <Badge>{entry.categoryName}</Badge>
+                    ) : suggestions[entry.id] ? (
+                      <SuggestionChip
+                        entryId={entry.id}
+                        matchText={entry.matchText}
+                        suggestion={suggestions[entry.id]}
+                      />
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap border-b border-border px-5 py-3 tabular-nums text-muted-foreground">
+                    {entry.dateLabel}
+                  </td>
+                  <td className="border-b border-border px-5 py-3 text-foreground">
+                    {entry.accountName}
                   </td>
                 </tr>
               ))}
