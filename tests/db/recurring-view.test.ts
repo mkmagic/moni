@@ -18,6 +18,7 @@ let userId: string;
 let dataKey: Uint8Array;
 let session: Session;
 let accountId: string;
+let subscriptionsId: string;
 
 interface EntrySpec {
   description: string;
@@ -82,22 +83,22 @@ describe("getRecurringView", () => {
       currency: "ILS",
     });
 
-    const subscriptions = await insertCategory("Subscriptions", "expense", true);
+    subscriptionsId = await insertCategory("Subscriptions", "expense", true);
     const salary = await insertCategory("Salary", "income", true);
     const groceries = await insertCategory("Groceries", "expense", false);
 
     // Netflix, monthly, with a price rise in the third month — the case that
     // decided the headline is the latest amount, not the 3-average.
-    await insertEntry({ description: "NETFLIX", date: "2026-05-05", amount: "-45.00", categoryId: subscriptions }); // prettier-ignore
-    await insertEntry({ description: "NETFLIX", date: "2026-06-05", amount: "-45.00", categoryId: subscriptions }); // prettier-ignore
-    await insertEntry({ description: "NETFLIX", date: "2026-07-05", amount: "-63.00", categoryId: subscriptions }); // prettier-ignore
+    await insertEntry({ description: "NETFLIX", date: "2026-05-05", amount: "-45.00", categoryId: subscriptionsId }); // prettier-ignore
+    await insertEntry({ description: "NETFLIX", date: "2026-06-05", amount: "-45.00", categoryId: subscriptionsId }); // prettier-ignore
+    await insertEntry({ description: "NETFLIX", date: "2026-07-05", amount: "-63.00", categoryId: subscriptionsId }); // prettier-ignore
 
     // A single one-off filed in a recurring category. Deliberately NOT
     // hidden: it shows with one payment, which is what makes it look odd.
-    await insertEntry({ description: "APP STORE ONE OFF", date: "2026-06-20", amount: "-19.90", categoryId: subscriptions }); // prettier-ignore
+    await insertEntry({ description: "APP STORE ONE OFF", date: "2026-06-20", amount: "-19.90", categoryId: subscriptionsId }); // prettier-ignore
 
     // No locked FX rate — skipped everywhere, never counted at 1:1.
-    await insertEntry({ description: "SPOTIFY", date: "2026-07-02", amount: "-21.00", categoryId: subscriptions, fxPending: true }); // prettier-ignore
+    await insertEntry({ description: "SPOTIFY", date: "2026-07-02", amount: "-21.00", categoryId: subscriptionsId, fxPending: true }); // prettier-ignore
 
     // Income side.
     await insertEntry({ description: "MONTHLY SALARY", date: "2026-05-01", amount: "12500.00", categoryId: salary }); // prettier-ignore
@@ -192,5 +193,57 @@ describe("getRecurringView", () => {
       "2026-07-05",
     ]);
     expect(netflix?.payments.map((p) => p.amount.amount)).toEqual(["45", "45", "63"]);
+  });
+
+  it("upgrades a match-text fallback to the current catalog presentation", async () => {
+    const merchantId = randomUUID();
+    const matchText = "openai chatgpt subs";
+    await elevatedDb.insert(schema.merchants).values({
+      id: merchantId,
+      ownerId: userId,
+      nameCt: enc(dataKey, merchantId, "name_ct", matchText),
+      matchTextCt: enc(dataKey, merchantId, "match_text_ct", matchText),
+      source: "match_text",
+    });
+    await insertEntry({
+      description: "OPENAI CHATGPT SUBS",
+      date: "2026-08-01",
+      amount: "-70.00",
+      categoryId: subscriptionsId,
+    });
+
+    const view = await getRecurringView(session, { range: "all" });
+    const openai = view.expenses[0].rows.find((r) => r.matchText === matchText);
+    expect(openai).toMatchObject({
+      merchantName: "OpenAI",
+      matchText,
+      logoUrl: "/merchants/openai.png",
+    });
+  });
+
+  it("does not replace a curated merchant name with the catalog name", async () => {
+    const merchantId = randomUUID();
+    const matchText = "anthropic claude";
+    await elevatedDb.insert(schema.merchants).values({
+      id: merchantId,
+      ownerId: userId,
+      nameCt: enc(dataKey, merchantId, "name_ct", "Claude Team"),
+      matchTextCt: enc(dataKey, merchantId, "match_text_ct", matchText),
+      source: "external",
+    });
+    await insertEntry({
+      description: "ANTHROPIC CLAUDE",
+      date: "2026-08-02",
+      amount: "-59.00",
+      categoryId: subscriptionsId,
+    });
+
+    const view = await getRecurringView(session, { range: "all" });
+    const anthropic = view.expenses[0].rows.find((r) => r.matchText === matchText);
+    expect(anthropic).toMatchObject({
+      merchantName: "Claude Team",
+      matchText,
+      logoUrl: "/merchants/anthropic.svg",
+    });
   });
 });

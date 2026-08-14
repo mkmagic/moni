@@ -46,7 +46,8 @@ export interface RecurringRow {
   id: string;
   merchantId: string | null;
   /** The payee's match text — what a cadence override is keyed by, since a
-   * row may predate its merchant row (docs/adr/0005-*). */
+   * row may predate its merchant row (docs/adr/0005-*). When catalog patterns
+   * collapse several texts into one merchant, this is the most recent text. */
   matchText: string;
   merchantName: string;
   /** Origin-local path or null — never external (docs/adr/0007-*). */
@@ -199,6 +200,7 @@ export async function getRecurringView(
       bucket.payments.push({ date: e.date, amount: reporting });
       if (e.date >= bucket.latestDate) {
         bucket.latestDate = e.date;
+        bucket.matchText = matchText;
         bucket.categoryId = e.categoryId as string;
       }
       buckets.set(identity, bucket);
@@ -287,7 +289,7 @@ function spreadOverObservedMonths(payments: RecurringPayment[]): Money {
 function toRow(
   bucket: Bucket,
   dataKey: Uint8Array,
-  merchant: { id: string; nameCt: Buffer; logoUrl: string | null; cadenceOverride: string | null; version: number } | undefined, // prettier-ignore
+  merchant: { id: string; nameCt: Buffer; logoUrl: string | null; source: string | null; cadenceOverride: string | null; version: number } | undefined, // prettier-ignore
 ): RecurringRow {
   const payments = [...bucket.payments].sort((a, b) => a.date.localeCompare(b.date));
   const magnitudes: RecurringPayment[] = payments.map((p) => ({
@@ -303,6 +305,15 @@ function toRow(
   } as Money);
 
   const catalog = matchCatalog(bucket.matchText);
+  // A catalog or match-text row has no human-curated presentation to protect:
+  // use the current catalog so newly recognized merchants and replaced assets
+  // take effect without rewriting encrypted rows. External/user names keep
+  // precedence when that layer arrives (ADR 0005).
+  const catalogOwnsPresentation =
+    catalog !== null &&
+    (merchant === undefined || merchant.source === "catalog" || merchant.source === "match_text");
+  const storedName =
+    merchant && decText(dataKey, merchant.nameCt, merchant.id, "name_ct", merchant.version);
   const override = asSettableCadence(merchant?.cadenceOverride ?? null);
   const firstSeen = magnitudes[0].date;
   const cadence = override ?? deriveCadence(magnitudes.map((p) => p.date));
@@ -313,11 +324,12 @@ function toRow(
     id: merchant?.id ?? bucket.identity,
     merchantId: merchant?.id ?? null,
     matchText: bucket.matchText,
-    merchantName:
-      (merchant && decText(dataKey, merchant.nameCt, merchant.id, "name_ct", merchant.version)) ||
-      catalog?.name ||
-      bucket.matchText,
-    logoUrl: merchant?.logoUrl ?? catalog?.logoPath ?? null,
+    merchantName: catalogOwnsPresentation
+      ? catalog.name
+      : storedName || catalog?.name || bucket.matchText,
+    logoUrl: catalogOwnsPresentation
+      ? catalog.logoPath
+      : (merchant?.logoUrl ?? catalog?.logoPath ?? null),
     brandColor: catalog?.brandColor ?? null,
     cadence,
     cadenceIsOverride: override != null,

@@ -166,6 +166,12 @@ function Row({ row, tone }: { row: RecurringRow; tone: "positive" | "negative" }
           <span className="block truncate text-sm text-foreground">
             <bdi>{row.merchantName}</bdi>
           </span>
+          {row.merchantName.toLowerCase() !== row.matchText.toLowerCase() && (
+            <span className="block truncate text-xs text-muted-foreground" title={row.matchText}>
+              {"Match: "}
+              <bdi>{row.matchText}</bdi>
+            </span>
+          )}
           <span className="text-xs text-muted-foreground">
             {`${row.paymentCount} payment${row.paymentCount === 1 ? "" : "s"} ${row.firstSeenLabel}`}
           </span>
