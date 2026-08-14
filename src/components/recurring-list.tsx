@@ -158,11 +158,14 @@ function Row({ row, tone }: { row: RecurringRow; tone: "positive" | "negative" }
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full items-center gap-3 rounded-[var(--radius)] px-1 py-1 text-left transition hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring"
+        className="flex w-full flex-wrap items-center gap-x-3 gap-y-2 rounded-[var(--radius)] px-1 py-1 text-left transition hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring"
       >
         <Chevron className="h-4 w-4 shrink-0 text-muted-foreground" />
         <MerchantIcon name={row.merchantName} logoUrl={row.logoUrl} brandColor={row.brandColor} />
-        <div className="min-w-0 flex-1">
+        {/* `basis-40` reserves the name a full line so the wide "Not enough
+            history" badge wraps below with the figures on a phone, instead of
+            squeezing the name to zero and stacking it letter-by-letter. */}
+        <div className="min-w-0 grow basis-40">
           <span className="block truncate text-sm text-foreground">
             <bdi>{row.merchantName}</bdi>
           </span>
@@ -170,10 +173,11 @@ function Row({ row, tone }: { row: RecurringRow; tone: "positive" | "negative" }
             {`${row.paymentCount} payment${row.paymentCount === 1 ? "" : "s"} ${row.firstSeenLabel}`}
           </span>
         </div>
-        <Badge>{CADENCE_LABELS[row.cadence]}</Badge>
+        <Badge className="shrink-0">{CADENCE_LABELS[row.cadence]}</Badge>
         {/* Fixed slot: without it a longer cadence badge shifts this row's
-            figures and the amounts stop lining up between rows. */}
-        <div className="flex w-32 shrink-0 flex-col items-end">
+            figures and the amounts stop lining up between rows. `ml-auto`
+            pins it to the edge when it wraps to its own line on mobile. */}
+        <div className="ml-auto flex w-32 shrink-0 flex-col items-end">
           <Money
             value={row.latest}
             className={cn("text-sm", tone === "positive" ? "text-positive" : "text-negative")}
