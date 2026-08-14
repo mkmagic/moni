@@ -44,7 +44,7 @@ export function MerchantIcon({ name, logoUrl, brandColor, className }: MerchantI
       aria-hidden
     >
       {logoUrl ? (
-        // A bundled SVG at a known local path. next/image would add an
+        // A bundled image at a known local path. next/image would add an
         // optimizer round-trip for no benefit, so the rule is waived here —
         // the disable has to sit on the line immediately before the element,
         // with no wrapped description, or it silently applies to nothing.

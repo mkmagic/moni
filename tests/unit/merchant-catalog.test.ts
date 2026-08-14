@@ -51,14 +51,14 @@ describe("matchCatalog", () => {
     for (const raw of ALL_SAMPLES) {
       const entry = match(raw);
       if (entry?.logoPath == null) continue;
-      expect(entry.logoPath).toMatch(/^\/merchants\/[a-z0-9-]+\.svg$/);
+      expect(entry.logoPath).toMatch(/^\/merchants\/[a-z0-9-]+\.(?:png|svg)$/);
     }
   });
 
-  it("points every catalog merchant at its bundled SVG", () => {
+  it("points every catalog merchant at its bundled asset", () => {
     for (const raw of ALL_SAMPLES) {
       const entry = match(raw);
-      expect(entry?.logoPath).toBe(`/merchants/${entry?.key}.svg`);
+      expect(entry?.logoPath).toMatch(new RegExp(`^/merchants/${entry?.key}\\.(?:png|svg)$`));
     }
   });
 
@@ -83,6 +83,18 @@ const ALL_SAMPLES = [
   "פלאפון",
   "בזק",
   "HOT MOBILE",
+  "חברת החשמל לישראל",
+  "CHATGPT PLUS",
+  "ANTHROPIC CLAUDE",
+  "מאוחדת",
+  "כללית",
+  "לאומית",
+  "הראל ביטוח",
+  "איילון ביטוח",
+  "הפניקס פנסיה",
+  "מגדל ביטוח",
+  "אלטשולר שחם",
+  "מיטב דש",
 ];
 
 /** Reads the keys back through the public surface rather than the module internals. */

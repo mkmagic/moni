@@ -8,10 +8,10 @@
 
 /** A payee the catalog can name, plus what it takes to render it. */
 export interface CatalogEntry {
-  /** Stable identity, independent of the display name. Also the SVG basename. */
+  /** Stable identity, independent of the display name. Also the asset basename. */
   key: string;
   name: string;
-  /** Tints the monogram when there is no SVG, and the SVG's backdrop when there is. */
+  /** Tints the monogram when there is no asset, and the asset's backdrop when there is. */
   brandColor: string;
   /**
    * Origin-local path to a bundled icon, or null when no asset has been added
@@ -40,14 +40,14 @@ const CATALOG: CatalogEntry[] = [
     key: "netflix",
     name: "Netflix",
     brandColor: "#e50914",
-    logoPath: "/merchants/netflix.svg",
+    logoPath: "/merchants/netflix.png",
     needles: ["netflix"],
   },
   {
     key: "spotify",
     name: "Spotify",
     brandColor: "#1db954",
-    logoPath: "/merchants/spotify.svg",
+    logoPath: "/merchants/spotify.png",
     needles: ["spotify"],
   },
   {
@@ -83,8 +83,92 @@ const CATALOG: CatalogEntry[] = [
     key: "google",
     name: "Google",
     brandColor: "#4285f4",
-    logoPath: "/merchants/google.svg",
+    logoPath: "/merchants/google.png",
     needles: ["google"],
+  },
+  {
+    key: "openai",
+    name: "OpenAI",
+    brandColor: "#000000",
+    logoPath: "/merchants/openai.png",
+    needles: ["openai", "open ai", "chatgpt"],
+  },
+  {
+    key: "anthropic",
+    name: "Anthropic",
+    brandColor: "#191919",
+    logoPath: "/merchants/anthropic.svg",
+    needles: ["anthropic", "claude ai"],
+  },
+  {
+    key: "israel-electric",
+    name: "Israel Electric Corporation",
+    brandColor: "#f5a800",
+    logoPath: "/merchants/israel-electric.png",
+    needles: ["israel electric", "iec", "חברת החשמל"],
+  },
+  {
+    key: "meuhedet",
+    name: "Meuhedet",
+    brandColor: "#6f2c91",
+    logoPath: "/merchants/meuhedet.png",
+    needles: ["meuhedet", "מאוחדת"],
+  },
+  {
+    key: "clalit",
+    name: "Clalit",
+    brandColor: "#009a44",
+    logoPath: "/merchants/clalit.svg",
+    needles: ["clalit", "כללית"],
+  },
+  {
+    key: "leumit",
+    name: "Leumit",
+    brandColor: "#0072bc",
+    logoPath: "/merchants/leumit.png",
+    needles: ["leumit", "לאומית"],
+  },
+  {
+    key: "harel",
+    name: "Harel",
+    brandColor: "#004b87",
+    logoPath: "/merchants/harel.svg",
+    needles: ["harel", "הראל"],
+  },
+  {
+    key: "ayalon",
+    name: "Ayalon",
+    brandColor: "#4a0129",
+    logoPath: "/merchants/ayalon.svg",
+    needles: ["ayalon", "איילון"],
+  },
+  {
+    key: "phoenix",
+    name: "Phoenix",
+    brandColor: "#f58220",
+    logoPath: "/merchants/phoenix.svg",
+    needles: ["phoenix", "הפניקס"],
+  },
+  {
+    key: "migdal",
+    name: "Migdal",
+    brandColor: "#e31e24",
+    logoPath: "/merchants/migdal.svg",
+    needles: ["migdal", "מגדל"],
+  },
+  {
+    key: "altshuler-shaham",
+    name: "Altshuler Shaham",
+    brandColor: "#1d2d50",
+    logoPath: "/merchants/altshuler-shaham.png",
+    needles: ["altshuler shaham", "altshuler", "אלטשולר שחם"],
+  },
+  {
+    key: "meitav",
+    name: "Meitav",
+    brandColor: "#f58220",
+    logoPath: "/merchants/meitav.svg",
+    needles: ["meitav dash", "meitav", "מיטב דש", "מיטב"],
   },
   {
     key: "cellcom",
