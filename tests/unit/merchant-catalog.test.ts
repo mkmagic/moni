@@ -24,6 +24,22 @@ describe("matchCatalog", () => {
     expect(match("סלקום")?.name).toBe("Cellcom");
   });
 
+  it.each([
+    ["DIGITALOCEAN.COM", "DigitalOcean"],
+    ["HETZNER ONLINE", "Hetzner"],
+    ["IONOS CLOUD", "IONOS"],
+    ["DROPBOX PLUS", "Dropbox"],
+    ["MEGA.NZ", "MEGA"],
+    ["חברת הגיחון בעמ", "חברת הגיחון"],
+    ["MOOVIT APP", "Moovit"],
+  ])("resolves provider %s", (description, name) => {
+    expect(match(description)?.name).toBe(name);
+  });
+
+  it("does not mistake the unrelated MEGA name for the MEGA.nz provider", () => {
+    expect(match("MEGA BAIR")).toBeNull();
+  });
+
   it("returns null for a payee it has never heard of", () => {
     expect(match("ג'ופניקה תל אביב")).toBeNull();
   });
@@ -86,6 +102,13 @@ const ALL_SAMPLES = [
   "חברת החשמל לישראל",
   "CHATGPT PLUS",
   "ANTHROPIC CLAUDE",
+  "DIGITALOCEAN.COM",
+  "HETZNER ONLINE",
+  "IONOS CLOUD",
+  "DROPBOX PLUS",
+  "MEGA.NZ",
+  "חברת הגיחון בעמ",
+  "MOOVIT APP",
   "מאוחדת",
   "כללית",
   "לאומית",
