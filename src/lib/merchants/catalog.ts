@@ -54,7 +54,7 @@ const CATALOG: CatalogEntry[] = [
     key: "apple",
     name: "Apple",
     brandColor: "#555555",
-    logoPath: "/merchants/apple.svg",
+    logoPath: "/merchants/apple.png",
     // Never a bare "apple" — it is an ordinary word and a shop name.
     needles: ["apple com bill", "itunes", "apple services"],
   },
@@ -76,7 +76,7 @@ const CATALOG: CatalogEntry[] = [
     key: "amazon",
     name: "Amazon",
     brandColor: "#ff9900",
-    logoPath: "/merchants/amazon.svg",
+    logoPath: "/merchants/amazon.png",
     needles: ["amazon", "aws"],
   },
   {
@@ -97,7 +97,7 @@ const CATALOG: CatalogEntry[] = [
     key: "anthropic",
     name: "Anthropic",
     brandColor: "#191919",
-    logoPath: "/merchants/anthropic.svg",
+    logoPath: "/merchants/anthropic.png",
     needles: ["anthropic", "claude ai"],
   },
   {

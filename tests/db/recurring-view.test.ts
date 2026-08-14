@@ -243,7 +243,7 @@ describe("getRecurringView", () => {
     expect(anthropic).toMatchObject({
       merchantName: "Claude Team",
       matchText,
-      logoUrl: "/merchants/anthropic.svg",
+      logoUrl: "/merchants/anthropic.png",
     });
   });
 });
