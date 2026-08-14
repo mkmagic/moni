@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 import { HSTS_VALUE } from "./src/lib/transport";
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   // HSTS only (issue #16). CSP, frame and sniffing headers are a separate
   // concern from transit and get their own change.
   async headers() {

@@ -1,0 +1,7 @@
+# Production Caddy configuration. MONI_DOMAIN is public configuration supplied
+# by /etc/caddy/moni.env. DNS credentials belong only to the root-run Certbot
+# renewer; the internet-facing Caddy process receives certificate files only.
+{$MONI_DOMAIN} {
+	tls /etc/caddy/certs/fullchain.pem /etc/caddy/certs/privkey.pem
+	reverse_proxy 127.0.0.1:3000
+}

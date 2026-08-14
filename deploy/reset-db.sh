@@ -20,6 +20,10 @@ set -euo pipefail
 APP=/opt/moni/app
 # shellcheck disable=SC1091
 source /root/moni-secrets.env    # PGSU, OWNERPW, APPPW
+: "${MONI_DOMAIN:?MONI_DOMAIN unset in /root/moni-secrets.env}"
+[[ "$MONI_DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] \
+  && [[ "$MONI_DOMAIN" != *..* ]] \
+  || { echo "MONI_DOMAIN is not a valid lowercase hostname" >&2; exit 1; }
 [ -f /root/moni-backup.env ] || { echo "missing /root/moni-backup.env — arm off-box backups first (deployment skill)"; exit 1; }
 # shellcheck disable=SC1091
 source /root/moni-backup.env     # AGE_RECIPIENT (PUBLIC key) — the pre-reset dump is encrypted
@@ -60,4 +64,4 @@ sudo -u postgres psql -v ON_ERROR_STOP=1 -d moni \
   -c "ALTER ROLE moni_app   PASSWORD :'apppw';"
 
 systemctl start moni
-echo "[reset] done — fresh empty database. Re-register the owner account at https://moni-fin.tech"
+echo "[reset] done — fresh empty database. Re-register the owner account at https://$MONI_DOMAIN"
