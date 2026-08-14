@@ -129,7 +129,7 @@ export const BUILTIN_RULES: BuiltinRule[] = [
   },
   {
     key: "water",
-    match: ["מי אביבים", "מקורות", "תאגיד המים", "מי שבע"],
+    match: ["מי אביבים", "מקורות", "תאגיד המים", "מי שבע", "הגיחון"],
     categoryKey: "housing-water",
   },
   {

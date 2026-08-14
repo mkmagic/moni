@@ -67,6 +67,9 @@ describe("evaluateBuiltins", () => {
     expect(evaluateBuiltins(normalizeDescription("ועד בית"), "asset")?.categoryKey).toBe(
       "housing-vaad-bayit",
     );
+    expect(evaluateBuiltins(normalizeDescription("חברת הגיחון בעמ"), "asset")?.categoryKey).toBe(
+      "housing-water",
+    );
     expect(evaluateBuiltins(normalizeDescription("ביטוח לאומי"), "asset")?.categoryKey).toBe(
       "income-national-insurance",
     );

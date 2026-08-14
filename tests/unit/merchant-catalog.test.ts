@@ -24,6 +24,22 @@ describe("matchCatalog", () => {
     expect(match("סלקום")?.name).toBe("Cellcom");
   });
 
+  it.each([
+    ["DIGITALOCEAN.COM", "DigitalOcean"],
+    ["HETZNER ONLINE", "Hetzner"],
+    ["IONOS CLOUD", "IONOS"],
+    ["DROPBOX PLUS", "Dropbox"],
+    ["MEGA.NZ", "MEGA"],
+    ["חברת הגיחון בעמ", "חברת הגיחון"],
+    ["MOOVIT APP", "Moovit"],
+  ])("resolves provider %s", (description, name) => {
+    expect(match(description)?.name).toBe(name);
+  });
+
+  it("does not mistake the unrelated MEGA name for the MEGA.nz provider", () => {
+    expect(match("MEGA BAIR")).toBeNull();
+  });
+
   it("returns null for a payee it has never heard of", () => {
     expect(match("ג'ופניקה תל אביב")).toBeNull();
   });
@@ -51,7 +67,14 @@ describe("matchCatalog", () => {
     for (const raw of ALL_SAMPLES) {
       const entry = match(raw);
       if (entry?.logoPath == null) continue;
-      expect(entry.logoPath).toMatch(/^\/merchants\/[a-z0-9-]+\.svg$/);
+      expect(entry.logoPath).toMatch(/^\/merchants\/[a-z0-9-]+\.(?:png|svg)$/);
+    }
+  });
+
+  it("points every catalog merchant at its bundled asset", () => {
+    for (const raw of ALL_SAMPLES) {
+      const entry = match(raw);
+      expect(entry?.logoPath).toMatch(new RegExp(`^/merchants/${entry?.key}\\.(?:png|svg)$`));
     }
   });
 
@@ -76,6 +99,25 @@ const ALL_SAMPLES = [
   "פלאפון",
   "בזק",
   "HOT MOBILE",
+  "חברת החשמל לישראל",
+  "CHATGPT PLUS",
+  "ANTHROPIC CLAUDE",
+  "DIGITALOCEAN.COM",
+  "HETZNER ONLINE",
+  "IONOS CLOUD",
+  "DROPBOX PLUS",
+  "MEGA.NZ",
+  "חברת הגיחון בעמ",
+  "MOOVIT APP",
+  "מאוחדת",
+  "כללית",
+  "לאומית",
+  "הראל ביטוח",
+  "איילון ביטוח",
+  "הפניקס פנסיה",
+  "מגדל ביטוח",
+  "אלטשולר שחם",
+  "מיטב דש",
 ];
 
 /** Reads the keys back through the public surface rather than the module internals. */
