@@ -63,6 +63,7 @@ if [ -f /var/lib/moni-secure.img ] || grep -q '^moni_secure ' /etc/crypttab 2>/d
   st=$(cryptsetup status moni_secure 2>/dev/null | awk '/type:/{print $2}')
   [ "$st" = "LUKS2" ] && ok "moni_secure container open (LUKS2)" || bad "moni_secure not open — data plaintext or app down"
   src=$(findmnt -no SOURCE /var/lib/postgresql/16/main 2>/dev/null)
+  src=${src%%[*}   # a bind mount reports SOURCE[/subpath]; keep just the device
   case "$src" in
     /dev/mapper/moni_secure) ok "Postgres data on encrypted mapper" ;;
     *) bad "Postgres data source is '${src:-<unmounted>}', not the encrypted mapper" ;;

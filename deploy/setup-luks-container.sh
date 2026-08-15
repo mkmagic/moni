@@ -76,7 +76,11 @@ EOF
 
   log "disable auto-start: boot stays locked until moni-unlock (SSH-recoverable design)"
   systemctl daemon-reload
-  systemctl disable moni postgresql@16-main 2>/dev/null || true
+  systemctl disable moni 2>/dev/null || true
+  # Debian's canonical 'don't auto-start this cluster' switch (systemctl disable is
+  # unreliable for the postgresql@ template instance). moni-unlock starts it explicitly.
+  [ -f /etc/postgresql/16/main/start.conf ] && sed -i 's/^\(auto\|manual\|disabled\).*/manual/' /etc/postgresql/16/main/start.conf || true
+  systemctl disable postgresql@16-main 2>/dev/null || true
   log "create done. Next: verify a fresh backup off-box, then '$0 migrate'."
 }
 
