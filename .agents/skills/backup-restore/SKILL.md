@@ -36,6 +36,10 @@ the `moni-backup.timer`).
 
 ## Restore onto a live box — `scripts/restore.sh`
 
+> **LUKS (#93 M2):** the box's Postgres lives in an encrypted container. After a reboot the DB is
+> down until you run `moni-unlock` on the box (see the `deployment` skill). `restore.sh` streams into
+> a **running** Postgres, so unlock first — otherwise the restore has nothing to load into.
+
 Run from the machine holding the **private** key:
 
 ```bash

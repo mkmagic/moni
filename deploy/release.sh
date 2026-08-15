@@ -129,7 +129,10 @@ if ! sudo -u moni test -x "$EXP"; then
     && chmod -R +x 'linux-$VER/chrome-linux64/' && rm c.zip"
 fi
 if grep -q '^MONI_CHROME_PATH=' "$SHARED/.env"; then
-  sudo -u moni sed -i "s#^MONI_CHROME_PATH=.*#MONI_CHROME_PATH=$EXP#" "$SHARED/.env"
+  # --follow-symlinks: when .env is a symlink into the LUKS store (#93 M2), a plain `sed -i`
+  # replaces the symlink with a NEW plaintext regular file holding every secret. Follow the link
+  # and edit the encrypted target in place instead.
+  sudo -u moni sed --follow-symlinks -i "s#^MONI_CHROME_PATH=.*#MONI_CHROME_PATH=$EXP#" "$SHARED/.env"
 else
   printf 'MONI_CHROME_PATH=%s\n' "$EXP" | sudo -u moni tee -a "$SHARED/.env" >/dev/null
 fi

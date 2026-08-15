@@ -40,8 +40,8 @@ skill (Chrome/Puppeteer specifics) and `db-schema` (migrations).
   (a core would snapshot decrypted RAM to disk). `release.sh` **fails closed** if effective
   `MemorySwapMax`/`LimitCORE` ≠ 0. After any reboot or deploy, run `deploy/verify-host.sh` (read-only)
   on the box — it asserts revision, loopback-only listeners, RLS role flags + policy count, swap/core,
-  Chrome sandbox, backups, and TLS + `/api/health`. #93 Milestones 2 (guest LUKS at rest) and 3 (full
-  systemd sandbox, SSH lockdown, off-host alerting) are **not** done.
+  Chrome sandbox, backups, and TLS + `/api/health`. #93 Milestone 2 (guest LUKS at rest) is **done**
+  (see below); Milestone 3 (full systemd sandbox, SSH lockdown, off-host alerting) is **not**.
 - **Chrome runtime libs** (Ubuntu 24.04 `t64` names) + `kernel.apparmor_restrict_unprivileged_userns=0`
   (keeps the sandbox — **never** `--no-sandbox` on a box holding real credentials). Full list and
   reasoning: `israeli-scraper` skill.
@@ -57,6 +57,27 @@ skill (Chrome/Puppeteer specifics) and `db-schema` (migrations).
   roles with placeholder passwords). Then **rotate both roles to strong passwords** and switch
   `DATABASE_URL_MIGRATE` to `moni_owner` for every later migration. Roles are cluster-level, so they
   survive a `DROP DATABASE` (see `reset-db.sh`).
+
+## Encryption at rest (LUKS) — #93 M2
+
+Sensitive data lives in a **LUKS2 container** (`/var/lib/moni-secure.img`, a loop-backed file on
+the root disk), unlocked **manually after every reboot** — DO local droplet disks aren't encrypted
+at rest, so this closes the stolen-disk gap. The container holds the Postgres cluster (bind-mounted
+onto `/var/lib/postgresql/16/main`), the secret envs (`/root/*.env`, `rclone.conf`, the app `.env`
+— symlinked back), swap, and the scrape browser tmp (`moni.service` `TMPDIR=/mnt/secure/tmp`).
+
+- **Passphrase lives OFF the box** (owner's password manager); never on disk/swap/logs. Losing it
+  means the data is recoverable only from an off-box backup.
+- **Boot is SSH-recoverable, not blocking.** The container is `noauto`; Postgres + Moni are
+  **disabled from auto-start** and wait on the mount (`RequiresMountsFor=/mnt/secure`). After a
+  reboot the box is reachable over SSH but the app is **down** until you run **`moni-unlock`** (over
+  SSH or the DO console) and type the passphrase — it opens the container, mounts, `swapon`s, and
+  starts the services. `cryptsetup` prompts directly, so the passphrase never touches a shell var.
+- **Setup / migration:** `deploy/setup-luks-container.sh {create|migrate|wipe-plaintext}`. `migrate`
+  refuses to run until `/root/.moni-luks-backup-verified` exists — prove a fresh `backup.sh` decrypts
+  off-box first (see `backup-restore`). `wipe-plaintext` securely removes the old plaintext only after
+  you've verified the encrypted box (real login + a reboot drill). `deploy/verify-host.sh` hard-fails
+  if the box is ever left running on plaintext once the container is configured.
 
 ## TLS — separate DNS-01 renewal from Caddy
 
