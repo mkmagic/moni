@@ -48,6 +48,10 @@ cmd_create(){
   mountpoint -q "$MOUNT" || mount "$DEV" "$MOUNT"
   install -d -m 755 "$MOUNT/postgresql" "$MOUNT/secrets"
   install -d -o moni -g moni -m 700 "$MOUNT/tmp"
+  # App env dir is moni-owned: release.sh (as moni) edits .env in place with
+  # `sed --follow-symlinks`, which writes its temp INTO this dir — so moni must own it.
+  # Keep it separate from the root-owned secrets dir.
+  install -d -o moni -g moni -m 700 "$MOUNT/app"
   install -d -o postgres -g postgres -m 700 "$MOUNT/postgresql/16"
 
   log "write /etc/crypttab (noauto — boot never blocks; moni-unlock opens it)"
@@ -114,17 +118,23 @@ cmd_migrate(){
   log "relocate secret envs (real file -> container, symlink left behind)"
   for p in $(secret_paths); do
     [ -e "$p" ] || { log "  skip missing $p"; continue; }
-    if [ -L "$p" ] && readlink "$p" | grep -q "^$MOUNT/secrets/"; then log "  already relocated $p"; continue; fi
+    if [ -L "$p" ] && readlink "$p" | grep -qE "^$MOUNT/(secrets|app)/"; then log "  already relocated $p"; continue; fi
     real=$(readlink -f "$p")
-    case "$real" in /root/*|/opt/moni/*) : ;; *) log "  refusing unexpected secret path $real"; continue ;; esac
+    # App env goes in the moni-owned dir (release.sh edits it as moni, in place); root
+    # secrets in the root-owned dir. Only read-only /root secrets live in secrets/.
+    case "$real" in
+      /opt/moni/*) destdir="$MOUNT/app" ;;
+      /root/*)     destdir="$MOUNT/secrets" ;;
+      *) log "  refusing unexpected secret path $real"; continue ;;
+    esac
     base=$(printf '%s' "$real" | tr '/' '_')
-    cp -a "$real" "$MOUNT/secrets/$base"
+    cp -a "$real" "$destdir/$base"
     # Create the symlink beside the target, then swap atomically — no window where the
     # canonical path is missing on a crash.
-    ln -sfn "$MOUNT/secrets/$base" "${real}.LINK"
+    ln -sfn "$destdir/$base" "${real}.LINK"
     mv "$real" "${real}.PLAINTEXT-old"
     mv -T "${real}.LINK" "$real"
-    log "  $p -> $MOUNT/secrets/$base"
+    log "  $p -> $destdir/$base"
   done
   chmod 711 "$MOUNT" "$MOUNT/secrets"   # let owners traverse to their 600 files
 
