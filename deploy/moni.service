@@ -8,6 +8,8 @@ Type=simple
 User=moni
 Group=moni
 WorkingDirectory=/opt/moni/app
+EnvironmentFile=/opt/moni/shared/.env
+Environment=MONI_APP_ROOT=/opt/moni/app
 Environment=HOSTNAME=127.0.0.1
 Environment=PORT=3000
 ExecStart=/usr/bin/node /opt/moni/app/.next/standalone/server.js
