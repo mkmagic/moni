@@ -57,6 +57,20 @@ cp=$(cat /proc/sys/kernel/core_pattern)
 case "$cp" in *apport*) bad "core_pattern routes to Apport: $cp";; *) ok "core_pattern discards ($cp)";; esac
 [ "$(sysctl -n fs.suid_dumpable)" = "0" ] && ok "suid_dumpable=0" || bad "suid_dumpable != 0"
 
+echo "== Encryption at rest (LUKS #93 M2) =="
+# Hard gate once the container is configured; informational before the migration.
+if [ -f /var/lib/moni-secure.img ] || grep -q '^moni_secure ' /etc/crypttab 2>/dev/null; then
+  st=$(cryptsetup status moni_secure 2>/dev/null | awk '/type:/{print $2}')
+  [ "$st" = "LUKS2" ] && ok "moni_secure container open (LUKS2)" || bad "moni_secure not open — data plaintext or app down"
+  src=$(findmnt -no SOURCE /var/lib/postgresql/16/main 2>/dev/null)
+  case "$src" in
+    /dev/mapper/moni_secure) ok "Postgres data on encrypted mapper" ;;
+    *) bad "Postgres data source is '${src:-<unmounted>}', not the encrypted mapper" ;;
+  esac
+else
+  echo "  -- LUKS container not configured (M2 pending) — skipping"
+fi
+
 echo "== Chrome sandbox preserved =="
 [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null)" = "0" ] \
   && ok "unprivileged userns allowed (sandbox usable)" || bad "userns restricted — Chrome sandbox may break"
