@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import * as schema from "@/db/schema";
 import { encryptField, getDevUserDataKey, type AadContext } from "@/lib/crypto";
 import { getRecurringView } from "@/domain/recurring";
+import { add } from "@/lib/money";
 import type { Session } from "@/lib/auth/session-store";
 import { cleanupOwners, elevatedDb, elevatedPool } from "./helpers";
 
@@ -184,6 +185,21 @@ describe("getRecurringView", () => {
     // Income is summed on its own — never folded in with expenses.
     expect(view.incomeSummary.total.amount).toBe("38000");
     expect(view).not.toHaveProperty("summary");
+
+    // Contract, asserted independently of the fixture's category count: each
+    // section aggregate is the decimal sum of ITS categories and nothing else.
+    // Guards against a regression that returned one category or the wrong side.
+    for (const [groups, summary] of [
+      [view.expenses, view.expensesSummary],
+      [view.income, view.incomeSummary],
+    ] as const) {
+      const zero = { amount: "0", currency: "ILS" };
+      expect(summary.monthlyAverage).toEqual(
+        groups.reduce((a, g) => add(a, g.monthlyAverage), zero),
+      );
+      expect(summary.total).toEqual(groups.reduce((a, g) => add(a, g.total), zero));
+      expect(summary.monthlyAverageIsEstimate).toBe(groups.some((g) => g.monthlyAverageIsEstimate));
+    }
   });
 
   it("narrows category totals to the selected range, leaving row headlines alone", async () => {

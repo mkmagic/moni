@@ -23,7 +23,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import { createUser } from "@/domain/registration";
 import { startSyncRun } from "@/domain/sync-promotion";
-import { createSession, destroySession } from "@/lib/auth/session-store";
+import { createSession, destroySession, getSession } from "@/lib/auth/session-store";
 import {
   armCredentialWindow,
   destroyCredentialWindow,
@@ -38,6 +38,7 @@ import { POST as armRoute } from "@/app/api/connections/arm/route";
 import { POST as armOptionsRoute } from "@/app/api/connections/arm/options/route";
 import { POST as syncRoute } from "@/app/api/connections/[id]/sync/route";
 import { GET as syncRunStatusRoute } from "@/app/api/sync-runs/[id]/route";
+import { POST as dismissSyncPromptRoute } from "@/app/api/sync-prompt/dismiss/route";
 import { cleanupOwners, enrollTestCredentialKey } from "./helpers";
 
 const SIGNUP_TOKEN = process.env.MONI_SIGNUP_TOKEN;
@@ -621,5 +622,41 @@ describe("GET /api/sync-runs/[id]", () => {
     expect(body.id).toBe(syncRunId);
     expect(body.status).toBe("running");
     expect(body.connectionId).toBe(connectionId);
+  });
+});
+
+describe("POST /api/sync-prompt/dismiss", () => {
+  const createdUserIds: string[] = [];
+  const createdSessionIds: string[] = [];
+  afterAll(async () => {
+    for (const id of createdSessionIds) destroySession(id);
+    await cleanupOwners(createdUserIds);
+  });
+
+  it("rejects an unauthenticated caller and mutates no session", async () => {
+    const res = await dismissSyncPromptRoute(
+      jsonRequest("http://localhost/api/sync-prompt/dismiss", { method: "POST" }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("flips the live session's dismissal flag so the reminder stays silenced", async () => {
+    const session = await freshSession("dismiss");
+    createdUserIds.push(session.userId);
+    createdSessionIds.push(session.sessionId);
+
+    // A fresh session has not answered the offer yet.
+    expect(getSession(session.sessionId)?.syncPromptDismissed).toBe(false);
+
+    const res = await dismissSyncPromptRoute(
+      jsonRequest("http://localhost/api/sync-prompt/dismiss", {
+        method: "POST",
+        sessionId: session.sessionId,
+      }),
+    );
+    expect(res.status).toBe(200);
+    // The same live session now reads back dismissed — this is what the
+    // dashboard checks on the next navigation (shouldPromptSync's `dismissed`).
+    expect(getSession(session.sessionId)?.syncPromptDismissed).toBe(true);
   });
 });

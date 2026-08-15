@@ -165,11 +165,16 @@ export default async function DashboardPage() {
 
   // The sync offer is keyed to how stale the fetchable connections are, not to
   // when the user last signed in — so a sync makes it disappear (issue #97).
+  // Only connections a sync can actually refresh count: an active credentialed
+  // fetch. A disconnected or errored one (its credentials wiped) and an
+  // import-only source are both things "Sync now" can't fix, so they must not
+  // keep the offer stuck on the dashboard (startActiveConnectionSyncRun gates
+  // on status === "active").
   const showReminder = shouldPromptSync({
     autoSyncOnLogin: profile?.autoSyncOnLogin ?? false,
     dismissed: session.syncPromptDismissed,
     syncableLastSyncAt: connections
-      .filter((c) => c.mode !== "user_mediated_import")
+      .filter((c) => c.mode === "credentialed_fetch" && c.status === "active")
       .map((c) => c.lastSyncAt),
   });
 

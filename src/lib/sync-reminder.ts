@@ -21,9 +21,10 @@ export interface SyncReminderInput {
   /** The user dismissed the offer earlier this session. */
   dismissed: boolean;
   /**
-   * `lastSyncAt` for every connection Moni can refresh on its own — one entry
-   * per connection, `null` for a never-synced one. Import-only connections
-   * are excluded: "refresh to pull new transactions" does not fetch them.
+   * `lastSyncAt` for every connection a sync can actually refresh — an active
+   * credentialed fetch — one entry per connection, `null` for a never-synced
+   * one. Disconnected/errored and import-only connections are excluded: the
+   * offer must not stick on a source "Sync now" cannot pull.
    */
   syncableLastSyncAt: (Date | null)[];
   /** Injectable for tests; defaults to now. */
