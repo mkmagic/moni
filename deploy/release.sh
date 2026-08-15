@@ -71,7 +71,8 @@ CORELIM=$(systemctl show moni.service -p LimitCORE --value)
   exit 1
 }
 
-mkdir -p "$RELEASES" "$INCOMING" "$SHARED" /root/moni-backups
+mkdir -p "$RELEASES" "$INCOMING" /root/moni-backups
+install -d -o moni -g moni -m 700 "$SHARED"
 ARCHIVE="$INCOMING/$SHA.tar.gz"
 STAGE="$RELEASES/.stage-$SHA-$$"
 FINAL="$RELEASES/$SHA"
