@@ -8,8 +8,10 @@
 
 /**
  * How stale a connection's data may be before an opted-in user is nudged to
- * refresh. Matches the 8-hour session window, so an active session sees the
- * offer at most once — but it is measured from the last sync, not the login.
+ * refresh. This is its own freshness policy, deliberately NOT derived from the
+ * session TTL: the offer is measured from the last sync, not the login, so
+ * changing how long a login lasts is no reason to nag more or less often. The
+ * two values happen to coincide at eight hours today; that is not a contract.
  */
 export const SYNC_REMINDER_STALE_MS = 8 * 60 * 60 * 1000;
 
