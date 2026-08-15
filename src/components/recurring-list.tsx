@@ -17,15 +17,17 @@ import {
 } from "@/lib/recurring/range";
 import { CADENCE_LABELS, SETTABLE_CADENCES } from "@/lib/recurring/cadence";
 import { cn } from "@/lib/utils";
-import type { RecurringGroup, RecurringRow } from "@/domain/recurring";
+import type { RecurringGroup, RecurringRow, RecurringSummary } from "@/domain/recurring";
 
 interface Props {
   income: RecurringGroup[];
   expenses: RecurringGroup[];
+  incomeSummary: RecurringSummary;
+  expensesSummary: RecurringSummary;
   range: RecurringRange;
 }
 
-export function RecurringList({ income, expenses, range }: Props) {
+export function RecurringList({ income, expenses, incomeSummary, expensesSummary, range }: Props) {
   const router = useRouter();
 
   function setRange(next: RecurringRange) {
@@ -65,8 +67,20 @@ export function RecurringList({ income, expenses, range }: Props) {
 
       {/* Income and expenses never share a total: "recurring income minus
           recurring payments" is not a number anyone wants. */}
-      <Section title="Recurring payments" groups={expenses} tone="negative" range={range} />
-      <Section title="Recurring income" groups={income} tone="positive" range={range} />
+      <Section
+        title="Recurring payments"
+        groups={expenses}
+        summary={expensesSummary}
+        tone="negative"
+        range={range}
+      />
+      <Section
+        title="Recurring income"
+        groups={income}
+        summary={incomeSummary}
+        tone="positive"
+        range={range}
+      />
 
       {income.length === 0 && expenses.length === 0 && (
         <Card className="px-5 pb-5 pt-6">
@@ -84,11 +98,13 @@ export function RecurringList({ income, expenses, range }: Props) {
 function Section({
   title,
   groups,
+  summary,
   tone,
   range,
 }: {
   title: string;
   groups: RecurringGroup[];
+  summary: RecurringSummary;
   tone: "positive" | "negative";
   range: RecurringRange;
 }) {
@@ -97,7 +113,29 @@ function Section({
 
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="text-sm font-medium text-muted-foreground">{title}</h2>
+      {/* The section header carries the roll-up across every category below it
+          (#98): the per-month figure a budget is set from, with the range
+          total beside it. Laid out like a category card's header so the eye
+          reads the two levels the same way. */}
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h2 className="text-sm font-medium text-muted-foreground">{title}</h2>
+        <div className="flex items-baseline gap-3">
+          <span
+            className={cn(
+              "text-sm font-medium",
+              tone === "positive" ? "text-positive" : "text-negative",
+            )}
+          >
+            {summary.monthlyAverageIsEstimate && "≈ "}
+            <Money value={summary.monthlyAverage} />
+            {" / mo"}
+          </span>
+          <span className="text-xs text-muted-foreground">
+            <Money value={summary.total} />
+            {` over ${rangeLabel.toLowerCase()}`}
+          </span>
+        </div>
+      </div>
       {groups.map((group) => (
         <Card key={group.categoryId} className="flex flex-col gap-3 px-5 pb-4 pt-6">
           <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border pb-3">

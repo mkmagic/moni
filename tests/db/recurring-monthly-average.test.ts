@@ -119,7 +119,7 @@ describe("getRecurringView monthly averages", () => {
       userId,
       dataKey: Buffer.from(dataKey),
       baseCurrency: "ILS",
-      promptSyncOnLogin: false,
+      syncPromptDismissed: false,
       expiresAt: Date.now() + 3_600_000,
     };
   });

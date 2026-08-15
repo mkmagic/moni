@@ -40,7 +40,7 @@ async function owner(): Promise<Owner> {
       userId,
       dataKey,
       baseCurrency: "ILS",
-      promptSyncOnLogin: false,
+      syncPromptDismissed: false,
       expiresAt: Date.now() + 60_000,
     } as Session,
     connectionIds: [],

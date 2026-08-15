@@ -22,6 +22,7 @@ import { NeedsReviewCard } from "@/components/needs-review-card";
 import { listCategories, suggestCategories } from "@/domain/categorization";
 import { listEntries } from "@/domain/transactions";
 import { getBudgetSummary, type OverBudgetCategory } from "@/domain/budget";
+import { shouldPromptSync } from "@/lib/sync-reminder";
 import { cn } from "@/lib/utils";
 
 /** Time-of-day greeting from the SERVER's clock. This is a self-hosted,
@@ -162,6 +163,21 @@ export default async function DashboardPage() {
     }
   }
 
+  // The sync offer is keyed to how stale the fetchable connections are, not to
+  // when the user last signed in — so a sync makes it disappear (issue #97).
+  // Only connections a sync can actually refresh count: an active credentialed
+  // fetch. A disconnected or errored one (its credentials wiped) and an
+  // import-only source are both things "Sync now" can't fix, so they must not
+  // keep the offer stuck on the dashboard (startActiveConnectionSyncRun gates
+  // on status === "active").
+  const showReminder = shouldPromptSync({
+    autoSyncOnLogin: profile?.autoSyncOnLogin ?? false,
+    dismissed: session.syncPromptDismissed,
+    syncableLastSyncAt: connections
+      .filter((c) => c.mode === "credentialed_fetch" && c.status === "active")
+      .map((c) => c.lastSyncAt),
+  });
+
   // --- Insight items ---------------------------------------------------------
   const busyItems: InsightItem[] = [];
   if (needsReview.length > 0) {
@@ -282,7 +298,7 @@ export default async function DashboardPage() {
       <DashboardSync
         connectionIds={connections.map((c) => c.id)}
         importConnections={connections.filter((c) => c.mode === "user_mediated_import")}
-        showReminder={session.promptSyncOnLogin}
+        showReminder={showReminder}
         title="Overview"
         greeting={greeting}
       />
