@@ -86,6 +86,16 @@ EOF
 
 cmd_migrate(){
   mountpoint -q "$MOUNT" || { echo "container not mounted — run '$0 create' / moni-unlock first" >&2; exit 1; }
+  # Provenance: /mnt/secure must actually be the encrypted mapper, not a stray plaintext mount.
+  [ "$(findmnt -no SOURCE "$MOUNT")" = "$DEV" ] || { echo "REFUSING: $MOUNT is not backed by $DEV" >&2; exit 1; }
+  # Idempotency: never re-run a completed/partial migration. Re-running would rsync --delete
+  # from an emptied $PGDATA into the encrypted copy (data loss) and re-move already-relocated
+  # secrets. Recovery from a half-migration is manual, not by re-running this.
+  enc_cluster_nonempty(){ [ -d "$MOUNT/postgresql/16/main" ] && [ -n "$(ls -A "$MOUNT/postgresql/16/main" 2>/dev/null)" ]; }
+  if [ -e "${PGDATA}.PLAINTEXT-old" ] || enc_cluster_nonempty \
+     || findmnt -no SOURCE "$PGDATA" 2>/dev/null | grep -q "$MAPPER"; then
+    echo "REFUSING: migration already ran (encrypted cluster / .PLAINTEXT-old present). Not re-running." >&2; exit 1
+  fi
   [ -f /root/.moni-luks-backup-verified ] || {
     echo "REFUSING: touch /root/.moni-luks-backup-verified only AFTER a fresh backup decrypts off-box." >&2
     echo "  (take deploy/backup.sh, scp it down, 'age -d -i key.txt <dump>.sql.age >/dev/null')" >&2; exit 1; }
@@ -94,9 +104,9 @@ cmd_migrate(){
   systemctl stop moni 2>/dev/null || true
   systemctl stop postgresql@16-main
 
-  log "rsync Postgres cluster into the container"
+  log "rsync Postgres cluster into the container (checksummed — no size/mtime quick-skip)"
   install -d -o postgres -g postgres -m 700 "$MOUNT/postgresql/16/main"
-  rsync -aHAX --delete "$PGDATA/" "$MOUNT/postgresql/16/main/"
+  rsync -aHAX --checksum --delete "$PGDATA/" "$MOUNT/postgresql/16/main/"
   log "set plaintext cluster aside, make an empty bind mountpoint"
   mv "$PGDATA" "${PGDATA}.PLAINTEXT-old"
   install -d -o postgres -g postgres -m 700 "$PGDATA"
@@ -104,16 +114,25 @@ cmd_migrate(){
   log "relocate secret envs (real file -> container, symlink left behind)"
   for p in $(secret_paths); do
     [ -e "$p" ] || { log "  skip missing $p"; continue; }
-    real=$(readlink -f "$p"); base=$(printf '%s' "$real" | tr '/' '_')
+    if [ -L "$p" ] && readlink "$p" | grep -q "^$MOUNT/secrets/"; then log "  already relocated $p"; continue; fi
+    real=$(readlink -f "$p")
+    case "$real" in /root/*|/opt/moni/*) : ;; *) log "  refusing unexpected secret path $real"; continue ;; esac
+    base=$(printf '%s' "$real" | tr '/' '_')
     cp -a "$real" "$MOUNT/secrets/$base"
+    # Create the symlink beside the target, then swap atomically — no window where the
+    # canonical path is missing on a crash.
+    ln -sfn "$MOUNT/secrets/$base" "${real}.LINK"
     mv "$real" "${real}.PLAINTEXT-old"
-    ln -sfn "$MOUNT/secrets/$base" "$real"
+    mv -T "${real}.LINK" "$real"
     log "  $p -> $MOUNT/secrets/$base"
   done
   chmod 711 "$MOUNT" "$MOUNT/secrets"   # let owners traverse to their 600 files
 
   log "move swap into the container"
   swapoff /swapfile 2>/dev/null || true
+  # A busy plaintext swap must not survive: fail rather than leave recoverable pages on disk.
+  swapon --show=NAME --noheadings 2>/dev/null | grep -qx /swapfile \
+    && { echo "REFUSING: /swapfile is still active (swapoff failed) — plaintext swap must be off" >&2; exit 1; }
   if [ ! -f "$MOUNT/swapfile" ]; then
     fallocate -l "$SWAP" "$MOUNT/swapfile"; chmod 600 "$MOUNT/swapfile"; mkswap "$MOUNT/swapfile" >/dev/null
   fi
@@ -129,6 +148,14 @@ cmd_migrate(){
 }
 
 cmd_wipe(){
+  # Machine-checked prerequisites — never destroy the only intact plaintext cluster after a
+  # failed/partial migration. The encrypted box must be fully live first.
+  [ -e "$DEV" ] || { echo "REFUSING: $DEV not open — encrypted box is not live" >&2; exit 1; }
+  [ "$(findmnt -no SOURCE "$MOUNT" 2>/dev/null)" = "$DEV" ] || { echo "REFUSING: $MOUNT not backed by $DEV" >&2; exit 1; }
+  findmnt -no SOURCE "$PGDATA" 2>/dev/null | grep -q "$MAPPER" || { echo "REFUSING: $PGDATA not on the encrypted mapper — migration incomplete" >&2; exit 1; }
+  [ ! -x /root/verify-host.sh ] || bash /root/verify-host.sh >/dev/null 2>&1 \
+    || { echo "REFUSING: verify-host.sh is not green — fix before wiping the fallback" >&2; exit 1; }
+
   echo "This securely removes the plaintext originals left by migrate."
   read -r -p "Type WIPE to confirm you have verified the encrypted box (login + reboot drill): " ans
   [ "$ans" = WIPE ] || { echo "aborted"; exit 1; }
@@ -139,10 +166,19 @@ cmd_wipe(){
     find "${PGDATA}.PLAINTEXT-old" -type f -exec shred -u {} \; 2>/dev/null || true
     rm -rf "${PGDATA}.PLAINTEXT-old"
   fi
-  [ -f /swapfile ] && { log "remove old plaintext swapfile"; shred -u /swapfile 2>/dev/null || rm -f /swapfile; }
+  if [ -f /swapfile ]; then
+    swapon --show=NAME --noheadings 2>/dev/null | grep -qx /swapfile \
+      && { echo "REFUSING: /swapfile still active — not removing live plaintext swap" >&2; exit 1; }
+    log "remove old plaintext swapfile"; shred -u /swapfile 2>/dev/null || rm -f /swapfile
+  fi
+  # Pre-migration scrape remnants on the plaintext root (browser profiles, PrivateTmp, crash dumps).
+  log "clear pre-migration browser/tmp remnants on the plaintext root"
+  rm -rf /tmp/puppeteer_dev_chrome_profile-* /tmp/.org.chromium.* /tmp/systemd-private-*-moni.service-* 2>/dev/null || true
+  find /home/moni/.cache -maxdepth 3 -type d -name '*Crashpad*' -exec rm -rf {} + 2>/dev/null || true
   log "fstrim (best-effort discard of freed blocks; not guaranteed on virtualized storage)"
   fstrim -av 2>/dev/null || true
-  log "wipe done. Delete any pre-migration DO snapshot — it still holds plaintext."
+  log "wipe done. NOTE: on virtualized storage secure-erase is best-effort — a stolen backing"
+  log "  image or provider snapshot can still hold old blocks. Delete any pre-migration snapshot."
 }
 
 case "${1:-}" in

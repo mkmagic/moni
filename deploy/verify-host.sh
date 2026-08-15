@@ -58,16 +58,32 @@ case "$cp" in *apport*) bad "core_pattern routes to Apport: $cp";; *) ok "core_p
 [ "$(sysctl -n fs.suid_dumpable)" = "0" ] && ok "suid_dumpable=0" || bad "suid_dumpable != 0"
 
 echo "== Encryption at rest (LUKS #93 M2) =="
-# Hard gate once the container is configured; informational before the migration.
-if [ -f /var/lib/moni-secure.img ] || grep -q '^moni_secure ' /etc/crypttab 2>/dev/null; then
+# Configured if ANY artifact is present — removing one to fall back to plaintext still trips the gate.
+if [ -f /var/lib/moni-secure.img ] || grep -q '^moni_secure ' /etc/crypttab 2>/dev/null \
+   || grep -q ' /mnt/secure ' /etc/fstab 2>/dev/null \
+   || [ -f /etc/systemd/system/moni.service.d/20-secure-store.conf ]; then
   st=$(cryptsetup status moni_secure 2>/dev/null | awk '/type:/{print $2}')
   [ "$st" = "LUKS2" ] && ok "moni_secure container open (LUKS2)" || bad "moni_secure not open — data plaintext or app down"
-  src=$(findmnt -no SOURCE /var/lib/postgresql/16/main 2>/dev/null)
-  src=${src%%[*}   # a bind mount reports SOURCE[/subpath]; keep just the device
-  case "$src" in
-    /dev/mapper/moni_secure) ok "Postgres data on encrypted mapper" ;;
-    *) bad "Postgres data source is '${src:-<unmounted>}', not the encrypted mapper" ;;
-  esac
+  [ "$(findmnt -no SOURCE /mnt/secure 2>/dev/null)" = "/dev/mapper/moni_secure" ] \
+    && ok "/mnt/secure backed by encrypted mapper" || bad "/mnt/secure not backed by the encrypted mapper"
+  src=$(findmnt -no SOURCE /var/lib/postgresql/16/main 2>/dev/null); src=${src%%[*}
+  [ "$src" = "/dev/mapper/moni_secure" ] && ok "Postgres data on encrypted mapper" \
+    || bad "Postgres data source is '${src:-<unmounted>}', not the encrypted mapper"
+  # Every secret must resolve onto the encrypted mount — catches a deploy that rewrote a plaintext .env.
+  secok=1
+  for s in /root/moni-secrets.env /root/moni-backup.env /root/.config/rclone/rclone.conf /opt/moni/app/.env; do
+    case "$(readlink -f "$s" 2>/dev/null)" in
+      /mnt/secure/*) : ;;
+      *) bad "secret NOT on encrypted store: $s -> $(readlink -f "$s" 2>/dev/null)"; secok=0 ;;
+    esac
+  done
+  [ "$secok" = 1 ] && ok "all secret envs resolve onto the encrypted store"
+  swapon --show=NAME --noheadings 2>/dev/null | grep -qx /swapfile \
+    && bad "plaintext /swapfile is active" || ok "no plaintext swap active"
+  left=$(find /root /opt/moni /var/lib/postgresql -maxdepth 4 -name '*.PLAINTEXT-old' 2>/dev/null | head -1)
+  [ -z "$left" ] && ok "no *.PLAINTEXT-old plaintext leftovers" || bad "plaintext leftover: $left (run wipe-plaintext)"
+  [ "$(systemctl show moni.service -p Environment --value 2>/dev/null | tr ' ' '\n' | grep '^TMPDIR=')" = "TMPDIR=/mnt/secure/tmp" ] \
+    && ok "moni TMPDIR routed into the container" || bad "moni TMPDIR not /mnt/secure/tmp (scrape state may hit plaintext)"
 else
   echo "  -- LUKS container not configured (M2 pending) — skipping"
 fi

@@ -40,8 +40,8 @@ skill (Chrome/Puppeteer specifics) and `db-schema` (migrations).
   (a core would snapshot decrypted RAM to disk). `release.sh` **fails closed** if effective
   `MemorySwapMax`/`LimitCORE` ≠ 0. After any reboot or deploy, run `deploy/verify-host.sh` (read-only)
   on the box — it asserts revision, loopback-only listeners, RLS role flags + policy count, swap/core,
-  Chrome sandbox, backups, and TLS + `/api/health`. #93 Milestones 2 (guest LUKS at rest) and 3 (full
-  systemd sandbox, SSH lockdown, off-host alerting) are **not** done.
+  Chrome sandbox, backups, and TLS + `/api/health`. #93 Milestone 2 (guest LUKS at rest) is **done**
+  (see below); Milestone 3 (full systemd sandbox, SSH lockdown, off-host alerting) is **not**.
 - **Chrome runtime libs** (Ubuntu 24.04 `t64` names) + `kernel.apparmor_restrict_unprivileged_userns=0`
   (keeps the sandbox — **never** `--no-sandbox` on a box holding real credentials). Full list and
   reasoning: `israeli-scraper` skill.
