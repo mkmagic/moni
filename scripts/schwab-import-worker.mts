@@ -1,20 +1,20 @@
 import "dotenv/config";
 import { spawn } from "node:child_process";
-import { join } from "node:path";
 import { decodeBinaryChildFrame, encodeBinaryChildFrame, readChildStdin } from "@/lib/connectors";
 import { completeSourceRefresh, importSchwabCsv, refreshBoiWithFallback } from "@/lib/investments";
 import { promoteInvestmentSnapshot } from "@/domain/investment-promotion";
 import { missingBoiFxPairs } from "@/domain/fx-rates";
 import { wipe } from "@/lib/crypto";
 import { errorLabel, syncLog, syncLogEnabled } from "@/lib/sync-log";
+import { workerRuntimePath } from "@/lib/worker-runtime";
 
 async function cacheBoi(required: Array<{ currency: string; date: string }>): Promise<void> {
   await refreshBoiWithFallback(
     required,
     async (pairs) => {
       const child = spawn(
-        join(process.cwd(), "node_modules/.bin/tsx"),
-        [join(process.cwd(), "scripts/boi-worker.mts")],
+        workerRuntimePath("node_modules", ".bin", "tsx"),
+        [workerRuntimePath("scripts", "boi-worker.mts")],
         { stdio: ["pipe", "ignore", syncLogEnabled() ? "inherit" : "ignore"] },
       );
       child.stdin.write(encodeBinaryChildFrame({ required: pairs }, []));

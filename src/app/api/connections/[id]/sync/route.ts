@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSessionFromRequest } from "@/domain/auth";
@@ -20,6 +19,7 @@ import {
 import { spawnInvestmentSyncWorker } from "@/lib/investments";
 import { PRODUCT_LABEL } from "@/lib/long-term-savings/labels";
 import { redactSecrets } from "@/lib/redact-secrets";
+import { workerRuntimePath } from "@/lib/worker-runtime";
 
 const Params = z.object({ id: z.uuid() });
 const validIsoDate = z
@@ -212,8 +212,8 @@ export async function POST(
  */
 function spawnBankWorker(dataKey: Buffer, payload: ChildStdinPayload): void {
   const child = spawn(
-    path.join(process.cwd(), "node_modules", ".bin", "tsx"),
-    [path.join(process.cwd(), "scripts", "scrape-worker.mts")],
+    workerRuntimePath("node_modules", ".bin", "tsx"),
+    [workerRuntimePath("scripts", "scrape-worker.mts")],
     { stdio: ["pipe", "ignore", "pipe"] },
   );
   const frame = encodeChildStdinFrame(dataKey, payload);

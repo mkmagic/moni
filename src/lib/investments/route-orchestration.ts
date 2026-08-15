@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
-import path from "node:path";
 import { markSyncRunFailed } from "@/domain/sync-promotion";
 import { encodeBinaryChildFrame } from "@/lib/connectors";
 import { errorLabel, syncLog, syncLogEnabled } from "@/lib/sync-log";
+import { workerRuntimePath } from "@/lib/worker-runtime";
 
 export const WORKER_TIMEOUT_MS = 5 * 60 * 1000;
 const KILL_GRACE_MS = 5_000;
@@ -38,8 +38,8 @@ export function parseTiingoRefreshCounts(output: string): TiingoRefreshCounts {
 
 function start(script: string, frame: Buffer, captureStdout = false): ReturnType<typeof spawn> {
   const child = spawn(
-    path.join(process.cwd(), "node_modules", ".bin", "tsx"),
-    [path.join(process.cwd(), "scripts", script)],
+    workerRuntimePath("node_modules", ".bin", "tsx"),
+    [workerRuntimePath("scripts", script)],
     {
       stdio: [
         "pipe",
