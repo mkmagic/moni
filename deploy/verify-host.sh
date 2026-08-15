@@ -7,7 +7,13 @@
 #   verify-host.sh [expected-ref]   optional git ref the app tree must be at
 #
 set -uo pipefail
-DOMAIN=moni-fin.tech
+# Domain is not hardcoded (SEC-21/#95) — it comes from MONI_DOMAIN in
+# /root/moni-secrets.env, validated the same way release.sh validates it.
+# shellcheck disable=SC1091
+source /root/moni-secrets.env
+: "${MONI_DOMAIN:?MONI_DOMAIN unset in /root/moni-secrets.env}"
+[[ "$MONI_DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] && [[ "$MONI_DOMAIN" != *..* ]] \
+  || { echo "MONI_DOMAIN is not a valid lowercase hostname" >&2; exit 1; }
 APP=/opt/moni/app
 fails=0
 ok(){   printf '  \033[32mPASS\033[0m %s\n' "$1"; }
@@ -68,8 +74,8 @@ res=$(systemctl show moni-backup.service -p ExecMainStatus --value 2>/dev/null)
 [ "${res:-0}" = "0" ] && ok "last backup run exit=$res" || bad "last backup run exit=$res"
 
 echo "== DNS/TLS + non-credential health =="
-code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 "https://$DOMAIN/api/health" 2>/dev/null || echo 000)
-[ "$code" = "200" ] && ok "https://$DOMAIN/api/health = 200 (TLS + Postgres + schema)" || bad "/api/health = $code"
+code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 "https://$MONI_DOMAIN/api/health" 2>/dev/null || echo 000)
+[ "$code" = "200" ] && ok "https://$MONI_DOMAIN/api/health = 200 (TLS + Postgres + schema)" || bad "/api/health = $code"
 
 echo
 if [ "$fails" -eq 0 ]; then echo "ALL CHECKS PASSED"; else echo "$fails CHECK(S) FAILED"; fi
