@@ -17,5 +17,13 @@ export default async function RecurringPage({
     range: isRecurringRange(range) ? range : "6m",
   });
 
-  return <RecurringList income={view.income} expenses={view.expenses} range={view.range} />;
+  return (
+    <RecurringList
+      income={view.income}
+      expenses={view.expenses}
+      incomeSummary={view.incomeSummary}
+      expensesSummary={view.expensesSummary}
+      range={view.range}
+    />
+  );
 }

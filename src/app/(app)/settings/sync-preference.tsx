@@ -43,11 +43,11 @@ export function SyncPreference({ initial }: { initial: boolean }) {
             unconstrained paragraph ran ~1350px across on a wide viewport. */}
         <div className="flex max-w-2xl flex-col gap-1.5">
           <span id="autoSyncLabel" className="text-sm font-medium text-foreground">
-            Remind me to sync when I sign in
+            Remind me to sync when my data is out of date
           </span>
           <span className="text-xs leading-relaxed text-muted-foreground">
             {
-              "When more than 8 hours have passed since your last sign-in, Moni offers to refresh every connection. You'll still confirm with your password — that's what unlocks your stored bank logins, and it never happens without you. You can sync any time from the dashboard, whether this is on or off."
+              "When a connection hasn't been refreshed in over 8 hours, the dashboard offers to sync it. You'll still confirm with your password — that's what unlocks your stored bank logins, and it never happens without you. You can sync any time from the dashboard, whether this is on or off."
             }
           </span>
           {error && <span className="text-xs text-negative">{error}</span>}

@@ -17,13 +17,14 @@ export interface Session {
   dataKey: Buffer;
   baseCurrency: string;
   /**
-   * Set at login when the user opted into `autoSyncOnLogin` AND the gap since
-   * their previous login exceeded the threshold. Purely a UI hint — it grants
-   * nothing. Acting on it still goes through the normal 423 -> arm -> sync
-   * path, so no credential key is unwrapped at login and the two RAM windows
-   * stay decoupled (docs plan §B). Cleared once the user answers.
+   * True once the user has answered the dashboard's sync offer this session
+   * (issue #97). The offer itself is derived per-render from how stale the
+   * connections' data is — see `shouldPromptSync` — so it disappears the
+   * moment a sync refreshes them; this flag only silences it for the rest of
+   * the session when the user dismisses without syncing. Purely a UI hint —
+   * it grants nothing.
    */
-  promptSyncOnLogin: boolean;
+  syncPromptDismissed: boolean;
   /** Epoch ms after which the session is dead and its key must be wiped. */
   expiresAt: number;
 }
@@ -52,29 +53,24 @@ const globalStore = globalThis as unknown as { __moniSessions?: Map<string, Sess
 const store: Map<string, Session> = (globalStore.__moniSessions ??= new Map());
 
 /** Creates a session holding `dataKey`; returns the opaque 128-bit session id. */
-export function createSession(
-  userId: string,
-  dataKey: Buffer,
-  baseCurrency: string,
-  promptSyncOnLogin = false,
-): string {
+export function createSession(userId: string, dataKey: Buffer, baseCurrency: string): string {
   const id = randomBytes(16).toString("hex");
   store.set(id, {
     id,
     userId,
     dataKey,
     baseCurrency,
-    promptSyncOnLogin,
+    syncPromptDismissed: false,
     expiresAt: Date.now() + SESSION_TTL_MS,
   });
   return id;
 }
 
-/** Clears the login sync prompt once the user has accepted or dismissed it,
- * so it doesn't reappear on every navigation for the rest of the session. */
+/** Silences the dashboard's sync offer for the rest of this session, so
+ * dismissing it once stops it reappearing on every navigation. */
 export function dismissSyncPrompt(id: string): void {
   const s = store.get(id);
-  if (s) s.promptSyncOnLogin = false;
+  if (s) s.syncPromptDismissed = true;
 }
 
 /** Returns the live session for `id`, or null if missing/expired (expired keys are wiped). */

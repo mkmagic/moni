@@ -19,7 +19,7 @@ interface DashboardSyncProps {
    * infer, and Schwab gains the same discoverability (#77 §4).
    */
   importConnections: ConnectionView[];
-  /** The user asked to be reminded and has been away a while. */
+  /** The user opted in and a fetchable connection's data has gone stale (#97). */
   showReminder: boolean;
   title: string;
   greeting: string;
@@ -71,7 +71,7 @@ export function DashboardSync({
           <div className="flex items-center justify-between gap-4 px-5 py-4">
             <div>
               <p className="text-sm font-medium text-foreground">
-                {"It's been a while since you last signed in"}
+                {"It's been a while since your last sync"}
               </p>
               <p className="text-xs text-muted-foreground">
                 Refresh your connections to pull in any new transactions.

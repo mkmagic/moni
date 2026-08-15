@@ -93,6 +93,18 @@ export interface RecurringGroup {
   rows: RecurringRow[];
 }
 
+/** A section's numbers rolled up across every category in it (#98). */
+export interface RecurringSummary {
+  /** Sum of each category's `monthlyAverage` — what the whole section costs or
+   * earns per month. Like the per-category figure it does not move with the
+   * range control, and it is the one total that survives mixing cadences. */
+  monthlyAverage: Money;
+  /** True when any category's monthly figure is an estimate. */
+  monthlyAverageIsEstimate: boolean;
+  /** Sum of each category's range total. */
+  total: Money;
+}
+
 export interface RecurringView {
   baseCurrency: string;
   range: RecurringRange;
@@ -100,6 +112,10 @@ export interface RecurringView {
   /** Kept apart on purpose: a combined total of the two is meaningless. */
   income: RecurringGroup[];
   expenses: RecurringGroup[];
+  /** The `income` / `expenses` groups rolled up. Income and expenses are never
+   * summed together, for the same reason the groups aren't. */
+  incomeSummary: RecurringSummary;
+  expensesSummary: RecurringSummary;
 }
 
 /** First day of the range, or null for "all". */
@@ -150,8 +166,14 @@ export async function getRecurringView(
     const recurring = catRows.filter(
       (c) => flagged.has(c.id) || (c.parentId !== null && flagged.has(c.parentId)),
     );
+    const zero = (): Money => ({ amount: "0", currency: baseCurrency });
+    const emptySummary = (): RecurringSummary => ({
+      monthlyAverage: zero(),
+      monthlyAverageIsEstimate: false,
+      total: zero(),
+    });
     if (recurring.length === 0) {
-      return { baseCurrency, range: opts.range, rangeLabel: RANGE_LABELS[opts.range], income: [], expenses: [] }; // prettier-ignore
+      return { baseCurrency, range: opts.range, rangeLabel: RANGE_LABELS[opts.range], income: [], expenses: [], incomeSummary: emptySummary(), expensesSummary: emptySummary() }; // prettier-ignore
     }
 
     const recurringIds = recurring.map((c) => c.id);
@@ -250,12 +272,23 @@ export async function getRecurringView(
         })
         .filter((g) => g.rows.length > 0);
 
+    const summarize = (gs: RecurringGroup[]): RecurringSummary => ({
+      monthlyAverage: gs.reduce((acc, g) => add(acc, g.monthlyAverage), zero()),
+      monthlyAverageIsEstimate: gs.some((g) => g.monthlyAverageIsEstimate),
+      total: gs.reduce((acc, g) => add(acc, g.total), zero()),
+    });
+
+    const income = groups("income");
+    const expenses = groups("expense");
+
     return {
       baseCurrency,
       range: opts.range,
       rangeLabel: RANGE_LABELS[opts.range],
-      income: groups("income"),
-      expenses: groups("expense"),
+      income,
+      expenses,
+      incomeSummary: summarize(income),
+      expensesSummary: summarize(expenses),
     };
   });
 }

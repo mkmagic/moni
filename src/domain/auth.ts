@@ -37,7 +37,6 @@ import {
   destroySession,
   getSession,
   sessionIdsForUser,
-  SESSION_TTL_MS,
   type Session,
 } from "@/lib/auth/session-store";
 import { destroyCredentialWindow } from "@/lib/auth/cred-window";
@@ -70,17 +69,6 @@ export const SESSION_COOKIE_ATTRS = {
   secure: true, // Moni is HTTPS-only (src/proxy.ts); never conditional on the build mode.
   path: "/",
 } as const;
-
-/**
- * How stale the previous login must be before an `autoSyncOnLogin` user is
- * offered a sync. Defined AS one session lifetime — the offer should appear
- * when you come back to a session that had fully expired, so it derives from
- * the store's TTL instead of restating it. This used to be its own
- * `8 * 60 * 60 * 1000` with a comment claiming it matched; a comment is not
- * an enforcement, and shortening the session TTL would have started showing
- * the prompt to people whose session was still alive.
- */
-const SYNC_PROMPT_GAP_MS = SESSION_TTL_MS;
 
 /** Shape of `user_unlock_methods.unlock_ref` for the password-argon2id method. */
 interface PasswordUnlockRef {
@@ -163,8 +151,6 @@ export async function authenticate(email: string, password: Buffer): Promise<str
     .select({
       id: users.id,
       baseCurrency: users.baseCurrency,
-      autoSyncOnLogin: users.autoSyncOnLogin,
-      lastLoginAt: users.lastLoginAt,
     })
     .from(users)
     .where(eq(users.email, email))
@@ -177,16 +163,9 @@ export async function authenticate(email: string, password: Buffer): Promise<str
     const dataKey = await unwrapDataKey(tx, password);
     if (!dataKey) return null;
 
-    // Decided once, here, from the PREVIOUS login's timestamp — before it is
-    // overwritten below. A UI hint only; see Session.promptSyncOnLogin.
-    const promptSync =
-      candidate.autoSyncOnLogin &&
-      candidate.lastLoginAt !== null &&
-      Date.now() - candidate.lastLoginAt.getTime() >= SYNC_PROMPT_GAP_MS;
-
     await tx.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, candidate.id));
 
-    return createSession(candidate.id, dataKey, candidate.baseCurrency, promptSync);
+    return createSession(candidate.id, dataKey, candidate.baseCurrency);
   });
 }
 

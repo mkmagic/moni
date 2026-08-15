@@ -113,7 +113,7 @@ describe("getRecurringView", () => {
       userId,
       dataKey: Buffer.from(dataKey),
       baseCurrency: "ILS",
-      promptSyncOnLogin: false,
+      syncPromptDismissed: false,
       expiresAt: Date.now() + 3_600_000,
     };
   });
@@ -169,6 +169,21 @@ describe("getRecurringView", () => {
     const view = await getRecurringView(session, { range: "all" });
     expect(view.expenses[0].total.amount).not.toMatch(/^-/);
     expect(view.income[0].total.amount).toBe("38000");
+  });
+
+  it("rolls the categories up into per-section aggregates, income apart from expenses (#98)", async () => {
+    const view = await getRecurringView(session, { range: "all" });
+
+    // Expenses: Netflix's 51/mo plus the App Store one-off spread over its one
+    // observed month (19.90) — 70.90/mo, flagged an estimate because the
+    // one-off's cadence is unknown. The range total matches the category's.
+    expect(view.expensesSummary.monthlyAverage.amount).toBe("70.9");
+    expect(view.expensesSummary.monthlyAverageIsEstimate).toBe(true);
+    expect(view.expensesSummary.total.amount).toBe("172.9");
+
+    // Income is summed on its own — never folded in with expenses.
+    expect(view.incomeSummary.total.amount).toBe("38000");
+    expect(view).not.toHaveProperty("summary");
   });
 
   it("narrows category totals to the selected range, leaving row headlines alone", async () => {

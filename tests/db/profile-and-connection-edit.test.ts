@@ -85,7 +85,7 @@ describe("domain/profile", () => {
   });
 });
 
-describe("domain/auth — login sync offer (promptSyncOnLogin)", () => {
+describe("domain/auth — login", () => {
   const createdUserIds: string[] = [];
   afterAll(async () => cleanupOwners(createdUserIds));
 
@@ -99,56 +99,16 @@ describe("domain/auth — login sync offer (promptSyncOnLogin)", () => {
     return session;
   }
 
-  async function backdateLastLogin(userId: string, hoursAgo: number): Promise<void> {
-    await elevatedPool.query(
-      `update users set last_login_at = now() - ($2 || ' hours')::interval where id = $1`,
-      [userId, hoursAgo],
-    );
-  }
-
-  it("is false on a first-ever login, even with the preference on (no previous login to measure)", async () => {
-    const email = `sync-first-${randomUUID()}@test.moni`;
-    const password = Buffer.from(PASSWORD, "utf8");
-    const { userId } = await createUser(email, password, SIGNUP_TOKEN!);
-    createdUserIds.push(userId);
-    await updateProfile(userId, { autoSyncOnLogin: true });
-
-    expect((await login(email)).promptSyncOnLogin).toBe(false);
-  });
-
-  it("is false when the preference is off, however long the gap", async () => {
-    const email = `sync-off-${randomUUID()}@test.moni`;
+  it("starts a fresh session with the sync offer not yet dismissed", async () => {
+    // The offer's visibility is derived on the dashboard from connection
+    // staleness (shouldPromptSync), not decided at login; a new session only
+    // carries the "not dismissed yet" flag.
+    const email = `sync-fresh-${randomUUID()}@test.moni`;
     const password = Buffer.from(PASSWORD, "utf8");
     const { userId } = await createUser(email, password, SIGNUP_TOKEN!);
     createdUserIds.push(userId);
 
-    await login(email); // records last_login_at
-    await backdateLastLogin(userId, 48);
-    expect((await login(email)).promptSyncOnLogin).toBe(false);
-  });
-
-  it("is false when the preference is on but the gap is under 8 hours", async () => {
-    const email = `sync-recent-${randomUUID()}@test.moni`;
-    const password = Buffer.from(PASSWORD, "utf8");
-    const { userId } = await createUser(email, password, SIGNUP_TOKEN!);
-    createdUserIds.push(userId);
-    await updateProfile(userId, { autoSyncOnLogin: true });
-
-    await login(email);
-    await backdateLastLogin(userId, 3);
-    expect((await login(email)).promptSyncOnLogin).toBe(false);
-  });
-
-  it("is TRUE when the preference is on and the previous login was over 8 hours ago", async () => {
-    const email = `sync-stale-${randomUUID()}@test.moni`;
-    const password = Buffer.from(PASSWORD, "utf8");
-    const { userId } = await createUser(email, password, SIGNUP_TOKEN!);
-    createdUserIds.push(userId);
-    await updateProfile(userId, { autoSyncOnLogin: true });
-
-    await login(email);
-    await backdateLastLogin(userId, 9);
-    expect((await login(email)).promptSyncOnLogin).toBe(true);
+    expect((await login(email)).syncPromptDismissed).toBe(false);
   });
 
   it("records last_login_at on every successful login", async () => {
