@@ -39,8 +39,8 @@ the `moni-backup.timer`).
 Run from the machine holding the **private** key:
 
 ```bash
-AGE_IDENTITY=key.txt scripts/restore.sh <dump.sql.age> [ssh-target] [--yes]
-# ssh-target defaults to root@moni-fin.tech
+MONI_DOMAIN=finance.example AGE_IDENTITY=key.txt scripts/restore.sh <dump.sql.age> [ssh-target] [--yes]
+# ssh-target defaults to root@$MONI_DOMAIN
 ```
 
 It verifies the dump decrypts, prompts for a typed confirmation (or `--yes`), stops

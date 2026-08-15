@@ -11,7 +11,8 @@ skill (Chrome/Puppeteer specifics) and `db-schema` (migrations).
 ## Current production (2026-08-11)
 
 - **Host:** DigitalOcean, region **FRA1**, 2 vCPU / 4 GB / 80 GB, **x86_64**, Ubuntu 24.04.
-- **Domain:** `moni-fin.tech` — registrar get.tech, **DNS on Cloudflare (grey-cloud / DNS-only)**.
+- **Domain:** `MONI_DOMAIN` in `/root/moni-secrets.env` — registrar get.tech, **DNS on Cloudflare
+  (grey-cloud / DNS-only)**. Scripts validate it and fail closed; never infer it from an HTTP Host header.
 - **Topology:** **bare-host, no Docker.** Next via systemd `moni.service` (`next start -H 127.0.0.1`,
   loopback only); Postgres 16 co-located (loopback); Caddy terminates TLS. Chrome-for-Testing
   managed by hand.
@@ -50,7 +51,7 @@ skill (Chrome/Puppeteer specifics) and `db-schema` (migrations).
   `DATABASE_URL_MIGRATE` to `moni_owner` for every later migration. Roles are cluster-level, so they
   survive a `DROP DATABASE` (see `reset-db.sh`).
 
-## TLS — use DNS-01, not HTTP-01 (hard-won)
+## TLS — separate DNS-01 renewal from Caddy
 
 - **Let's Encrypt HTTP-01 / TLS-ALPN-01 does NOT work on this DO IP.** Primary validation succeeds,
   but LE's **remote (secondary) validation perspectives time out** — `"During secondary validation:
@@ -58,13 +59,12 @@ skill (Chrome/Puppeteer specifics) and `db-schema` (migrations).
   check-host datacenter probes, letsdebug, and LE **staging** all reproduce it identically, so it is
   **not** transient, not rate-limiting, not IP reputation). It is LE's MPIC remote-perspective path
   to this IP; unfixable from the box.
-- **Fix: DNS-01 via Cloudflare DNS.** Keep the zone **grey-cloud (DNS-only)** — orange-cloud would
-  terminate TLS at Cloudflare and put a third party in the plaintext path, which Moni's threat model
-  forbids. Caddy needs the DNS module: download a custom build from
-  `caddyserver.com/api/download?os=linux&arch=amd64&p=github.com/caddy-dns/cloudflare`. Token
-  (Zone:DNS:Edit, single zone) in `/etc/caddy/cf.env` (root, 600); a systemd drop-in points ExecStart
-  at `/usr/local/bin/caddy-cf`, adds `EnvironmentFile=/etc/caddy/cf.env`, and **omits `--environ`**
-  (else the token is printed to the journal).
+- **Fix: DNS-01 via a separate root-run Certbot renewer.** Keep the zone **grey-cloud (DNS-only)** —
+  orange-cloud would terminate TLS at Cloudflare and put a third party in the plaintext path, which
+  Moni's threat model forbids. The Cloudflare token is root-only Certbot input and is never present in
+  Caddy's environment. `deploy/certbot-deploy-hook.sh` copies only the renewed certificate/private key
+  to `/etc/caddy/certs` (`root:caddy`, directory 750, files 640) and reloads the static-TLS config in
+  `deploy/Caddyfile.production`. The token remains single-zone scoped; rotate it separately.
 - **Resolver gotcha:** systemd-resolved returns **SERVFAIL** for `_acme-challenge.<domain>` (breaks
   Caddy's zone detection) even when pointed at 1.1.1.1. Fix: a **direct** `/etc/resolv.conf` →
   `1.1.1.1` / `8.8.8.8`, then `chattr +i` so it survives reboots and cert renewals.
@@ -72,17 +72,15 @@ skill (Chrome/Puppeteer specifics) and `db-schema` (migrations).
 
 ## Releasing a version
 
-- **`/opt/moni/release.sh [ref]`** (in `deploy/` in the repo, copied to the box): **age-encrypted**
-  pre-deploy backup (needs `AGE_RECIPIENT` from `/root/moni-backup.env`), fetch + checkout, `npm ci`
-  (`PUPPETEER_SKIP_DOWNLOAD=true`), reconcile Chrome version, build, migrate (`moni_owner`,
-  forward-only), restart, then health-check **`/api/health`** (checks Postgres connectivity + schema —
-  a plain `/` only 307s regardless of DB). **Forward-only and non-destructive** — it never drops or
-  recreates the DB. It is **not** atomic (in-place `npm ci`/build under the live service) and does not
-  roll back on a failed health check — tracked, acceptable for a low-frequency single-owner deploy.
-- **CI:** `.github/workflows/deploy.yml` fires on a **published GitHub Release** and SSHes the tag to
-  the box, where a **forced-command** key in root's `authorized_keys` runs only `release.sh`. It first
-  **refuses to deploy a SHA without a successful `ci.yml` run** (the four gates + build), so an
-  un-green commit can't ship. Secrets: `DEPLOY_HOST`, `DEPLOY_SSH_KEY`.
+- **`/opt/moni/release.sh`** receives a SHA/digest-bound artifact over stdin from CI's forced-command
+  SSH key. It verifies both, takes an **age-encrypted** pre-deploy backup, reconciles Chrome, migrates
+  with `moni_owner`, switches `/opt/moni/app` to an immutable release directory, restarts, and checks
+  **`/api/health`**. A failed health check switches the app symlink back; migrations remain forward-only.
+- **CI:** `.github/workflows/deploy.yml` fires only on a **published GitHub Release**, refuses a SHA
+  without a successful `ci.yml` run, checks out that exact SHA, builds without production secrets,
+  packages the runtime, and streams it to the forced command. The SSH host key is pinned in the
+  `DEPLOY_KNOWN_HOSTS` secret; never replace it with a fresh `ssh-keyscan`. Secrets: `DEPLOY_HOST`,
+  `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`.
 - **Rewriting the DB** (beta only, when the owner explicitly asks) is a **separate** guarded script,
   `reset-db.sh --yes-destroy-moni-data` — never part of a release or CI.
 - This Next version rewrites `tsconfig.json` and re-adds the CLAUDE.md agent block on `build`/`start`

@@ -1,0 +1,23 @@
+[Unit]
+Description=Moni (Next.js app)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=moni
+Group=moni
+WorkingDirectory=/opt/moni/app
+Environment=HOSTNAME=127.0.0.1
+Environment=PORT=3000
+ExecStart=/usr/bin/node /opt/moni/app/.next/standalone/server.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+MemorySwapMax=0
+LimitCORE=0
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

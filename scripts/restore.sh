@@ -3,7 +3,7 @@
 # Moni RESTORE — load an age-encrypted backup into a Moni box's database.
 # DESTRUCTIVE: drops the target `moni` database and rebuilds it from the dump.
 #
-#   AGE_IDENTITY=key.txt  restore.sh  <backup.sql.age>  [ssh-target]  [--yes]
+#   MONI_DOMAIN=finance.example AGE_IDENTITY=key.txt restore.sh <backup.sql.age> [ssh-target] [--yes]
 #
 # Runs on the machine that HOLDS THE PRIVATE AGE KEY — never the box. The box is
 # a public-recipient-only endpoint (backup.sh encrypts to a public key whose
@@ -20,7 +20,10 @@
 # on R2), e.g.:  scp root@<box>:/root/moni-backups/moni-<TS>.sql.age .
 set -euo pipefail
 
-DOMAIN=moni-fin.tech
+: "${MONI_DOMAIN:?set MONI_DOMAIN to the canonical lowercase hostname}"
+[[ "$MONI_DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] \
+  && [[ "$MONI_DOMAIN" != *..* ]] \
+  || { echo "MONI_DOMAIN is not a valid lowercase hostname" >&2; exit 1; }
 
 # Positional args in any order relative to the --yes flag.
 YES=0
@@ -32,7 +35,7 @@ for a in "$@"; do
   esac
 done
 DUMP="${args[0]:?usage: AGE_IDENTITY=key.txt restore.sh <backup.sql.age> [ssh-target] [--yes]}"
-HOST="${args[1]:-root@$DOMAIN}"
+HOST="${args[1]:-root@$MONI_DOMAIN}"
 : "${AGE_IDENTITY:?set AGE_IDENTITY to your PRIVATE age key file}"
 [ -f "$DUMP" ]          || { echo "no such dump: $DUMP" >&2; exit 1; }
 [ -f "$AGE_IDENTITY" ]  || { echo "no such key: $AGE_IDENTITY" >&2; exit 1; }
@@ -66,7 +69,7 @@ log "restored: users=$users — starting app"
 ssh "$HOST" "systemctl start moni"
 code=000
 for _ in $(seq 1 12); do
-  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 6 "https://$DOMAIN/api/health" 2>/dev/null || echo 000)
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 6 "https://$MONI_DOMAIN/api/health" 2>/dev/null || echo 000)
   [ "$code" = "200" ] && break
   sleep 2
 done

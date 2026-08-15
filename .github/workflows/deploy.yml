@@ -1,67 +1,87 @@
-name: Deploy (dev server)
+name: Deploy production
 
-# Fires when a GitHub Release is published: the release's tag is what ships to the box,
-# so "cut a release" == "deploy that tag". workflow_dispatch allows a manual ref deploy.
+# A published GitHub Release is the only deployment trigger. The release tag
+# resolves to the immutable SHA that is checked, built, recorded in the
+# artifact manifest, and sent to the host.
 on:
   release:
     types: [published]
-  workflow_dispatch:
-    inputs:
-      ref:
-        description: Git ref (tag or branch) to deploy
-        required: true
-        default: dev
 
-# One deploy at a time — never let two releases race the box. Do not cancel a
-# deploy in progress; a half-applied release is worse than a queued one.
 concurrency:
-  group: deploy-dev
+  group: deploy-production
   cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    # Read-only: resolve the ref to a SHA and read that SHA's CI runs.
+    timeout-minutes: 35
+    environment: production
     permissions:
       contents: read
       actions: read
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: "true"
     steps:
-      # Refuse to ship a commit CI hasn't passed. ci.yml runs the
-      # typecheck/lint/format/test/build gates on every push to dev and on PRs;
-      # a release tag is cut from a commit already on dev, so a *successful* CI
-      # run for this exact SHA must exist. No green run == untested == refuse.
-      # (A tag pins its SHA immutably; a workflow_dispatch branch is gated on
-      # whatever SHA it points to at this moment — the manual escape hatch.)
-      - name: Require green CI for the exact commit
+      - name: Resolve tag and require green CI for the exact commit
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          REF: ${{ github.event.release.tag_name || inputs.ref }}
+          TAG: ${{ github.event.release.tag_name }}
         run: |
-          test -n "$REF" || { echo "no ref to deploy"; exit 1; }
-          SHA=$(gh api "repos/$REPO/commits/$REF" --jq .sha)
-          echo "Resolving $REF -> $SHA"
+          test -n "$TAG" || { echo "::error::Release has no tag"; exit 1; }
+          case "$TAG" in
+            v[0-9]*) ;;
+            *) echo "::error::Release tag must match protected v* tags"; exit 1 ;;
+          esac
+          SHA=$(gh api "repos/$REPO/commits/$TAG" --jq .sha)
+          test "${#SHA}" -eq 40 || { echo "::error::Could not resolve release tag"; exit 1; }
+          relation=$(gh api "repos/$REPO/compare/$SHA...dev" --jq .status)
+          case "$relation" in
+            identical|ahead) ;;
+            *) echo "::error::$SHA is not on the protected dev branch"; exit 1 ;;
+          esac
           ok=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&status=completed" \
-                 --jq '[.workflow_runs[] | select(.conclusion=="success")] | length')
+            --jq '[.workflow_runs[] | select(.conclusion=="success")] | length')
           if [ "${ok:-0}" -lt 1 ]; then
-            echo "::error::No successful CI run for $SHA — refusing to deploy. Push the commit to dev (or open a PR) so CI runs green, then re-release."
+            echo "::error::No successful CI run for $SHA — refusing to deploy"
             exit 1
           fi
-          echo "CI is green for $SHA ($ok successful run(s)) — proceeding."
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
-      - name: Ship the ref to the box
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
+        with:
+          ref: ${{ steps.release.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # No production environment variable is exposed to these build steps.
+      # The only values supplied are the public source SHA and Puppeteer's
+      # download opt-out; migration credentials stay exclusively on the host.
+      - name: Build immutable release artifact
+        env:
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          deploy/package-release.sh "$RELEASE_SHA" moni-release.tar.gz
+
+      - name: Ship verified artifact to the forced command
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          REF: ${{ github.event.release.tag_name || inputs.ref }}
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
         run: |
-          test -n "$REF" || { echo "no ref to deploy"; exit 1; }
+          test -n "$DEPLOY_HOST" || { echo "::error::DEPLOY_HOST is unset"; exit 1; }
+          test -n "$DEPLOY_KNOWN_HOSTS" || { echo "::error::DEPLOY_KNOWN_HOSTS is unset"; exit 1; }
           install -m 700 -d ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy
-          chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
-          # The box pins this key to a forced command (/opt/moni/release.sh) in root's
-          # authorized_keys, so REF is the only thing we influence. release.sh backs up
-          # before migrating, runs forward-only migrations, and never deletes data.
-          ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes "root@$DEPLOY_HOST" "$REF"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_deploy ~/.ssh/known_hosts
+          DIGEST=$(sha256sum moni-release.tar.gz | cut -d' ' -f1)
+          ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            "root@$DEPLOY_HOST" "deploy $RELEASE_SHA $DIGEST" < moni-release.tar.gz
