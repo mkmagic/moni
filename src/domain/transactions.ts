@@ -12,6 +12,12 @@ import { normalizeDescription } from "@/lib/categorization/normalize";
 // Defined in `lib` so the transactions toolbar can import it without dragging
 // this module — and `pg` — into the client bundle. See its header.
 import { NO_CATEGORY } from "@/lib/transactions/filters";
+import {
+  matchesDirection,
+  matchesSize,
+  type Direction,
+  type SizeKey,
+} from "@/lib/transactions/predicates";
 import { decText } from "./fields";
 import { isFieldLocked } from "./attribute-locks";
 import { loadTransferCategoryIds } from "./flows";
@@ -68,7 +74,21 @@ export interface EntryFilters {
    * leg of an internal transfer) are left out — they are not "needing
    * review", they are deliberately out of the totals. */
   uncategorized?: boolean;
+  /** Income/Payment and expense-size filters. Both depend on the decrypted
+   * amount, so they cannot be SQL predicates; when set, they are applied here
+   * after decryption, before `limit` truncates — so the result is the newest
+   * matches, not the newest rows filtered (issue #107). Left unset, they cost
+   * nothing and the read is unchanged. */
+  direction?: Direction;
+  size?: SizeKey;
 }
+
+/** When Income/Payment or size is active, the scan reaches past the display
+ * `limit` so the filter sees the whole range, not just the newest page. Capped
+ * so a filter over "everything" can't decrypt an unbounded ledger into memory;
+ * a range wider than this is complete for its most recent `POST_FILTER_SCAN_CAP`
+ * entries, which pairing the search with a timeframe keeps well clear of. */
+const POST_FILTER_SCAN_CAP = 2000;
 
 export async function listEntries(
   session: Session,
@@ -106,12 +126,18 @@ export async function listEntries(
       conds.push(eq(entries.excluded, false));
     }
 
+    // A decrypt-time filter has to see more than one page, or it would filter
+    // the newest `limit` rows and call the leftovers complete.
+    const postFilter =
+      (filters.direction !== undefined && filters.direction !== "all") ||
+      (filters.size !== undefined && filters.size !== "all");
+
     const rows = await tx
       .select()
       .from(entries)
       .where(conds.length ? and(...conds) : undefined)
       .orderBy(desc(entries.date))
-      .limit(filters.limit ?? 200);
+      .limit(postFilter ? POST_FILTER_SCAN_CAP : (filters.limit ?? 200));
 
     // Name lookups (small per-user tables; decrypt once, map by id).
     const acctRows = await tx
@@ -154,7 +180,7 @@ export async function listEntries(
       merRows.map((m) => [m.id, decText(dataKey, m.nameCt, m.id, "name_ct", m.version) ?? ""]),
     );
 
-    return rows.map((e): EntryView => {
+    const views = rows.map((e): EntryView => {
       const description =
         decText(dataKey, e.descriptionCt, e.id, "description_ct", e.version) ?? "";
       const entered =
@@ -187,5 +213,12 @@ export async function listEntries(
         status: e.status,
       };
     });
+
+    if (!postFilter) return views;
+    const matched = views.filter(
+      (v) =>
+        matchesDirection(v, filters.direction ?? "all") && matchesSize(v, filters.size ?? "all"),
+    );
+    return filters.limit === undefined ? matched : matched.slice(0, filters.limit);
   });
 }

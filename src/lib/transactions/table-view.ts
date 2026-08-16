@@ -14,6 +14,23 @@
 //     ascending puts the largest expense first.
 import Decimal from "decimal.js";
 import type { EntryView } from "@/domain/transactions";
+import {
+  matchesDirection,
+  matchesSize,
+  type Direction,
+  type SizeKey,
+} from "@/lib/transactions/predicates";
+
+/** The Income/Payment and expense-size selections. They live in the URL (not
+ * in `TableControls`), so the same values can drive the client filter here and
+ * a complete server-side filter (`listEntries`) when searching the whole
+ * history. */
+export interface ViewFilters {
+  direction: Direction;
+  size: SizeKey;
+}
+
+export const DEFAULT_VIEW_FILTERS: ViewFilters = { direction: "all", size: "all" };
 
 export type SortColumn = "date" | "account" | "category" | "payee" | "amount";
 export type SortDirection = "asc" | "desc";
@@ -106,12 +123,20 @@ function compareBy(a: EntryView, b: EntryView, column: SortColumn): number {
  * returned. Never mutates `entries`; the sort is stable, so rows tied on the
  * chosen column keep the order the domain layer gave them.
  */
-export function applyTableControls(entries: EntryView[], controls: TableControls): EntryView[] {
+export function applyTableControls(
+  entries: EntryView[],
+  controls: TableControls,
+  view: ViewFilters = DEFAULT_VIEW_FILTERS,
+): EntryView[] {
   const q = controls.query.trim().toLowerCase();
   const min = parseBound(controls.minAmount);
   const max = parseBound(controls.maxAmount);
 
   const filtered = entries.filter((entry) => {
+    // Income/Payment and expense-size share their definition with the server's
+    // whole-history search (`src/lib/transactions/predicates.ts`).
+    if (!matchesDirection(entry, view.direction)) return false;
+    if (!matchesSize(entry, view.size)) return false;
     if (q !== "" && !payeeOf(entry).toLowerCase().includes(q)) return false;
     if (min || max) {
       const magnitude = new Decimal(entry.amount.amount).abs();
