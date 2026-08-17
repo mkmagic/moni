@@ -1,14 +1,5 @@
 // Binary child-process framing. Secrets stay in raw segments; JSON is limited
-// to structural metadata. The legacy bank frame remains available below.
-export interface ChildStdinPayload {
-  syncRunId: string;
-  userId: string;
-  connectionId: string;
-  connectorId: string;
-  startDate: string;
-  credentials: Record<string, string>;
-}
-
+// to structural metadata, which `assertStructuralMetadata` enforces.
 const PREFIX = 4;
 export const MAX_CHILD_STDIN_BYTES = 10 * 1024 * 1024;
 /** A source segment may be 10 MiB; metadata/framing gets a small separate budget. */
@@ -99,39 +90,5 @@ export function decodeBinaryChildFrame(frame: Buffer): {
     json.fill(0);
     // On a failed decode no child owns these copies, so clear them here.
     if (offset !== frame.length) for (const segment of segments) segment.fill(0);
-  }
-}
-
-// Compatibility wire format for existing bank workers.
-export function encodeChildStdinFrame(dataKey: Buffer, payload: ChildStdinPayload): Buffer {
-  const json = Buffer.from(JSON.stringify(payload), "utf8");
-  return Buffer.concat([uint(dataKey.length), dataKey, uint(json.length), json]);
-}
-
-export function decodeChildStdinFrame(buf: Buffer): {
-  dataKey: Buffer;
-  payload: ChildStdinPayload;
-} {
-  let offset = 0;
-  const read = (): number => {
-    if (offset + PREFIX > buf.length)
-      throw new Error("child-stdin-framing: buffer too short for length prefix");
-    const length = buf.readUInt32BE(offset);
-    offset += PREFIX;
-    return length;
-  };
-  const take = (length: number): Buffer => {
-    if (offset + length > buf.length) throw new Error("child-stdin-framing: truncated frame");
-    const result = Buffer.from(buf.subarray(offset, offset + length));
-    offset += length;
-    return result;
-  };
-  const dataKey = take(read());
-  const json = take(read());
-  if (offset !== buf.length) throw new Error("child-stdin-framing: trailing bytes");
-  try {
-    return { dataKey, payload: JSON.parse(json.toString("utf8")) as ChildStdinPayload };
-  } finally {
-    json.fill(0);
   }
 }

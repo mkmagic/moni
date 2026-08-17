@@ -58,26 +58,28 @@ new passkey enrollment leaves the window armed.
 
 ## 3. The spawn-per-scrape child process
 
-`israeli-bank-scrapers`'s API takes credentials as plain JS `String`s — an unavoidable residual, since `String`s are immutable and can't be wiped. The mitigation is a **short-lived process per scrape**: `scripts/scrape-worker.mts`, spawned once by the sync route via `child_process.spawn("tsx", [...])` and torn down as soon as the scrape and promotion finish, so the heap holding that string doesn't persist.
+`israeli-bank-scrapers`'s API takes credentials as plain JS `String`s — an unavoidable residual, since `String`s are immutable and can't be wiped. The bank sync confines that residual to a disposable process and, crucially (issue #92), keeps the data key (DK) and the database **out of it entirely** by splitting the scrape into two short-lived children the parent supervises:
 
-The parent (`src/app/api/connections/[id]/sync/route.ts`):
+- **Fetcher** (`scripts/scrape-worker.mts`) — Chrome + `israeli-bank-scrapers` + this connection's credentials. Over the binary stdin frame it receives exactly two raw segments — the credential key (CK) and this connection's `credentials_ct` — plus non-secret metadata, and **decrypts its own credentials itself** (`decryptWorkerCredentials`). It holds no DK, no DB handle, and runs with a stripped environment (no `DATABASE_URL`, no app secrets). It scrapes and writes the normalized `ScraperAccount[]` to stdout. Its stderr is *ignored, never inherited*: Puppeteer protocol output can contain the typed password, so a failure surfaces only as an allowlisted code on stdout.
+- **Promoter** (`scripts/promote-worker.mts`) — trusted domain code only, no network and no scraper dependencies. It receives `[DK, accounts]`, re-validates the fetcher's output as hostile (Zod, boundary #2), and runs `promoteScrapeResult` — the only side of a bank sync that ever holds the DK or touches the database.
+
+Credentials and the DK therefore live in **separate** processes, and the credential-bearing one has no route to the DB — so a compromised scraper dependency can't read the DB, obtain the DK, or (holding only this connection's ciphertext) decrypt any *other* of the user's connections under the shared per-user CK.
+
+The parent (`src/app/api/connections/[id]/sync/route.ts`, orchestrated by `src/lib/connectors/bank-sync.ts`):
 1. Checks the credential window (423 if closed).
-2. Decrypts `credentials_ct` with CK **in the parent process** — the child never sees CK or ciphertext, only the resulting plaintext credential strings.
-3. Sets `sync_runs.status = 'running'` itself, right after deciding to spawn — not something the child reports back.
-4. Spawns the child and writes one framed message to its stdin, then returns `202 { syncRunId }` immediately. The scrape is never awaited by the HTTP response; the UI polls `GET /api/sync-runs/[id]` instead.
+2. Reads `credentials_ct` + its AAD `version` via `getEncryptedCredentials()` — **without decrypting** — and passes `[CK, ciphertext]` to the fetcher. The parent never materializes plaintext bank credentials.
+3. Sets `sync_runs.status = 'running'` and returns `202 { syncRunId }` immediately; fetch + promote run in the background and the UI polls `GET /api/sync-runs/[id]`.
+4. On a clean fetch, spawns the promoter with `[DK, accounts]`; on a fetch failure, records the run `failed` with the fetcher's allowlisted code (no promoter).
 
-**stdin framing** (`src/lib/connectors/child-stdin-framing.ts`) is deliberately not one JSON blob, because JSON-encoding the data key would force it through `JSON.stringify` as a base64 string — an unwipeable V8 `String`, which defeats the entire point of holding it as a `Buffer`. The frame keeps DK as raw bytes and puts everything else (ids, dates, and the credential strings — unavoidably strings either way) in a length-prefixed JSON section:
+> **IBKR Flex and SnapTrade still decrypt parent-side** (`getDecryptedCredentials`) and hand their worker DK + plaintext secret buffers — a tracked #92 follow-up to invert onto this same fetcher/promoter pattern.
 
-```
-[4B BE uint32 dataKeyLen][DK raw bytes]
-[4B BE uint32 jsonLen]   [UTF-8 JSON: {syncRunId, userId, connectionId, connectorId, startDate, credentials}]
-```
+**stdin framing** (`src/lib/connectors/child-stdin-framing.ts`, `encodeBinaryChildFrame`/`decodeBinaryChildFrame`, pure functions exercised by `tests/unit/child-stdin-framing.test.ts`) keeps every secret as a raw length-prefixed **segment** and confines JSON to non-secret *structural* metadata — `assertStructuralMetadata` rejects secret-named keys and even numbers, so `version` travels as a string. Nothing forces a key through `JSON.stringify` as an unwipeable base64 `String`. The layout is a metadata-length prefix, the metadata JSON, a segment count, then each `[len][bytes]` segment (the fetcher gets `[CK, ciphertext]`, the promoter `[DK, accounts]`).
 
-`encodeChildStdinFrame`/`decodeChildStdinFrame` are pure functions (`tests/unit/child-stdin-framing.test.ts` exercises them without spawning anything). The data key passed to the child is the **live session's own `Buffer`, borrowed, not copied-and-owned** — the parent must never wipe it after spawning (only `destroySession()`/expiry may). The child, on the other hand, wipes its own stdin-derived copy of the frame and the data key in a `finally` once it's done — that copy really is its own.
+The buffers each side owns are wiped on every exit path: the parent frames from **copies** — `Buffer.from(session.dataKey)` / `Buffer.from(CK)`, never the live session or credential-window buffers (only `destroySession()`/window expiry may wipe those) — and each child reads stdin via `readChildStdin` and wipes the original frame immediately after decoding (the decode copies each segment out, so the frame otherwise keeps a key copy alive for the whole scrape).
 
 **Runs via `tsx`, not a compiled build**, in both dev and production. Nothing imports `scrape-worker.mts`, so `next build` never bundles it and there's no second build target to forget to rebuild. Revisit only if a slim Docker image that strips `devDependencies` shows up.
 
-**Failure handling.** The parent enforces a 5-minute SIGTERM timeout, then SIGKILL 5 seconds later if the child hasn't exited. On the child's `exit` (any code/signal) or a spawn-level `error`, the route calls `markSyncRunFailed()` as a safety net — guarded by `WHERE status='running'`, so it's a no-op whenever the child's own catch (clean failure) or `promoteScrapeResult` (clean success) already resolved the run. Known accepted nuisance: SIGKILL can orphan a Chrome process; process-group management isn't worth building for a family-scale app. If the *parent itself* dies mid-scrape (no exit/error event ever fires), a lazy self-heal in `getSyncRun()` flips any `running` row older than 15 minutes to `failed` the next time anyone polls it — no cron, no scheduler.
+**Failure handling.** The parent enforces a 5-minute SIGTERM timeout, then SIGKILL 5 seconds later, on **each** child (fetcher and promoter). A fetcher that exits non-zero, times out, or overruns its stdout bound leaves the run marked `failed` with an allowlisted code and no promoter is spawned. The promoter records its own failures; the parent's `markSyncRunFailed()` on a non-zero promoter exit is the safety net — guarded by `WHERE status='running'`, so it's a no-op whenever the promoter's own catch (clean failure) or `promoteScrapeResult` (clean success) already resolved the run. Known accepted nuisance: SIGKILL can orphan a Chrome process; process-group management isn't worth building for a family-scale app. If the *parent itself* dies mid-scrape (no exit/error event ever fires), a lazy self-heal in `getSyncRun()` flips any `running` row older than 15 minutes to `failed` the next time anyone polls it — no cron, no scheduler.
 
 ---
 
@@ -156,6 +158,8 @@ The sync route sets `running` itself right after deciding to spawn (before the c
 ## 7. What's deferred, explicitly
 
 pg-boss and any scheduled/unattended sync (v1.0 is user-triggered only — every sync starts from a browser click) · connectors beyond the registry, especially `oneZero`/anything needing OTP · a manual review queue before promotion (v1.0 auto-promotes) · a cron-based orphaned-run sweeper (the lazy on-read check in §3/§6 is the whole mechanism) · Chrome/Docker production packaging · a concurrency guard on the sync route (two simultaneous syncs for one connection currently spawn two children — data-safe because promotion is idempotent, but wasteful).
+
+**#92 follow-ups (tracked):** the fetcher/promoter DB-isolation split shipped for the **bank** path only; inverting **IBKR Flex + SnapTrade** onto the same pattern (they still decrypt parent-side and hand the worker DK, incl. the BOI-FX grandchild's DB writes) is deferred. The code makes the fetcher DB-free *by construction*; the host-level enforcement that makes it un-bypassable — **worker egress filtering** (deny PostgreSQL / general internet, §8.4 + `../deployment/egress.md`), an **unprivileged worker launcher**, and systemd/cgroup resource bounds — is host/infra, tracked with #93 M3, not in this repo.
 
 ---
 

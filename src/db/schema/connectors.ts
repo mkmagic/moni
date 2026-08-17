@@ -51,9 +51,10 @@ export const connections = pgTable(
     // User-chosen label (e.g. "Dana's Leumi checking") — plaintext, not
     // sensitive; distinguishes multiple connections to the same connector.
     displayName: text("display_name"),
-    // Tier-0: wrapped by the user's unlock secret, never the data key
-    // (threat-model.md §5 — a scrape must be able to decrypt this without
-    // the data-key/unlock-window machinery gating ordinary Tier-1 reads).
+    // Tier-0: AEAD'd under the per-user credential key (CK), never the data
+    // key (threat-model.md §5). For a bank scrape the parent hands this
+    // ciphertext + CK to a disposable fetcher that decrypts it itself (#92),
+    // so the long-lived parent never materializes plaintext bank credentials.
     credentialsCt: bytea("credentials_ct"),
     mode: connectionModeEnum("mode").notNull().default("credentialed_fetch"),
     status: connectionStatusEnum("status").notNull(),

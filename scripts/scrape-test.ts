@@ -1,11 +1,16 @@
-// scrape-test.ts — the real gate for the scraper spine (docs plan Task 13).
-// Headless connect -> scrape -> promote against a REAL personal bank
-// account. This is the parent process from docs plan §C: it authenticates,
-// resolves/creates a `connections` row, decrypts credentials through the
-// domain layer, creates the `sync_runs` row, then spawns
-// scripts/scrape-worker.mts as a short-lived child and hands it the data
-// key + everything else over the length-prefixed stdin frame — the same
-// spawn boundary a real onboarding/sync route will use later.
+// scrape-test.ts — the real gate for the scraper spine. Headless connect ->
+// scrape -> promote against a REAL personal bank account. It exercises the
+// same two-process spawn boundary the sync route now uses (issue #92): a
+// FETCHER (scripts/scrape-worker.mts) that decrypts its own credentials and
+// scrapes with no DB/DK, then a PROMOTER (scripts/promote-worker.mts) that
+// persists the normalized records with the DK.
+//
+// Because the stored `credentials_ct` can only be opened with CK (a WebAuthn
+// assertion no CLI can perform), this gate does NOT read the real ciphertext.
+// It mints an EPHEMERAL random CK, encrypts the operator-supplied credentials
+// under it into a synthetic `credentials_ct`, and hands the fetcher
+// [ephemeralCK, syntheticCt] — proving the exact fetcher decrypt + scrape path
+// without needing the passkey. The promoter then runs with the real DK.
 //
 // Nobody but the owner can run this meaningfully — no real bank credentials
 // exist in this environment. It must typecheck, lint, and be structurally
@@ -15,21 +20,20 @@
 //   echo '{"password":"<moni-login-password>","credentials":{"username":"...","password":"..."}}' \
 //     | npm run scrape:test -- --user dana@moni.demo --connector leumi [--start-date 2026-01-01]
 //
-// Credentials come from stdin, NEVER argv — argv is visible in `ps` output
-// and shell history, a real exposure for a bank password
-// (docs/security/threat-model.md §5). The Moni login password unlocks the
-// data key (DK) only; the credential key (CK) is NOT reachable from it since
-// issue #7, so the `connections` row this needs must be created in the
-// browser beforehand.
+// Credentials come from stdin, NEVER argv — argv is visible in `ps` and shell
+// history (docs/security/threat-model.md §5). The Moni login password unlocks
+// the data key (DK); the connection row must already exist (created in the app
+// with the credential window armed by a passkey).
 import "dotenv/config";
 import { spawn } from "node:child_process";
-import path from "node:path";
+import { randomBytes } from "node:crypto";
 import { authenticate } from "@/domain/auth";
 import { findConnectionByConnector, type ConnectionView } from "@/domain/connections";
-import { startSyncRun } from "@/domain/sync-promotion";
+import { markSyncRunFailed, startSyncRun } from "@/domain/sync-promotion";
 import { destroySession, getSession } from "@/lib/auth/session-store";
-import { wipe } from "@/lib/crypto";
-import { encodeChildStdinFrame, isConnectorId, type ChildStdinPayload } from "@/lib/connectors";
+import { encryptField, wipe } from "@/lib/crypto";
+import { encodeBinaryChildFrame, isConnectorId } from "@/lib/connectors";
+import { workerRuntimePath } from "@/lib/worker-runtime";
 
 interface Args {
   user: string;
@@ -60,9 +64,9 @@ function parseArgs(argv: string[]): Args {
 }
 
 interface StdinCredentials {
-  /** The user's Moni login password — unlocks DK (login) and CK (credentials). */
+  /** The user's Moni login password — unlocks DK. */
   password: string;
-  /** The bank/card login fields, matching src/lib/connectors' registry for this connector. */
+  /** The bank/card login fields, matching src/lib/connectors' registry. */
   credentials: Record<string, string>;
 }
 
@@ -85,45 +89,33 @@ async function readStdinJson(): Promise<StdinCredentials> {
   return { password: parsed.password, credentials: parsed.credentials };
 }
 
-/** Spawns scripts/scrape-worker.mts, writes the framed stdin, and resolves
- * with its parsed final stdout line (docs plan §C). */
-async function spawnWorker(
-  dataKey: Buffer,
-  payload: ChildStdinPayload,
-): Promise<{ ok: boolean; error?: string; summary?: unknown }> {
-  const tsxBin = path.join(process.cwd(), "node_modules", ".bin", "tsx");
-  const workerPath = path.join(process.cwd(), "scripts", "scrape-worker.mts");
-
+/** Spawns a worker, writes the framed stdin, and resolves with its final
+ * parsed stdout line. stderr stays "inherit": this is an interactive gate whose
+ * whole point is watching the scraper's own output, and the operator already
+ * typed the credentials. Do NOT enable Puppeteer `verbose` while inheriting. */
+async function spawnWorker(script: string, frame: Buffer): Promise<Record<string, unknown>> {
+  const tsxBin = workerRuntimePath("node_modules", ".bin", "tsx");
+  const workerPath = workerRuntimePath("scripts", script);
   return new Promise((resolve, reject) => {
-    // stderr stays "inherit" HERE, unlike the sync route (which pipes and
-    // redacts): this is an interactive developer command whose whole point is
-    // watching the scraper's own output land in your terminal — it's how
-    // DEBUG='israeli-bank-scrapers:*' becomes readable. A terminal isn't a
-    // persistent server log, and the operator already typed the credentials.
-    // Do NOT enable `verbose: true` while inheriting: that turns on Puppeteer
-    // protocol logging, which prints the typed password.
     const child = spawn(tsxBin, [workerPath], { stdio: ["pipe", "pipe", "inherit"] });
-
     let stdout = "";
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf8");
     });
-
     child.on("error", reject);
-    child.on("exit", (code) => {
+    child.on("exit", () => {
       const line = stdout.trim().split("\n").filter(Boolean).pop();
       if (!line) {
-        reject(new Error(`scrape-worker exited (code ${code}) with no parseable output`));
+        resolve({});
         return;
       }
       try {
-        resolve(JSON.parse(line) as { ok: boolean; error?: string; summary?: unknown });
+        resolve(JSON.parse(line) as Record<string, unknown>);
       } catch {
-        reject(new Error(`scrape-worker printed non-JSON output: ${line}`));
+        reject(new Error(`${script} printed non-JSON output: ${line}`));
       }
     });
-
-    child.stdin.write(encodeChildStdinFrame(dataKey, payload));
+    child.stdin.write(frame);
     child.stdin.end();
   });
 }
@@ -146,12 +138,6 @@ async function main(): Promise<void> {
       const session = getSession(sessionId);
       if (!session) throw new Error("Session vanished immediately after authenticate()");
 
-      // The connection must already exist, created in the browser with the
-      // credential window armed by a passkey. This script cannot create one:
-      // writing `credentials_ct` needs CK, and since issue #7 CK is reachable
-      // only through a WebAuthn assertion, which a CLI has no way to perform.
-      // Inventing a second unlock mechanism for this script's convenience
-      // would reopen exactly what #18 closed.
       const connection: ConnectionView | null = await findConnectionByConnector(
         session.userId,
         connectorId,
@@ -164,36 +150,60 @@ async function main(): Promise<void> {
       }
       console.log(`Using connection ${connection.id} for connector "${connectorId}".`);
 
-      // The stdin-typed credentials, not the stored ciphertext — reading
-      // `credentials_ct` back would need CK. That read path
-      // (getDecryptedCredentials) is covered by tests/db/connections.test.ts;
-      // what this manual gate exists to prove is the spawn boundary against a
-      // real bank, and that is unaffected.
       const syncRunId = await startSyncRun(session.userId, connection.id);
       console.log(`sync_runs ${syncRunId}: running`);
 
-      const payload: ChildStdinPayload = {
-        syncRunId,
-        userId: session.userId,
-        connectionId: connection.id,
-        connectorId,
-        startDate: args.startDate,
-        credentials: stdin.credentials,
-      };
+      // Mint an ephemeral CK and a synthetic ciphertext so the fetcher runs its
+      // real decrypt path without needing the passkey-gated stored CK.
+      const ephemeralCk = Buffer.from(randomBytes(32));
+      const version = 1;
+      const ciphertext = encryptField(
+        ephemeralCk,
+        Buffer.from(JSON.stringify(stdin.credentials), "utf8"),
+        { rowId: connection.id, column: "credentials_ct", version },
+      );
+      const fetchFrame = encodeBinaryChildFrame(
+        {
+          connectionId: connection.id,
+          connectorId,
+          startDate: args.startDate,
+          version: String(version),
+        },
+        [ephemeralCk, ciphertext],
+      );
+      ephemeralCk.fill(0);
+      ciphertext.fill(0);
 
-      const result = await spawnWorker(session.dataKey, payload);
-      if (!result.ok) {
-        console.error(`sync_runs ${syncRunId}: failed — ${String(result.error)}`);
+      const fetched = await spawnWorker("scrape-worker.mts", fetchFrame);
+      fetchFrame.fill(0);
+      if (!Array.isArray(fetched.accounts)) {
+        const code = typeof fetched.code === "string" ? fetched.code : "no_output";
+        console.error(`sync_runs ${syncRunId}: fetch failed — ${code}`);
+        await markSyncRunFailed(session.userId, syncRunId, code);
+        process.exitCode = 1;
+        return;
+      }
+
+      const dataKeyCopy = Buffer.from(session.dataKey);
+      const accountsBuffer = Buffer.from(JSON.stringify({ accounts: fetched.accounts }));
+      const promoteFrame = encodeBinaryChildFrame(
+        { userId: session.userId, connectionId: connection.id, connectorId, syncRunId },
+        [dataKeyCopy, accountsBuffer],
+      );
+      dataKeyCopy.fill(0);
+      accountsBuffer.fill(0);
+      const promoted = await spawnWorker("promote-worker.mts", promoteFrame);
+      promoteFrame.fill(0);
+      if (promoted.ok !== true) {
+        console.error(`sync_runs ${syncRunId}: promote failed`);
         process.exitCode = 1;
         return;
       }
 
       console.log(`sync_runs ${syncRunId}: succeeded`);
-      console.log(JSON.stringify(result.summary, null, 2));
+      console.log(JSON.stringify(promoted.summary, null, 2));
     } finally {
-      // NOT session.dataKey — destroySession() wipes that key itself (docs
-      // plan §C's trap #2: never wipe a borrowed session data key
-      // yourself). This just tears the session record down.
+      // NOT session.dataKey — destroySession() wipes that key itself.
       destroySession(sessionId);
     }
   } finally {

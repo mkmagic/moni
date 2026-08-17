@@ -28,14 +28,12 @@ export {
 } from "./scraper-output.schema";
 export { computeImportKey, type ImportKeyInput } from "./import-key";
 export {
-  encodeChildStdinFrame,
-  decodeChildStdinFrame,
   encodeBinaryChildFrame,
   decodeBinaryChildFrame,
   MAX_CHILD_STDIN_BYTES,
   MAX_CHILD_SEGMENT_BYTES,
   MAX_CHILD_METADATA_BYTES,
   MAX_CHILD_FRAME_BYTES,
-  type ChildStdinPayload,
 } from "./child-stdin-framing";
 export { readChildStdin } from "./read-child-stdin";
+export { decryptWorkerCredentials } from "./worker-credentials";

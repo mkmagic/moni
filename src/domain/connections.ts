@@ -314,3 +314,36 @@ export async function getDecryptedCredentials(
     }
   });
 }
+
+/**
+ * Reads a connection's `credentials_ct` and its AAD `version` WITHOUT
+ * decrypting — the ciphertext-only counterpart to `getDecryptedCredentials`,
+ * for the bank sync path (issue #92). The parent hands `{ ciphertext, version }`
+ * plus CK to the disposable fetcher, which decrypts it itself; the parent never
+ * sees plaintext credentials. Returns null if the connection doesn't exist for
+ * this user (RLS-filtered cross-tenant id); throws
+ * `ConnectionCredentialsUnavailableError` for an import-only connection, exactly
+ * like `getDecryptedCredentials`.
+ */
+export async function getEncryptedCredentials(
+  userId: string,
+  connectionId: string,
+): Promise<{ ciphertext: Buffer; version: number } | null> {
+  return withUser(userId, async (tx) => {
+    const rows = await tx
+      .select({
+        mode: connections.mode,
+        credentialsCt: connections.credentialsCt,
+        version: connections.version,
+      })
+      .from(connections)
+      .where(eq(connections.id, connectionId))
+      .limit(1);
+    const row = rows[0];
+    if (!row) return null;
+    if (row.mode !== "credentialed_fetch" || !row.credentialsCt) {
+      throw new ConnectionCredentialsUnavailableError();
+    }
+    return { ciphertext: Buffer.from(row.credentialsCt), version: row.version };
+  });
+}
