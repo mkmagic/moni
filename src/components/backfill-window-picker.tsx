@@ -1,6 +1,7 @@
 "use client";
 
 import { Input } from "@/components/ui/input";
+import { PillButton } from "@/components/pill-button";
 import {
   BACKFILL_PRESETS,
   earliestBackfillStart,
@@ -89,31 +90,5 @@ export function BackfillWindowPicker({ today, value, onChange }: BackfillWindowP
           : "We can reach back up to 12 months. Longer windows take longer to fetch."}
       </p>
     </div>
-  );
-}
-
-function PillButton({
-  selected,
-  onClick,
-  children,
-}: {
-  selected: boolean;
-  onClick: () => void;
-  children: string;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      onClick={onClick}
-      className={cn(
-        "rounded-[var(--radius)] border px-3 py-1.5 text-xs transition",
-        selected
-          ? "border-primary/60 bg-primary/10 text-foreground"
-          : "border-border bg-card text-muted-foreground hover:border-primary/50 hover:bg-muted",
-      )}
-    >
-      {children}
-    </button>
   );
 }
