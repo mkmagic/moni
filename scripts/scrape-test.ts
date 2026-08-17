@@ -33,6 +33,7 @@ import { markSyncRunFailed, startSyncRun } from "@/domain/sync-promotion";
 import { destroySession, getSession } from "@/lib/auth/session-store";
 import { encryptField, wipe } from "@/lib/crypto";
 import { encodeBinaryChildFrame, isConnectorId } from "@/lib/connectors";
+import { fetcherEnv } from "@/lib/connectors/bank-sync";
 import { workerRuntimePath } from "@/lib/worker-runtime";
 
 interface Args {
@@ -93,11 +94,17 @@ async function readStdinJson(): Promise<StdinCredentials> {
  * parsed stdout line. stderr stays "inherit": this is an interactive gate whose
  * whole point is watching the scraper's own output, and the operator already
  * typed the credentials. Do NOT enable Puppeteer `verbose` while inheriting. */
-async function spawnWorker(script: string, frame: Buffer): Promise<Record<string, unknown>> {
+async function spawnWorker(
+  script: string,
+  frame: Buffer,
+  env?: NodeJS.ProcessEnv,
+): Promise<Record<string, unknown>> {
   const tsxBin = workerRuntimePath("node_modules", ".bin", "tsx");
   const workerPath = workerRuntimePath("scripts", script);
   return new Promise((resolve, reject) => {
-    const child = spawn(tsxBin, [workerPath], { stdio: ["pipe", "pipe", "inherit"] });
+    // `env: undefined` inherits the parent's full environment — what the
+    // promoter needs (DATABASE_URL). The fetcher is handed a stripped env.
+    const child = spawn(tsxBin, [workerPath], { stdio: ["pipe", "pipe", "inherit"], env });
     let stdout = "";
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf8");
@@ -118,6 +125,16 @@ async function spawnWorker(script: string, frame: Buffer): Promise<Record<string
     child.stdin.write(frame);
     child.stdin.end();
   });
+}
+
+/** Isolate the fetcher exactly like the production sync path (no DATABASE_URL,
+ * no app secrets), but re-add the failure-screenshot path that production
+ * withholds: here an operator is watching and may want it for debugging. */
+function fetcherTestEnv(): NodeJS.ProcessEnv {
+  const env = fetcherEnv();
+  const screenshot = process.env.MONI_SCRAPE_FAILURE_SCREENSHOT;
+  if (screenshot) (env as Record<string, string>).MONI_SCRAPE_FAILURE_SCREENSHOT = screenshot;
+  return env;
 }
 
 async function main(): Promise<void> {
@@ -157,11 +174,13 @@ async function main(): Promise<void> {
       // real decrypt path without needing the passkey-gated stored CK.
       const ephemeralCk = Buffer.from(randomBytes(32));
       const version = 1;
-      const ciphertext = encryptField(
-        ephemeralCk,
-        Buffer.from(JSON.stringify(stdin.credentials), "utf8"),
-        { rowId: connection.id, column: "credentials_ct", version },
-      );
+      const credentialsPlaintext = Buffer.from(JSON.stringify(stdin.credentials), "utf8");
+      const ciphertext = encryptField(ephemeralCk, credentialsPlaintext, {
+        rowId: connection.id,
+        column: "credentials_ct",
+        version,
+      });
+      credentialsPlaintext.fill(0);
       const fetchFrame = encodeBinaryChildFrame(
         {
           connectionId: connection.id,
@@ -174,8 +193,12 @@ async function main(): Promise<void> {
       ephemeralCk.fill(0);
       ciphertext.fill(0);
 
-      const fetched = await spawnWorker("scrape-worker.mts", fetchFrame);
-      fetchFrame.fill(0);
+      let fetched: Record<string, unknown>;
+      try {
+        fetched = await spawnWorker("scrape-worker.mts", fetchFrame, fetcherTestEnv());
+      } finally {
+        fetchFrame.fill(0);
+      }
       if (!Array.isArray(fetched.accounts)) {
         const code = typeof fetched.code === "string" ? fetched.code : "no_output";
         console.error(`sync_runs ${syncRunId}: fetch failed — ${code}`);
@@ -192,8 +215,12 @@ async function main(): Promise<void> {
       );
       dataKeyCopy.fill(0);
       accountsBuffer.fill(0);
-      const promoted = await spawnWorker("promote-worker.mts", promoteFrame);
-      promoteFrame.fill(0);
+      let promoted: Record<string, unknown>;
+      try {
+        promoted = await spawnWorker("promote-worker.mts", promoteFrame);
+      } finally {
+        promoteFrame.fill(0);
+      }
       if (promoted.ok !== true) {
         console.error(`sync_runs ${syncRunId}: promote failed`);
         process.exitCode = 1;

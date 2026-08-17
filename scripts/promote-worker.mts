@@ -63,6 +63,10 @@ async function main(): Promise<void> {
   let job: PromoteJob | undefined;
   try {
     const decoded = decodeBinaryChildFrame(frame);
+    // decodeBinaryChildFrame copies each segment, so the frame still holds a DK
+    // copy — wipe it now rather than carrying a second copy through the whole
+    // multi-statement promotion below (the `finally` wipe is the safety net).
+    wipe(frame);
     segments = decoded.segments;
     if (segments.length !== 2) throw new Error("invalid_frame");
     job = parseJob(decoded.metadata);

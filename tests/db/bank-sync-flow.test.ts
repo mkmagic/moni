@@ -9,7 +9,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 type MockChild = EventEmitter & {
-  stdin: { write: (value: Buffer, cb?: () => void) => void; end: () => void };
+  stdin: EventEmitter & { write: (value: Buffer, cb?: () => void) => void; end: () => void };
   stdout: EventEmitter;
   frame?: Buffer;
   kill: (signal?: NodeJS.Signals) => boolean;
@@ -17,14 +17,16 @@ type MockChild = EventEmitter & {
 const children = vi.hoisted((): MockChild[] => []);
 vi.mock("node:child_process", () => ({
   spawn: () => {
+    // stdin is an EventEmitter, like a real child's stream, so the orchestrator
+    // can attach its EPIPE 'error' handler to it.
     const child = Object.assign(new EventEmitter(), {
-      stdin: {
+      stdin: Object.assign(new EventEmitter(), {
         write: (value: Buffer, cb?: () => void) => {
           child.frame = Buffer.from(value);
           cb?.();
         },
         end: () => undefined,
-      },
+      }),
       stdout: new EventEmitter(),
       kill: () => true,
     }) as MockChild;

@@ -42,7 +42,14 @@ export function decryptField(dataKey: Uint8Array, ciphertext: Buffer, aad: AadCo
   const encrypted = ciphertext.subarray(NONCE_LENGTH);
   const cipher = xchacha20poly1305(dataKey, nonce, serializeAad(aad));
   const plaintext = cipher.decrypt(encrypted);
-  return Buffer.from(plaintext);
+  // `cipher.decrypt` returns a fresh allocation; `Buffer.from` copies it into
+  // the buffer the caller owns and will wipe. Zero the intermediate now so the
+  // plaintext isn't left lingering on the heap for the GC (threat-model.md §5.5).
+  try {
+    return Buffer.from(plaintext);
+  } finally {
+    plaintext.fill(0);
+  }
 }
 
 /**

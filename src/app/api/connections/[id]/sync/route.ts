@@ -158,7 +158,12 @@ export async function POST(
     if (!decrypted) return NextResponse.json({ error: "not found" }, { status: 404 });
   }
   const syncRunId = await startActiveConnectionSyncRun(session.userId, connection.id);
-  if (!syncRunId) return NextResponse.json({ error: "connection_unavailable" }, { status: 409 });
+  if (!syncRunId) {
+    // A concurrent run won the slot; nothing downstream will consume the
+    // ciphertext copy, so clear it rather than abandon it to the GC.
+    encrypted?.ciphertext.fill(0);
+    return NextResponse.json({ error: "connection_unavailable" }, { status: 409 });
+  }
   if (connection.connectorId === "ibkr_flex") {
     const token = Buffer.from(decrypted!.credentials.flexToken ?? "", "utf8");
     const queryId = Buffer.from(decrypted!.credentials.queryId ?? "", "utf8");

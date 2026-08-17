@@ -77,6 +77,7 @@ export function decodeBinaryChildFrame(frame: Buffer): {
   };
   const json = take(read());
   const segments: Buffer[] = [];
+  let decoded = false;
   try {
     const parsed: unknown = JSON.parse(json.toString("utf8"));
     if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error();
@@ -85,10 +86,14 @@ export function decodeBinaryChildFrame(frame: Buffer): {
     if (count > MAX_CHILD_SEGMENTS) throw new Error("child-stdin-framing: too many segments");
     for (let index = 0; index < count; index += 1) segments.push(take(read()));
     if (offset !== frame.length) throw new Error("child-stdin-framing: trailing bytes");
+    decoded = true;
     return { metadata: parsed as Record<string, unknown>, segments };
   } finally {
     json.fill(0);
-    // On a failed decode no child owns these copies, so clear them here.
-    if (offset !== frame.length) for (const segment of segments) segment.fill(0);
+    // On a failed decode no child owns the already-copied segments (which may be
+    // secret keys), so clear them here. `offset === frame.length` isn't a safe
+    // success signal — a truncation landing exactly on a segment boundary also
+    // leaves offset at the end — so key off an explicit success flag instead.
+    if (!decoded) for (const segment of segments) segment.fill(0);
   }
 }

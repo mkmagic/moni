@@ -36,8 +36,15 @@ const FETCHER_FAILURE_CODES = new Set([
 
 /** The fetcher runs Chrome + untrusted scraper deps, so it gets only the
  * variables Chromium needs — never DATABASE_URL, the signup token, or any
- * market-data/model secret in the parent's environment. */
-function fetcherEnv(): NodeJS.ProcessEnv {
+ * market-data/model secret in the parent's environment. Exported so the manual
+ * gate (scripts/scrape-test.ts) can isolate its fetcher the same way.
+ *
+ * MONI_SCRAPE_FAILURE_SCREENSHOT is deliberately NOT here: an unattended
+ * production sync has no operator to consume a failure screenshot, so honoring
+ * it would only persist bank-page data (account numbers, a pre-submit login
+ * form) to disk unencrypted. The manual gate re-adds it for interactive
+ * debugging, where a human is watching. */
+export function fetcherEnv(): NodeJS.ProcessEnv {
   const allow = [
     "PATH",
     "HOME",
@@ -46,7 +53,6 @@ function fetcherEnv(): NodeJS.ProcessEnv {
     "NODE_ENV",
     "MONI_CHROME_PATH",
     "MONI_SCRAPE_SHOW_BROWSER",
-    "MONI_SCRAPE_FAILURE_SCREENSHOT",
   ];
   const env: Record<string, string> = {};
   for (const key of allow) {
@@ -135,6 +141,10 @@ export function startBankSync(input: StartBankSyncInput): void {
     fail("scrape_worker_start_failed");
     return;
   }
+  // If the child dies before draining stdin, the write emits EPIPE on the
+  // stdin stream (not on the child) — an unhandled 'error' event there would
+  // crash the whole server, so absorb it (the frame is wiped in the callback).
+  fetcher.stdin?.on("error", () => inFrame.fill(0));
   fetcher.stdin?.write(inFrame, () => inFrame.fill(0));
   fetcher.stdin?.end();
   fetcher.once("error", () => inFrame.fill(0));
@@ -196,6 +206,7 @@ function startPromoter(input: StartBankSyncInput, accounts: Buffer): void {
     recordFailed(input.userId, input.syncRunId, "promote_worker_start_failed");
     return;
   }
+  promoter.stdin?.on("error", () => frame.fill(0));
   promoter.stdin?.write(frame, () => frame.fill(0));
   promoter.stdin?.end();
   promoter.once("error", () => frame.fill(0));
