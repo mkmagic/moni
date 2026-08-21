@@ -15,7 +15,6 @@ import { listConnections } from "@/domain/connections";
 import { DashboardSync } from "./dashboard-sync";
 import { NetWorthAmount } from "./net-worth-amount";
 import { Card } from "@/components/ui/card";
-import { Money } from "@/components/money";
 import { Sparkline } from "@/components/sparkline";
 import { InsightPanel, type InsightItem } from "@/components/insight-panel";
 import { ThisMonthCard } from "@/components/this-month-card";
@@ -256,9 +255,6 @@ export default async function DashboardPage() {
             value={overview.netWorth}
             className="text-3xl font-bold text-foreground sm:text-4xl"
           />
-          <p className="text-sm text-muted-foreground">
-            Assets <Money value={overview.assetsTotal} />
-          </p>
         </div>
         <Sparkline
           data={netWorthSeries}
