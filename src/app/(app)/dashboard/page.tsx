@@ -13,6 +13,7 @@ import { getProfile } from "@/domain/profile";
 import { requireOnboarded } from "@/domain/onboarding";
 import { listConnections } from "@/domain/connections";
 import { DashboardSync } from "./dashboard-sync";
+import { NetWorthAmount } from "./net-worth-amount";
 import { Card } from "@/components/ui/card";
 import { Money } from "@/components/money";
 import { Sparkline } from "@/components/sparkline";
@@ -251,7 +252,7 @@ export default async function DashboardPage() {
               </span>
             )}
           </div>
-          <Money
+          <NetWorthAmount
             value={overview.netWorth}
             className="text-3xl font-bold text-foreground sm:text-4xl"
           />
