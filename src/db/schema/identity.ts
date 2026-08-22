@@ -213,20 +213,31 @@ export const agentAccessLog = pgTable(
  * reach `/api/mcp` (issue #113 OAuth phase, docs/design/mcp-and-api.md).
  * RLS-scoped to its owner exactly like `agent_tokens`.
  *
- * This table stores **only the long-lived refresh envelope**, never an access
- * token. Access tokens are stateless and self-contained (they carry their own
- * `wrapped_dk` + this grant's id, with the AEAD standing in for a signature),
- * so issuing one is a zero-write operation; instant revocation is the
- * `revoked_at` check on this row that every MCP request performs.
+ * This table stores **both token envelopes** — the long-lived refresh envelope
+ * and the short-lived access envelope. Access tokens are opaque bearer secrets
+ * (like `agent_tokens`), NOT self-contained: the `access_wrapped_dk` that a
+ * token's secret unwraps lives HERE, never in the token string. That is the
+ * whole point — a token holder cannot recover DK offline, and `revoked_at` /
+ * `access_expires_at` on this row are the only things that let a request open
+ * DK. (The earlier stateless design packed `wrapped_dk` into the token itself,
+ * which let any holder extract DK offline and keep it past expiry/revocation —
+ * a standing key, exactly what threat-model §5.6 forbids.)
  *
- * `refresh_wrapped_dk` is the user's data key (DK) re-wrapped under a KEK
- * derived from the current refresh-token secret — the same 32-byte-secret→KEK
- * seam `agent_tokens`/`webauthn-prf` use. The refresh secret rotates on every
- * refresh (RFC 6819 §5.2.2.3), so both `refresh_token_hash` and
- * `refresh_wrapped_dk` are overwritten in place each time. Neither column is
- * usable without the presented secret, which is why the pre-auth SELECT policy
- * that finds a row by `refresh_token_hash` before `app.user_id` is known is
- * safe — the same shape as `agent_tokens_app_select` (drizzle/0029).
+ * `refresh_wrapped_dk` / `access_wrapped_dk` are the user's data key (DK)
+ * re-wrapped under a KEK derived from the current refresh / access secret — the
+ * same 32-byte-secret→KEK seam `agent_tokens`/`webauthn-prf` use. The refresh
+ * secret rotates on every refresh (RFC 6819 §5.2.2.3); `previous_refresh_token_hash`
+ * keeps the immediately-superseded hash so a replay of a rotated-away refresh
+ * token is *detected* and revokes the whole grant family (RFC 9700 §4.14). The
+ * refresh columns are NULL when the grant was issued without `offline_access` —
+ * no refresh token is handed out, so the grant lives only as long as its access
+ * token. Neither secret column is usable without the presented secret, which is
+ * why the pre-auth SELECT policy that finds a row by hash before `app.user_id`
+ * is known is safe — the same shape as `agent_tokens_app_select` (drizzle/0029).
+ *
+ * `resource` is the RFC 8707 audience the grant is bound to (the MCP server's
+ * `${issuer}/api/mcp`); a token is refused if presented to a different resource.
+ * NULL means an older grant that predates audience binding (checked leniently).
  *
  * **DK only, never CK.** Like `agent_tokens`, there is deliberately no
  * credential-key column: an OAuth grant can disclose Tier-1 financial data but
@@ -246,11 +257,28 @@ export const mcpOauthGrants = pgTable(
       .notNull()
       .references(() => users.id),
     clientId: text("client_id").notNull(),
-    // SHA-256 of the current refresh-token secret. Rotates every refresh.
-    refreshTokenHash: bytea("refresh_token_hash").notNull(),
+    // SHA-256 of the current refresh-token secret. Rotates every refresh. NULL
+    // when the grant was issued without `offline_access` (no refresh token).
+    refreshTokenHash: bytea("refresh_token_hash"),
     // DK wrapped under a KEK derived from the current refresh secret. Opaque
-    // ciphertext; re-wrapped on every refresh alongside the hash.
-    refreshWrappedDk: bytea("refresh_wrapped_dk").notNull(),
+    // ciphertext; re-wrapped on every refresh alongside the hash. NULL alongside
+    // `refresh_token_hash` for a no-`offline_access` grant.
+    refreshWrappedDk: bytea("refresh_wrapped_dk"),
+    // SHA-256 of the *immediately-superseded* refresh secret, kept for one step
+    // so a replay of a rotated-away token is detected (RFC 9700 §4.14) and
+    // revokes the family. Overwritten on each rotation; NULL before the first.
+    previousRefreshTokenHash: bytea("previous_refresh_token_hash"),
+    // SHA-256 of the current access-token secret. Rotates on issue/refresh.
+    accessTokenHash: bytea("access_token_hash"),
+    // DK wrapped under a KEK derived from the current access secret. Opaque
+    // ciphertext — the token string carries ONLY the secret, never this.
+    accessWrappedDk: bytea("access_wrapped_dk"),
+    // Access-token expiry (~1h). The authoritative check is server-side here,
+    // not a self-describing field the holder could edit.
+    accessExpiresAt: timestamp("access_expires_at", { withTimezone: true }),
+    // RFC 8707 audience this grant is bound to (`${issuer}/api/mcp`). NULL for
+    // grants that predate audience binding.
+    resource: text("resource"),
     scope: text("scope").notNull(),
     label: text("label"),
     /** Refresh/grant expiry backstop; server-side `revoked_at` is the primary
@@ -263,9 +291,14 @@ export const mcpOauthGrants = pgTable(
   },
   (table) => [
     unique("mcp_oauth_grants_owner_id_id_unique").on(table.ownerId, table.id),
-    // The pre-auth lookup key: the /token refresh grant resolves a presented
-    // refresh secret to its row by hash before any user is scoped in.
+    // The pre-auth lookup keys: /token and every MCP request resolve a presented
+    // secret to its row by hash before any user is scoped in. Nullable columns,
+    // so these unique indexes permit many NULLs (Postgres treats them distinct).
     uniqueIndex("mcp_oauth_grants_refresh_token_hash_unique").on(table.refreshTokenHash),
+    uniqueIndex("mcp_oauth_grants_access_token_hash_unique").on(table.accessTokenHash),
+    uniqueIndex("mcp_oauth_grants_previous_refresh_token_hash_unique").on(
+      table.previousRefreshTokenHash,
+    ),
   ],
 );
 
@@ -313,6 +346,9 @@ export const mcpOauthAuthCodes = pgTable(
     codeChallenge: text("code_challenge").notNull(),
     // The redirect_uri the flow began with; re-checked at /token (RFC 6749).
     redirectUri: text("redirect_uri").notNull(),
+    // RFC 8707 audience the client requested at /authorize; carried onto the
+    // grant at exchange. NULL when the client sent no `resource`.
+    resource: text("resource"),
     scope: text("scope").notNull(),
     // Always dated (~60s out) — an auth code has no "never" lifetime.
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),

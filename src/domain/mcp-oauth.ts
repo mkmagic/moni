@@ -14,11 +14,6 @@ import { wipe, type AadContext } from "@/lib/crypto";
 export const OAUTH_ACCESS_TOKEN_PREFIX = "moni_oauth_at_";
 const REFRESH_TOKEN_PREFIX = "moni_oauth_rt_";
 const AUTH_CODE_PREFIX = "moni_oauth_ac_";
-const ACCESS_TOKEN_FORMAT = 1;
-const UUID_BYTES = 16;
-const EXPIRY_BYTES = 8;
-const ACCESS_TOKEN_HEADER_BYTES = 1 + UUID_BYTES + EXPIRY_BYTES + UNLOCK_SECRET_LENGTH;
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
 const PKCE_VERIFIER_RE = /^[A-Za-z0-9._~-]{43,128}$/;
 
@@ -31,6 +26,8 @@ export interface AuthCodeOptions {
   redirectUri: string;
   scope: string;
   codeChallenge: string;
+  /** RFC 8707 audience the client requested; NULL when it sent none. */
+  resource?: string;
 }
 
 export interface MintedAuthCode {
@@ -60,7 +57,8 @@ export type TokenResult =
   | {
       ok: true;
       accessToken: string;
-      refreshToken: string;
+      /** Omitted unless the grant carries `offline_access`. */
+      refreshToken?: string;
       expiresIn: number;
       scope: string;
       tokenType: "Bearer";
@@ -83,22 +81,8 @@ function authCodeAad(codeId: string): AadContext {
   return { rowId: codeId, column: "wrapped_dk", version: 1 };
 }
 
-function accessAad(grantId: string, expiresAtSec: number): AadContext {
-  // The expiry is authenticated as AAD. Editing the self-contained expiry
-  // therefore makes unwrap fail even though Moni has no signing key.
-  return { rowId: grantId, column: "mcp_oauth_access", version: expiresAtSec };
-}
-
-function uuidToBytes(uuid: string): Buffer {
-  if (!UUID_RE.test(uuid)) throw new Error("invalid UUID");
-  return Buffer.from(uuid.replaceAll("-", ""), "hex");
-}
-
-function bytesToUuid(bytes: Buffer): string | null {
-  if (bytes.length !== UUID_BYTES) return null;
-  const hex = bytes.toString("hex");
-  const uuid = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-  return UUID_RE.test(uuid) ? uuid : null;
+function accessAad(grantId: string): AadContext {
+  return { rowId: grantId, column: "access_wrapped_dk", version: 1 };
 }
 
 function decodeSecretToken(token: string, prefix: string): Buffer | null {
@@ -158,81 +142,88 @@ async function ownerHasAgentAccess(ownerId: string): Promise<boolean> {
   return owner?.enabled === true;
 }
 
-/** Pure-crypto, self-contained access token; no access-token row is written. */
-export function mintAccessToken(
+interface AccessTokenMaterial {
+  /** The opaque bearer token handed to the client — prefix + secret only. */
+  token: string;
+  /** SHA-256 of the secret; the pre-auth lookup key stored on the grant. */
+  tokenHash: Buffer;
+  /** DK wrapped under the secret's KEK; stored on the grant, never in `token`. */
+  wrappedDk: Buffer;
+  expiresAt: Date;
+}
+
+/**
+ * Builds an opaque access token and the server-side envelope that opens it. The
+ * token string carries ONLY a random secret (like `agent_tokens` and refresh
+ * tokens); the caller persists `tokenHash` + `wrappedDk` + `expiresAt` on the
+ * grant row. A holder therefore cannot recover DK from the token alone — the
+ * wrap lives server-side, so `revoked_at` / `access_expires_at` are what let a
+ * request open DK, and revocation/expiry actually bind (threat-model §5.6).
+ */
+function buildAccessToken(
   grantId: string,
   dataKey: Buffer,
   ttlMs = ACCESS_TOKEN_TTL_MS,
-): { token: string; expiresAt: Date } {
+): AccessTokenMaterial {
   const secret = randomBytes(UNLOCK_SECRET_LENGTH);
   try {
-    const expiresAtSec = Math.floor((Date.now() + ttlMs) / 1000);
-    if (!Number.isSafeInteger(expiresAtSec) || expiresAtSec < 0) {
-      throw new Error("mcp-oauth: access-token expiry is out of range");
-    }
-    const expiresAt = new Date(expiresAtSec * 1000);
-    const wrappedDk = wrapAndAssert(secret, accessAad(grantId, expiresAtSec), dataKey);
-    const packed = Buffer.allocUnsafe(ACCESS_TOKEN_HEADER_BYTES);
-    packed.writeUInt8(ACCESS_TOKEN_FORMAT, 0);
-    uuidToBytes(grantId).copy(packed, 1);
-    packed.writeBigUInt64BE(BigInt(expiresAtSec), 1 + UUID_BYTES);
-    secret.copy(packed, 1 + UUID_BYTES + EXPIRY_BYTES);
+    const wrappedDk = wrapAndAssert(secret, accessAad(grantId), dataKey);
     return {
-      token: OAUTH_ACCESS_TOKEN_PREFIX + Buffer.concat([packed, wrappedDk]).toString("base64url"),
-      expiresAt,
+      token: OAUTH_ACCESS_TOKEN_PREFIX + secret.toString("base64url"),
+      tokenHash: hashSecret(secret),
+      wrappedDk,
+      expiresAt: new Date(Date.now() + ttlMs),
     };
   } finally {
     wipe(secret);
   }
 }
 
-export async function validateAccessToken(token: string): Promise<VerifiedAccessToken | null> {
-  if (!token.startsWith(OAUTH_ACCESS_TOKEN_PREFIX)) return null;
-  const encoded = token.slice(OAUTH_ACCESS_TOKEN_PREFIX.length);
-  if (!BASE64URL_RE.test(encoded)) return null;
-
-  let packed: Buffer;
+/**
+ * Resolves a presented access token to a one-request DK window. Looks the grant
+ * up by the token secret's hash (pre-auth, unscoped), then enforces revocation,
+ * grant + access expiry, RFC 8707 audience binding, and the owner's opt-in
+ * before unwrapping DK from the server-held `access_wrapped_dk`.
+ *
+ * `expectedResource` is this server's own resource id (`${issuer}/api/mcp`); a
+ * token whose grant is bound to a different resource is refused. A grant with a
+ * NULL resource predates audience binding and is accepted (lenient migration).
+ */
+export async function validateAccessToken(
+  token: string,
+  expectedResource?: string,
+): Promise<VerifiedAccessToken | null> {
+  const secret = decodeSecretToken(token, OAUTH_ACCESS_TOKEN_PREFIX);
+  if (!secret) return null;
   try {
-    packed = Buffer.from(encoded, "base64url");
-  } catch {
-    return null;
-  }
-  if (packed.toString("base64url") !== encoded || packed.length <= ACCESS_TOKEN_HEADER_BYTES) {
-    wipe(packed);
-    return null;
-  }
-
-  const secret = Buffer.from(
-    packed.subarray(1 + UUID_BYTES + EXPIRY_BYTES, ACCESS_TOKEN_HEADER_BYTES),
-  );
-  try {
-    if (packed.readUInt8(0) !== ACCESS_TOKEN_FORMAT) return null;
-    const grantId = bytesToUuid(Buffer.from(packed.subarray(1, 1 + UUID_BYTES)));
-    if (!grantId) return null;
-    const expiresBig = packed.readBigUInt64BE(1 + UUID_BYTES);
-    if (expiresBig > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-    const expiresAtSec = Number(expiresBig);
-    if (expiresAtSec <= Math.floor(Date.now() / 1000)) return null;
-
     const [grant] = await db
       .select({
         id: mcpOauthGrants.id,
         ownerId: mcpOauthGrants.ownerId,
         expiresAt: mcpOauthGrants.expiresAt,
         revokedAt: mcpOauthGrants.revokedAt,
+        accessExpiresAt: mcpOauthGrants.accessExpiresAt,
+        accessWrappedDk: mcpOauthGrants.accessWrappedDk,
+        resource: mcpOauthGrants.resource,
       })
       .from(mcpOauthGrants)
-      .where(eq(mcpOauthGrants.id, grantId))
+      .where(eq(mcpOauthGrants.accessTokenHash, hashSecret(secret)))
       .limit(1);
-    if (!grant || grant.revokedAt !== null) return null;
+    if (!grant || grant.revokedAt !== null || !grant.accessWrappedDk || !grant.accessExpiresAt) {
+      return null;
+    }
+    if (grant.accessExpiresAt.getTime() <= Date.now()) return null;
     if (grant.expiresAt !== null && grant.expiresAt.getTime() <= Date.now()) return null;
+    if (
+      grant.resource !== null &&
+      expectedResource !== undefined &&
+      grant.resource !== expectedResource
+    ) {
+      return null;
+    }
     if (!(await ownerHasAgentAccess(grant.ownerId))) return null;
 
-    const dataKey = unwrap(
-      secret,
-      accessAad(grantId, expiresAtSec),
-      Buffer.from(packed.subarray(ACCESS_TOKEN_HEADER_BYTES)),
-    );
+    const dataKey = unwrap(secret, accessAad(grant.id), Buffer.from(grant.accessWrappedDk));
     if (!dataKey) return null;
 
     try {
@@ -245,12 +236,11 @@ export async function validateAccessToken(token: string): Promise<VerifiedAccess
     } catch {
       // Best-effort telemetry must not invalidate an already-verified token.
     }
-    return { userId: grant.ownerId, grantId, dataKey };
+    return { userId: grant.ownerId, grantId: grant.id, dataKey };
   } catch {
     return null;
   } finally {
     wipe(secret);
-    wipe(packed);
   }
 }
 
@@ -279,6 +269,7 @@ export async function createAuthCode(
         wrappedDk,
         codeChallenge: options.codeChallenge,
         redirectUri: options.redirectUri,
+        resource: options.resource ?? null,
         scope: options.scope,
         expiresAt,
       });
@@ -322,10 +313,17 @@ export async function exchangeAuthCode(
     if (!dataKey) return { ok: false, error: "invalid_grant" };
 
     const grantId = randomUUID();
-    refreshSecret = randomBytes(UNLOCK_SECRET_LENGTH);
-    const refreshWrappedDk = wrapAndAssert(refreshSecret, refreshAad(grantId), dataKey);
+    const access = buildAccessToken(grantId, dataKey);
+    // A refresh token is only issued when the client asked for `offline_access`
+    // (RFC 6749 §1.5 / OAuth 2.1). Without it the grant lives only as long as
+    // its access token and its refresh envelope stays NULL.
+    const withRefresh = row.scope.split(" ").includes("offline_access");
+    let refreshWrappedDk: Buffer | null = null;
+    if (withRefresh) {
+      refreshSecret = randomBytes(UNLOCK_SECRET_LENGTH);
+      refreshWrappedDk = wrapAndAssert(refreshSecret, refreshAad(grantId), dataKey);
+    }
     const expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_MS);
-    const access = mintAccessToken(grantId, dataKey);
 
     const created = await withUser(row.ownerId, async (tx) => {
       const consumed = await tx
@@ -338,8 +336,12 @@ export async function exchangeAuthCode(
         id: grantId,
         ownerId: row.ownerId,
         clientId: row.clientId,
-        refreshTokenHash: hashSecret(refreshSecret!),
+        refreshTokenHash: withRefresh ? hashSecret(refreshSecret!) : null,
         refreshWrappedDk,
+        accessTokenHash: access.tokenHash,
+        accessWrappedDk: access.wrappedDk,
+        accessExpiresAt: access.expiresAt,
+        resource: row.resource,
         scope: row.scope,
         expiresAt,
       });
@@ -350,7 +352,9 @@ export async function exchangeAuthCode(
     return {
       ok: true,
       accessToken: access.token,
-      refreshToken: REFRESH_TOKEN_PREFIX + refreshSecret.toString("base64url"),
+      refreshToken: withRefresh
+        ? REFRESH_TOKEN_PREFIX + refreshSecret!.toString("base64url")
+        : undefined,
       expiresIn: Math.floor(ACCESS_TOKEN_TTL_MS / 1000),
       scope: row.scope,
       tokenType: "Bearer",
@@ -364,21 +368,47 @@ export async function exchangeAuthCode(
   }
 }
 
-export async function refreshGrant(refreshToken: string): Promise<TokenResult> {
+export async function refreshGrant(
+  refreshToken: string,
+  client?: { clientId?: string },
+): Promise<TokenResult> {
   const oldSecret = decodeSecretToken(refreshToken, REFRESH_TOKEN_PREFIX);
   if (!oldSecret) return { ok: false, error: "invalid_grant" };
   let dataKey: Buffer | null = null;
   let newSecret: Buffer | null = null;
   try {
     const oldHash = hashSecret(oldSecret);
+
+    // Reuse detection (RFC 9700 §4.14): a token matching a grant's *previous*,
+    // rotated-away refresh hash is a replay — the legitimate holder and an
+    // attacker cannot both hold the current token, so someone is presenting a
+    // superseded one. Revoke the whole grant family and refuse, invalidating
+    // the current (possibly attacker-held) token too.
+    const [reused] = await db
+      .select({ id: mcpOauthGrants.id, ownerId: mcpOauthGrants.ownerId })
+      .from(mcpOauthGrants)
+      .where(eq(mcpOauthGrants.previousRefreshTokenHash, oldHash))
+      .limit(1);
+    if (reused) {
+      await revokeGrant(reused.ownerId, reused.id);
+      return { ok: false, error: "invalid_grant" };
+    }
+
     const [row] = await db
       .select()
       .from(mcpOauthGrants)
       .where(eq(mcpOauthGrants.refreshTokenHash, oldHash))
       .limit(1);
-    if (!row || row.revokedAt !== null) return { ok: false, error: "invalid_grant" };
+    if (!row || row.revokedAt !== null || !row.refreshWrappedDk) {
+      return { ok: false, error: "invalid_grant" };
+    }
     if (row.expiresAt !== null && row.expiresAt.getTime() <= Date.now()) {
       return { ok: false, error: "invalid_grant" };
+    }
+    // Public clients: if the caller sends client_id it must match the grant's
+    // (RFC 6749 §6). Absent is tolerated — the refresh secret is the authority.
+    if (client?.clientId !== undefined && client.clientId !== row.clientId) {
+      return { ok: false, error: "invalid_client" };
     }
     if (!(await ownerHasAgentAccess(row.ownerId))) return { ok: false, error: "invalid_grant" };
 
@@ -387,7 +417,7 @@ export async function refreshGrant(refreshToken: string): Promise<TokenResult> {
     newSecret = randomBytes(UNLOCK_SECRET_LENGTH);
     const newHash = hashSecret(newSecret);
     const newWrappedDk = wrapAndAssert(newSecret, refreshAad(row.id), dataKey);
-    const access = mintAccessToken(row.id, dataKey);
+    const access = buildAccessToken(row.id, dataKey);
 
     const rotated = await withUser(row.ownerId, async (tx) =>
       tx
@@ -395,6 +425,10 @@ export async function refreshGrant(refreshToken: string): Promise<TokenResult> {
         .set({
           refreshTokenHash: newHash,
           refreshWrappedDk: newWrappedDk,
+          previousRefreshTokenHash: oldHash,
+          accessTokenHash: access.tokenHash,
+          accessWrappedDk: access.wrappedDk,
+          accessExpiresAt: access.expiresAt,
           lastUsedAt: new Date(),
         })
         .where(

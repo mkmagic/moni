@@ -36,11 +36,8 @@
 // inside the request's DK window (the #19 finding), never cached in plaintext.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
-import { withUser } from "@/db/client";
-import { categories, merchants, users } from "@/db/schema";
 import type { Session } from "@/lib/auth/session-store";
-import { decText } from "@/domain/fields";
+import { loadAgentRequestData, type AgentRequestData } from "@/domain/agent-request-data";
 import { getOverview } from "@/domain/dashboard";
 import { aggregateSpending } from "@/domain/aggregates";
 import { listEntries } from "@/domain/transactions";
@@ -57,7 +54,21 @@ import {
   recordAccess,
 } from "@/domain/agent-access-log";
 
-const SERVER_INFO = { name: "moni", version: "1.3.0" } as const;
+const SERVER_VERSION = "1.3.0";
+
+/** The `initialize` server identity. `icons`/`websiteUrl` are what a connector
+ * list (Claude, ChatGPT) surfaces next to the server name; `icons[].src` must be
+ * an absolute URL, so it is filled per request from the endpoint's own origin
+ * (the icon is a public asset — the same one the OAuth consent page renders). */
+function serverInfo(iconUrl?: string) {
+  return {
+    name: "moni",
+    title: "Moni",
+    version: SERVER_VERSION,
+    websiteUrl: "https://moni-fin.tech",
+    ...(iconUrl ? { icons: [{ src: iconUrl, mimeType: "image/png", sizes: ["341x384"] }] } : {}),
+  };
+}
 const READ_ONLY_ANNOTATIONS = {
   readOnlyHint: true,
   destructiveHint: false,
@@ -108,40 +119,6 @@ type Provenance = {
   freshness: unknown;
   completeness: unknown;
 };
-
-/** Per-request lookups baked into the tool schemas, read once up front. */
-interface RequestData {
-  baseCurrency: string;
-  /** Category name → id (first wins on a duplicate name). */
-  categoryByName: Map<string, string>;
-  /** Merchant name → id, decrypted inside the DK window. */
-  merchantByName: Map<string, string>;
-}
-
-async function loadRequestData(ctx: AgentRequestContext): Promise<RequestData> {
-  return withUser(ctx.userId, async (tx) => {
-    const [userRow] = await tx
-      .select({ baseCurrency: users.baseCurrency })
-      .from(users)
-      .where(eq(users.id, ctx.userId))
-      .limit(1);
-
-    const catRows = await tx.select({ id: categories.id, name: categories.name }).from(categories);
-    const categoryByName = new Map<string, string>();
-    for (const c of catRows) if (!categoryByName.has(c.name)) categoryByName.set(c.name, c.id);
-
-    const merRows = await tx
-      .select({ id: merchants.id, nameCt: merchants.nameCt, version: merchants.version })
-      .from(merchants);
-    const merchantByName = new Map<string, string>();
-    for (const m of merRows) {
-      const name = decText(ctx.dataKey, m.nameCt, m.id, "name_ct", m.version);
-      if (name && !merchantByName.has(name)) merchantByName.set(name, m.id);
-    }
-
-    return { baseCurrency: userRow?.baseCurrency ?? "ILS", categoryByName, merchantByName };
-  });
-}
 
 /** A Session shape for the domain reads that expect one. The agent request is
  * NOT a browser session — it has no cookie/TTL — but getOverview/listEntries
@@ -245,10 +222,13 @@ const ISO_MONTH = z
  * are read from the user's own data inside the DK window. Single-use: connect
  * it to a per-request transport, handle the request, discard it.
  */
-export async function buildAgentMcpServer(ctx: AgentRequestContext): Promise<McpServer> {
-  const data = await loadRequestData(ctx);
+export async function buildAgentMcpServer(
+  ctx: AgentRequestContext,
+  opts?: { iconUrl?: string },
+): Promise<McpServer> {
+  const data: AgentRequestData = await loadAgentRequestData(ctx.userId, ctx.dataKey);
   const identity = { userId: ctx.userId };
-  const server = new McpServer(SERVER_INFO, { instructions: SERVER_INSTRUCTIONS });
+  const server = new McpServer(serverInfo(opts?.iconUrl), { instructions: SERVER_INSTRUCTIONS });
 
   server.registerTool(
     "whoami",
@@ -352,7 +332,10 @@ export async function buildAgentMcpServer(ctx: AgentRequestContext): Promise<Mcp
       description:
         "Individual ledger entries for a genuine drill-down (one merchant, one " +
         "month). For aggregate 'how much' questions use `spending` instead — a " +
-        "wide range is capped and returns the most recent entries. Read-only.",
+        "wide range is capped and returns the most recent entries. Each result " +
+        "also carries `authoritativeTotals`: Moni's own income/expense/net and " +
+        "entry count for the same filter — reconcile against those, never sum " +
+        "the returned rows. Read-only.",
       inputSchema: {
         from: ISO_DATE,
         to: ISO_DATE,
@@ -364,16 +347,38 @@ export async function buildAgentMcpServer(ctx: AgentRequestContext): Promise<Mcp
     },
     ({ from, to, limit, category, merchant }) =>
       guardedTool(ctx, "transactions", { from, to, limit, category, merchant }, async () => {
+        const categoryId = category ? data.categoryByName.get(category) : undefined;
+        const merchantId = merchant ? data.merchantByName.get(merchant) : undefined;
         const rows = await listEntries(sessionFor(ctx, data.baseCurrency), {
           from,
           to,
           limit: limit ?? RAW_ROW_CAP,
-          categoryId: category ? data.categoryByName.get(category) : undefined,
-          merchantId: merchant ? data.merchantByName.get(merchant) : undefined,
+          categoryId,
+          merchantId,
+        });
+        // Moni's OWN totals for this exact filter, so the model can reconcile a
+        // truncated or filtered drill-down without summing rows itself (which
+        // would be forbidden model-side money math). Same flow/FX rules as
+        // `spending`: transfers/excluded out, pending-FX skipped.
+        const authoritative = await aggregateSpending(ctx.userId, ctx.dataKey, data.baseCurrency, {
+          from,
+          to,
+          groupBy: "category",
+          categoryId,
+          merchantId,
         });
         const fxPendingRows = rows.filter((r) => r.fxPending).length;
         return {
-          payload: { entries: rows },
+          payload: {
+            entries: rows,
+            authoritativeTotals: {
+              income: authoritative.totals.income,
+              expenses: authoritative.totals.expenses,
+              net: authoritative.totals.net,
+              countedEntries: authoritative.countedEntries,
+              skippedPendingFx: authoritative.skippedPendingFx,
+            },
+          },
           provenance: {
             identity,
             freshness: { asOf: to ?? "now" },

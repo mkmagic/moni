@@ -376,7 +376,8 @@ function SecretReveal({
           </span>
           <span className="text-xs leading-relaxed text-muted-foreground">
             Copy it now — this is the only time it&apos;s shown. Store it in your agent&apos;s
-            config; Moni keeps only a hash.
+            config; Moni keeps only a hash. Treat it like a password: anyone who has it can read all
+            of your financial data until you revoke it.
           </span>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">

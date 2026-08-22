@@ -225,8 +225,15 @@ describe("MCP endpoint (issue #113 Phase 2)", () => {
 
       const res = await mcpPost(jsonRpcRequest(INITIALIZE, secret));
       expect(res.status).toBe(200);
-      const body = (await res.json()) as { result?: { serverInfo?: { name?: string } } };
+      const body = (await res.json()) as {
+        result?: {
+          serverInfo?: { name?: string; title?: string; icons?: { src?: string }[] };
+        };
+      };
       expect(body.result?.serverInfo?.name).toBe("moni");
+      expect(body.result?.serverInfo?.title).toBe("Moni");
+      // The connector-list icon is advertised as an absolute URL on this origin.
+      expect(body.result?.serverInfo?.icons?.[0]?.src).toMatch(/\/moni-icon\.png$/);
     });
 
     it("completes the initialize handshake for a valid OAuth access token", async () => {

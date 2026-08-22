@@ -56,12 +56,13 @@ export function parseBearer(header: string | null): string | null {
 export async function withAgentRequest<T>(
   authorizationHeader: string | null,
   fn: (ctx: AgentRequestContext) => Promise<T>,
+  opts?: { expectedResource?: string },
 ): Promise<T> {
   const token = parseBearer(authorizationHeader);
   if (!token) throw new AgentAuthError("missing bearer token");
 
   if (token.startsWith(OAUTH_ACCESS_TOKEN_PREFIX)) {
-    const verified = await validateAccessToken(token);
+    const verified = await validateAccessToken(token, opts?.expectedResource);
     if (!verified) throw new AgentAuthError("invalid or expired token");
     try {
       return await fn({

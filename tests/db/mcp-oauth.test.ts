@@ -7,13 +7,12 @@ import {
   createAuthCode,
   exchangeAuthCode,
   listGrants,
-  mintAccessToken,
   refreshGrant,
   revokeGrant,
   validateAccessToken,
 } from "@/domain/mcp-oauth";
 import { wipe } from "@/lib/crypto";
-import { cleanupOwners } from "./helpers";
+import { cleanupOwners, elevatedPool } from "./helpers";
 
 const SIGNUP_TOKEN = process.env.MONI_SIGNUP_TOKEN;
 if (!SIGNUP_TOKEN) {
@@ -95,41 +94,145 @@ describe("domain/mcp-oauth", () => {
     wipe(verified!.dataKey);
   });
 
-  it("rejects an access token whose authenticated expiry was edited", async () => {
-    const { userId, dataKey } = await user("oauth-tampered-expiry");
+  it("does not let a token holder recover DK offline (no wrapped DK in the token)", async () => {
+    const { userId, dataKey } = await user("oauth-offline-extract");
     const exchanged = await authorizeAndExchange(userId, dataKey);
-    const prefix = "moni_oauth_at_";
-    const packed = Buffer.from(exchanged.accessToken.slice(prefix.length), "base64url");
-    packed.writeBigUInt64BE(packed.readBigUInt64BE(17) + 60n, 17);
 
-    expect(await validateAccessToken(prefix + packed.toString("base64url"))).toBeNull();
+    // The access token is opaque: prefix + a 32-byte secret, nothing more. It
+    // structurally cannot also carry the DK wrap (32-byte DK + nonce + tag),
+    // which lives only server-side on the grant row — so a holder can never
+    // reconstruct DK from the token alone, offline (issue #113 Critical).
+    const raw = Buffer.from(exchanged.accessToken.slice("moni_oauth_at_".length), "base64url");
+    expect(raw.length).toBe(32);
+    expect(raw.includes(dataKey)).toBe(false);
+
+    // Remove the server-held envelope and the token is inert — proof the DK
+    // never travelled in the token.
+    const [grant] = await listGrants(userId);
+    await elevatedPool.query("update mcp_oauth_grants set access_wrapped_dk = null where id = $1", [
+      grant.id,
+    ]);
+    expect(await validateAccessToken(exchanged.accessToken)).toBeNull();
   });
 
   it("rejects an expired access token", async () => {
     const { userId, dataKey } = await user("oauth-expired-access");
-    await authorizeAndExchange(userId, dataKey);
+    const exchanged = await authorizeAndExchange(userId, dataKey);
     const [grant] = await listGrants(userId);
-    const expired = mintAccessToken(grant.id, dataKey, -1_000);
-    expect(await validateAccessToken(expired.token)).toBeNull();
+    await elevatedPool.query(
+      "update mcp_oauth_grants set access_expires_at = now() - interval '1 minute' where id = $1",
+      [grant.id],
+    );
+    expect(await validateAccessToken(exchanged.accessToken)).toBeNull();
   });
 
   it("refreshes without a password and rotates the refresh token", async () => {
     const { userId, dataKey } = await user("oauth-refresh");
     const exchanged = await authorizeAndExchange(userId, dataKey);
 
-    const refreshed = await refreshGrant(exchanged.refreshToken);
+    const refreshed = await refreshGrant(exchanged.refreshToken!);
     expect(refreshed.ok).toBe(true);
     if (!refreshed.ok) return;
     expect(refreshed.refreshToken).not.toBe(exchanged.refreshToken);
-    expect(await refreshGrant(exchanged.refreshToken)).toEqual({
-      ok: false,
-      error: "invalid_grant",
-    });
 
     const verified = await validateAccessToken(refreshed.accessToken);
     expect(verified?.userId).toBe(userId);
     expect(verified?.dataKey.equals(dataKey)).toBe(true);
     wipe(verified!.dataKey);
+
+    // The superseded refresh token no longer works (reuse detection revokes it).
+    expect(await refreshGrant(exchanged.refreshToken!)).toEqual({
+      ok: false,
+      error: "invalid_grant",
+    });
+  });
+
+  it("detects refresh-token reuse and revokes the whole grant family", async () => {
+    const { userId, dataKey } = await user("oauth-refresh-reuse");
+    const exchanged = await authorizeAndExchange(userId, dataKey);
+
+    const first = await refreshGrant(exchanged.refreshToken!);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    // Replay the now-superseded ORIGINAL refresh token: detected as reuse.
+    expect(await refreshGrant(exchanged.refreshToken!)).toEqual({
+      ok: false,
+      error: "invalid_grant",
+    });
+    // Family revoked — the rotated (possibly attacker-held) token is dead too.
+    expect(await refreshGrant(first.refreshToken!)).toEqual({
+      ok: false,
+      error: "invalid_grant",
+    });
+    expect(await validateAccessToken(first.accessToken)).toBeNull();
+  });
+
+  it("issues no refresh token without offline_access, but the access token works", async () => {
+    const { userId, dataKey } = await user("oauth-no-offline");
+    const { verifier, challenge } = pkce();
+    const { code } = await createAuthCode(userId, dataKey, {
+      clientId: CLIENT_ID,
+      redirectUri: REDIRECT_URI,
+      scope: "mcp:read",
+      codeChallenge: challenge,
+    });
+    const exchanged = await exchangeAuthCode(code, verifier, {
+      clientId: CLIENT_ID,
+      redirectUri: REDIRECT_URI,
+    });
+    expect(exchanged.ok).toBe(true);
+    if (!exchanged.ok) return;
+    expect(exchanged.refreshToken).toBeUndefined();
+    expect(exchanged.scope).toBe("mcp:read");
+
+    const verified = await validateAccessToken(exchanged.accessToken);
+    expect(verified?.userId).toBe(userId);
+    wipe(verified!.dataKey);
+  });
+
+  it("binds a token to its requested resource and refuses the wrong audience", async () => {
+    const { userId, dataKey } = await user("oauth-audience");
+    const RESOURCE = "https://moni.example/api/mcp";
+    const { verifier, challenge } = pkce();
+    const { code } = await createAuthCode(userId, dataKey, {
+      clientId: CLIENT_ID,
+      redirectUri: REDIRECT_URI,
+      scope: SCOPE,
+      codeChallenge: challenge,
+      resource: RESOURCE,
+    });
+    const exchanged = await exchangeAuthCode(code, verifier, {
+      clientId: CLIENT_ID,
+      redirectUri: REDIRECT_URI,
+    });
+    expect(exchanged.ok).toBe(true);
+    if (!exchanged.ok) return;
+
+    const right = await validateAccessToken(exchanged.accessToken, RESOURCE);
+    expect(right?.userId).toBe(userId);
+    wipe(right!.dataKey);
+
+    expect(
+      await validateAccessToken(exchanged.accessToken, "https://evil.example/api/mcp"),
+    ).toBeNull();
+
+    // No expected audience supplied: lenient, so pre-binding clients still work.
+    const lenient = await validateAccessToken(exchanged.accessToken);
+    expect(lenient?.userId).toBe(userId);
+    wipe(lenient!.dataKey);
+  });
+
+  it("rejects a refresh whose client_id does not match the grant", async () => {
+    const { userId, dataKey } = await user("oauth-refresh-clientid");
+    const exchanged = await authorizeAndExchange(userId, dataKey);
+
+    expect(
+      await refreshGrant(exchanged.refreshToken!, { clientId: "https://chatgpt.com/x" }),
+    ).toEqual({ ok: false, error: "invalid_client" });
+
+    const ok = await refreshGrant(exchanged.refreshToken!, { clientId: CLIENT_ID });
+    expect(ok.ok).toBe(true);
   });
 
   it("allows only one winner when the same refresh token is used concurrently", async () => {
@@ -137,8 +240,8 @@ describe("domain/mcp-oauth", () => {
     const exchanged = await authorizeAndExchange(userId, dataKey);
 
     const results = await Promise.all([
-      refreshGrant(exchanged.refreshToken),
-      refreshGrant(exchanged.refreshToken),
+      refreshGrant(exchanged.refreshToken!),
+      refreshGrant(exchanged.refreshToken!),
     ]);
     expect(results.filter((result) => result.ok)).toHaveLength(1);
     expect(results.filter((result) => !result.ok && result.error === "invalid_grant")).toHaveLength(
@@ -207,7 +310,7 @@ describe("domain/mcp-oauth", () => {
     expect(await revokeGrant(userId, grant.id)).toBe(true);
     expect(await revokeGrant(userId, grant.id)).toBe(false);
     expect(await validateAccessToken(exchanged.accessToken)).toBeNull();
-    expect(await refreshGrant(exchanged.refreshToken)).toEqual({
+    expect(await refreshGrant(exchanged.refreshToken!)).toEqual({
       ok: false,
       error: "invalid_grant",
     });
@@ -229,7 +332,7 @@ describe("domain/mcp-oauth", () => {
     const exchanged = await authorizeAndExchange(active.userId, active.dataKey);
     await updateProfile(active.userId, { agentAccessEnabled: false });
     expect(await validateAccessToken(exchanged.accessToken)).toBeNull();
-    expect(await refreshGrant(exchanged.refreshToken)).toEqual({
+    expect(await refreshGrant(exchanged.refreshToken!)).toEqual({
       ok: false,
       error: "invalid_grant",
     });

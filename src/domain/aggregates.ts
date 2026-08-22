@@ -10,7 +10,7 @@
 //   * the reporting amount is entered × the entry's own locked fx_rate;
 //   * all arithmetic is decimal.js, returned as exact strings.
 import Decimal from "decimal.js";
-import { and, gte, lte } from "drizzle-orm";
+import { and, eq, gte, lte } from "drizzle-orm";
 import { withUser } from "@/db/client";
 import { categories, entries } from "@/db/schema";
 import { multiply } from "@/lib/money";
@@ -53,13 +53,23 @@ export async function aggregateSpending(
   userId: string,
   dataKey: Buffer,
   baseCurrency: string,
-  opts: { from?: string; to?: string; groupBy: SpendingGroupBy },
+  opts: {
+    from?: string;
+    to?: string;
+    groupBy: SpendingGroupBy;
+    /** Narrow to one category / merchant — used to reconcile a filtered raw
+     * drill-down against Moni's own totals for the same filter. */
+    categoryId?: string;
+    merchantId?: string;
+  },
 ): Promise<SpendingAggregate> {
-  const { from, to, groupBy } = opts;
+  const { from, to, groupBy, categoryId, merchantId } = opts;
   return withUser(userId, async (tx) => {
     const conds = [];
     if (from) conds.push(gte(entries.date, from));
     if (to) conds.push(lte(entries.date, to));
+    if (categoryId) conds.push(eq(entries.categoryId, categoryId));
+    if (merchantId) conds.push(eq(entries.merchantId, merchantId));
     const entryRows = await tx
       .select()
       .from(entries)

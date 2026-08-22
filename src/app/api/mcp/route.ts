@@ -29,23 +29,32 @@ function unauthorized(req: NextRequest): NextResponse {
 
 export async function POST(req: NextRequest): Promise<Response> {
   try {
-    return await withAgentRequest(req.headers.get("authorization"), async (ctx) => {
-      const server = await buildAgentMcpServer(ctx);
-      // Stateless: no session id, buffered JSON response (not an SSE stream),
-      // so `handleRequest` resolves only after the tool has run — i.e. while
-      // the DK window is still open. The window closes (DK wiped) the moment
-      // this callback returns.
-      const transport = new WebStandardStreamableHTTPServerTransport({
-        sessionIdGenerator: undefined,
-        enableJsonResponse: true,
-      });
-      await server.connect(transport);
-      try {
-        return await transport.handleRequest(req);
-      } finally {
-        await server.close();
-      }
-    });
+    const issuer = issuerFromRequest(req);
+    // The RFC 8707 resource this endpoint answers as — an OAuth token bound to
+    // a different audience is refused (matches .well-known/oauth-protected-resource).
+    const expectedResource = `${issuer}/api/mcp`;
+    return await withAgentRequest(
+      req.headers.get("authorization"),
+      async (ctx) => {
+        // Absolute icon URL so a connector list (Claude/ChatGPT) can render it.
+        const server = await buildAgentMcpServer(ctx, { iconUrl: `${issuer}/moni-icon.png` });
+        // Stateless: no session id, buffered JSON response (not an SSE stream),
+        // so `handleRequest` resolves only after the tool has run — i.e. while
+        // the DK window is still open. The window closes (DK wiped) the moment
+        // this callback returns.
+        const transport = new WebStandardStreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,
+          enableJsonResponse: true,
+        });
+        await server.connect(transport);
+        try {
+          return await transport.handleRequest(req);
+        } finally {
+          await server.close();
+        }
+      },
+      { expectedResource },
+    );
   } catch (err) {
     if (err instanceof AgentAuthError) return unauthorized(req);
     throw err;

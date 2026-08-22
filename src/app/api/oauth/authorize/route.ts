@@ -76,7 +76,7 @@ button[value="deny"]:hover { background: #252a36; }
 ${hidden("response_type", request.responseType)}${hidden("client_id", request.clientId)}
 ${hidden("redirect_uri", request.redirectUri)}${hidden("scope", request.scope)}
 ${hidden("state", request.state)}${hidden("code_challenge", request.codeChallenge)}
-${hidden("code_challenge_method", request.codeChallengeMethod)}
+${hidden("code_challenge_method", request.codeChallengeMethod)}${hidden("resource", request.resource)}
 <button type="submit" name="decision" value="approve">Allow read-only access</button>
 <button type="submit" name="decision" value="deny">Cancel</button>
 </form></section><p class="footer">Protected by Moni&apos;s read-only agent access controls.</p></main></body></html>`;
@@ -128,6 +128,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       redirectUri: oauthRequest.redirectUri,
       scope: oauthRequest.scope,
       codeChallenge: oauthRequest.codeChallenge,
+      resource: oauthRequest.resource,
     });
     return redirectToClient(oauthRequest, { code });
   } catch (cause) {

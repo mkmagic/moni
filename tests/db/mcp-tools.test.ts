@@ -265,6 +265,17 @@ describe("MCP tools (issue #113 Phase 3)", () => {
       const all = await mcp.call("transactions", {});
       expect((all.entries as unknown[]).length).toBe(8);
 
+      // Reconciliation: raw rows carry Moni's OWN authoritative totals for the
+      // same filter, so the model never sums rows itself (issue #113 #10).
+      const agg = await aggregateSpending(fx.userId, fx.dataKey, "ILS", { groupBy: "category" });
+      expect(all.authoritativeTotals).toEqual({
+        income: agg.totals.income,
+        expenses: agg.totals.expenses,
+        net: agg.totals.net,
+        countedEntries: agg.countedEntries,
+        skippedPendingFx: agg.skippedPendingFx,
+      });
+
       // The merchant enum is built from decrypted names inside the DK window.
       const filtered = await mcp.call("transactions", { merchant: "Shufersal" });
       const rows = filtered.entries as Array<{

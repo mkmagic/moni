@@ -12,11 +12,15 @@ const CodeGrantSchema = z.object({
   code_verifier: z.string().min(1),
   client_id: z.url(),
   redirect_uri: z.url(),
+  // RFC 8707 — accepted for spec conformance; the audience the grant is bound
+  // to was fixed at /authorize and travels on the auth code.
+  resource: z.url().optional(),
 });
 const RefreshGrantSchema = z.object({
   grant_type: z.literal("refresh_token"),
   refresh_token: z.string().min(1),
   client_id: z.url().optional(),
+  resource: z.url().optional(),
 });
 
 const TOKEN_HEADERS = { "Cache-Control": "no-store", Pragma: "no-cache" } as const;
@@ -38,7 +42,7 @@ function tokenResponse(result: TokenResult): NextResponse {
     access_token: result.accessToken,
     token_type: result.tokenType,
     expires_in: result.expiresIn,
-    refresh_token: result.refreshToken,
+    ...(result.refreshToken ? { refresh_token: result.refreshToken } : {}),
     scope: result.scope,
   });
   return NextResponse.json(body, { headers: TOKEN_HEADERS });
@@ -69,7 +73,9 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (values.grant_type === "refresh_token") {
     const parsed = RefreshGrantSchema.safeParse(values);
     if (!parsed.success) return oauthError("invalid_request");
-    return tokenResponse(await refreshGrant(parsed.data.refresh_token));
+    return tokenResponse(
+      await refreshGrant(parsed.data.refresh_token, { clientId: parsed.data.client_id }),
+    );
   }
   return oauthError("unsupported_grant_type");
 }

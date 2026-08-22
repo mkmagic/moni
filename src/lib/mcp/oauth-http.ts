@@ -16,6 +16,8 @@ const AuthorizationRequestSchema = z.object({
   state: z.string().max(1_024).optional(),
   code_challenge: z.string().regex(PKCE_CHALLENGE_RE),
   code_challenge_method: z.literal("S256"),
+  // RFC 8707 / MCP 2025-11-25 — the resource (audience) the token is for.
+  resource: z.url().max(500).optional(),
 });
 
 export interface ValidAuthorizationRequest {
@@ -27,6 +29,7 @@ export interface ValidAuthorizationRequest {
   state?: string;
   codeChallenge: string;
   codeChallengeMethod: "S256";
+  resource?: string;
 }
 
 function uniqueParams(params: URLSearchParams): Record<string, string> | null {
@@ -162,6 +165,7 @@ export async function validateAuthorizationRequest(
     state: parsed.data.state,
     codeChallenge: parsed.data.code_challenge,
     codeChallengeMethod: "S256",
+    resource: parsed.data.resource,
   };
 }
 
