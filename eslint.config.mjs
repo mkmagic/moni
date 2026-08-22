@@ -7,7 +7,15 @@ const eslintConfig = [
   ...nextTypescript,
   eslintConfigPrettier,
   {
-    ignores: ["repos_eval/**", "deps/**", ".next/**", "drizzle/**", "node_modules/**"],
+    ignores: [
+      "repos_eval/**",
+      "deps/**",
+      ".next/**",
+      ".worktrees/**",
+      ".claude/worktrees/**",
+      "drizzle/**",
+      "node_modules/**",
+    ],
   },
 ];
 

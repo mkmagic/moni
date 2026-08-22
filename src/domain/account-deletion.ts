@@ -37,6 +37,10 @@ import { withUser } from "@/db/client";
 import {
   accountBalanceSnapshots,
   accounts,
+  agentAccessLog,
+  agentTokens,
+  mcpOauthAuthCodes,
+  mcpOauthGrants,
   categories,
   budgetCeilings,
   budgetIncomes,
@@ -150,6 +154,14 @@ export async function deleteAccount(
     // Classification roots — `categories` also self-references by `parent_id`.
     await tx.delete(merchants).where(eq(merchants.ownerId, userId));
     await tx.delete(categories).where(eq(categories.ownerId, userId));
+
+    // Agent credentials (issue #113) — each carries a DK wrap that must not
+    // outlive the account. Access-log rows go first because they can reference
+    // either a static token or an OAuth grant.
+    await tx.delete(agentAccessLog).where(eq(agentAccessLog.ownerId, userId));
+    await tx.delete(mcpOauthAuthCodes).where(eq(mcpOauthAuthCodes.ownerId, userId));
+    await tx.delete(mcpOauthGrants).where(eq(mcpOauthGrants.ownerId, userId));
+    await tx.delete(agentTokens).where(eq(agentTokens.ownerId, userId));
 
     // Key custody, then the identity row itself.
     await tx.delete(userUnlockMethods).where(eq(userUnlockMethods.ownerId, userId));

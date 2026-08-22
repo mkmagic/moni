@@ -125,6 +125,10 @@ export const OWNER_SCOPED_TABLES_DELETE_ORDER = [
   "merchants",
   "categories",
   "user_unlock_methods",
+  "agent_access_log",
+  "mcp_oauth_auth_codes",
+  "mcp_oauth_grants",
+  "agent_tokens",
   "users",
 ] as const;
 

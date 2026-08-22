@@ -1,0 +1,4777 @@
+{
+  "id": "05e95c1e-13d6-43eb-8c55-3abd0ace0846",
+  "prevId": "7faa3db6-b240-473b-b9d1-beebca459305",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.accounts": {
+      "name": "accounts",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "account_type": {
+          "name": "account_type",
+          "type": "account_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "classification": {
+          "name": "classification",
+          "type": "account_classification",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "name_ct": {
+          "name": "name_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "institution": {
+          "name": "institution",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "account_number_last4_ct": {
+          "name": "account_number_last4_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "external_account_ref_ct": {
+          "name": "external_account_ref_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "current_balance_ct": {
+          "name": "current_balance_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "account_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "locked_attributes": {
+          "name": "locked_attributes",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "accounts_owner_id_users_id_fk": {
+          "name": "accounts_owner_id_users_id_fk",
+          "tableFrom": "accounts",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "accounts_owner_id_connection_id_connections_owner_id_id_fk": {
+          "name": "accounts_owner_id_connection_id_connections_owner_id_id_fk",
+          "tableFrom": "accounts",
+          "tableTo": "connections",
+          "columnsFrom": [
+            "owner_id",
+            "connection_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "accounts_owner_id_id_unique": {
+          "name": "accounts_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.credit_card_details": {
+      "name": "credit_card_details",
+      "schema": "",
+      "columns": {
+        "account_id": {
+          "name": "account_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "statement_close_day": {
+          "name": "statement_close_day",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payment_due_day": {
+          "name": "payment_due_day",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "credit_limit_ct": {
+          "name": "credit_limit_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "credit_card_details_owner_id_account_id_accounts_owner_id_id_fk": {
+          "name": "credit_card_details_owner_id_account_id_accounts_owner_id_id_fk",
+          "tableFrom": "credit_card_details",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "owner_id",
+            "account_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.budget_ceilings": {
+      "name": "budget_ceilings",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "category_id": {
+          "name": "category_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "amount_ct": {
+          "name": "amount_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "effective_from": {
+          "name": "effective_from",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rollover": {
+          "name": "rollover",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "budget_ceilings_owner_id_users_id_fk": {
+          "name": "budget_ceilings_owner_id_users_id_fk",
+          "tableFrom": "budget_ceilings",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "budget_ceilings_owner_id_category_id_categories_owner_id_id_fk": {
+          "name": "budget_ceilings_owner_id_category_id_categories_owner_id_id_fk",
+          "tableFrom": "budget_ceilings",
+          "tableTo": "categories",
+          "columnsFrom": [
+            "owner_id",
+            "category_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "budget_ceilings_owner_id_id_unique": {
+          "name": "budget_ceilings_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        },
+        "budget_ceilings_owner_category_effective_unique": {
+          "name": "budget_ceilings_owner_category_effective_unique",
+          "nullsNotDistinct": true,
+          "columns": [
+            "owner_id",
+            "category_id",
+            "effective_from"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.budget_incomes": {
+      "name": "budget_incomes",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount_ct": {
+          "name": "amount_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "effective_from": {
+          "name": "effective_from",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "budget_incomes_owner_id_users_id_fk": {
+          "name": "budget_incomes_owner_id_users_id_fk",
+          "tableFrom": "budget_incomes",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "budget_incomes_owner_id_id_unique": {
+          "name": "budget_incomes_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        },
+        "budget_incomes_owner_effective_unique": {
+          "name": "budget_incomes_owner_effective_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "effective_from"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.categories": {
+      "name": "categories",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "parent_id": {
+          "name": "parent_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "classification": {
+          "name": "classification",
+          "type": "category_classification",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "color": {
+          "name": "color",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "icon": {
+          "name": "icon",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_recurring": {
+          "name": "is_recurring",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "builtin_key": {
+          "name": "builtin_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "categories_owner_id_users_id_fk": {
+          "name": "categories_owner_id_users_id_fk",
+          "tableFrom": "categories",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "categories_owner_id_parent_id_categories_owner_id_id_fk": {
+          "name": "categories_owner_id_parent_id_categories_owner_id_id_fk",
+          "tableFrom": "categories",
+          "tableTo": "categories",
+          "columnsFrom": [
+            "owner_id",
+            "parent_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "categories_owner_id_id_unique": {
+          "name": "categories_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        },
+        "categories_owner_id_builtin_key_unique": {
+          "name": "categories_owner_id_builtin_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "builtin_key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.category_rejections": {
+      "name": "category_rejections",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "match_text_ct": {
+          "name": "match_text_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "category_id": {
+          "name": "category_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "category_rejections_owner_id_users_id_fk": {
+          "name": "category_rejections_owner_id_users_id_fk",
+          "tableFrom": "category_rejections",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "category_rejections_owner_id_category_id_categories_owner_id_id_fk": {
+          "name": "category_rejections_owner_id_category_id_categories_owner_id_id_fk",
+          "tableFrom": "category_rejections",
+          "tableTo": "categories",
+          "columnsFrom": [
+            "owner_id",
+            "category_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "category_rejections_owner_id_id_unique": {
+          "name": "category_rejections_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.entry_field_changelog": {
+      "name": "entry_field_changelog",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entry_id": {
+          "name": "entry_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "field_name": {
+          "name": "field_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "entry_field_change_source",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "value_ct": {
+          "name": "value_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "entry_field_changelog_owner_id_users_id_fk": {
+          "name": "entry_field_changelog_owner_id_users_id_fk",
+          "tableFrom": "entry_field_changelog",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "entry_field_changelog_owner_id_entry_id_entries_owner_id_id_fk": {
+          "name": "entry_field_changelog_owner_id_entry_id_entries_owner_id_id_fk",
+          "tableFrom": "entry_field_changelog",
+          "tableTo": "entries",
+          "columnsFrom": [
+            "owner_id",
+            "entry_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.merchant_lookups": {
+      "name": "merchant_lookups",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "match_text_ct": {
+          "name": "match_text_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "builtin_key": {
+          "name": "builtin_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confidence": {
+          "name": "confidence",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "prompt_version": {
+          "name": "prompt_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "merchant_lookups_owner_id_users_id_fk": {
+          "name": "merchant_lookups_owner_id_users_id_fk",
+          "tableFrom": "merchant_lookups",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "merchant_lookups_owner_id_id_unique": {
+          "name": "merchant_lookups_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.merchants": {
+      "name": "merchants",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name_ct": {
+          "name": "name_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "match_text_ct": {
+          "name": "match_text_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "logo_url": {
+          "name": "logo_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "website_url": {
+          "name": "website_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cadence_override": {
+          "name": "cadence_override",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "merchants_owner_id_users_id_fk": {
+          "name": "merchants_owner_id_users_id_fk",
+          "tableFrom": "merchants",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "merchants_owner_id_id_unique": {
+          "name": "merchants_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.rule_actions": {
+      "name": "rule_actions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rule_id": {
+          "name": "rule_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "action_type": {
+          "name": "action_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "rule_actions_owner_id_rule_id_rules_owner_id_id_fk": {
+          "name": "rule_actions_owner_id_rule_id_rules_owner_id_id_fk",
+          "tableFrom": "rule_actions",
+          "tableTo": "rules",
+          "columnsFrom": [
+            "owner_id",
+            "rule_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.rule_conditions": {
+      "name": "rule_conditions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rule_id": {
+          "name": "rule_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "parent_id": {
+          "name": "parent_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "condition_type": {
+          "name": "condition_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "operator": {
+          "name": "operator",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "value_ct": {
+          "name": "value_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "rule_conditions_owner_id_rule_id_rules_owner_id_id_fk": {
+          "name": "rule_conditions_owner_id_rule_id_rules_owner_id_id_fk",
+          "tableFrom": "rule_conditions",
+          "tableTo": "rules",
+          "columnsFrom": [
+            "owner_id",
+            "rule_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "rule_conditions_owner_id_parent_id_rule_conditions_owner_id_id_fk": {
+          "name": "rule_conditions_owner_id_parent_id_rule_conditions_owner_id_id_fk",
+          "tableFrom": "rule_conditions",
+          "tableTo": "rule_conditions",
+          "columnsFrom": [
+            "owner_id",
+            "parent_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "rule_conditions_owner_id_id_unique": {
+          "name": "rule_conditions_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.rules": {
+      "name": "rules",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resource_type": {
+          "name": "resource_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "active": {
+          "name": "active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "effective_date": {
+          "name": "effective_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "rules_owner_id_users_id_fk": {
+          "name": "rules_owner_id_users_id_fk",
+          "tableFrom": "rules",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "rules_owner_id_id_unique": {
+          "name": "rules_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.transfers": {
+      "name": "transfers",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "inflow_entry_id": {
+          "name": "inflow_entry_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "outflow_entry_id": {
+          "name": "outflow_entry_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "transfers_owner_id_users_id_fk": {
+          "name": "transfers_owner_id_users_id_fk",
+          "tableFrom": "transfers",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "transfers_owner_id_inflow_entry_id_entries_owner_id_id_fk": {
+          "name": "transfers_owner_id_inflow_entry_id_entries_owner_id_id_fk",
+          "tableFrom": "transfers",
+          "tableTo": "entries",
+          "columnsFrom": [
+            "owner_id",
+            "inflow_entry_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "transfers_owner_id_outflow_entry_id_entries_owner_id_id_fk": {
+          "name": "transfers_owner_id_outflow_entry_id_entries_owner_id_id_fk",
+          "tableFrom": "transfers",
+          "tableTo": "entries",
+          "columnsFrom": [
+            "owner_id",
+            "outflow_entry_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.connections": {
+      "name": "connections",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connector_id": {
+          "name": "connector_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "credentials_ct": {
+          "name": "credentials_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "mode": {
+          "name": "mode",
+          "type": "connection_mode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'credentialed_fetch'"
+        },
+        "status": {
+          "name": "status",
+          "type": "connection_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_sync_at": {
+          "name": "last_sync_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "connections_owner_id_users_id_fk": {
+          "name": "connections_owner_id_users_id_fk",
+          "tableFrom": "connections",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "connections_owner_id_id_unique": {
+          "name": "connections_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.sync_runs": {
+      "name": "sync_runs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "sync_run_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "window_start": {
+          "name": "window_start",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "window_end": {
+          "name": "window_end",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "investment_source": {
+          "name": "investment_source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "declared_account_count": {
+          "name": "declared_account_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "promoted_account_count": {
+          "name": "promoted_account_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "promoted_position_count": {
+          "name": "promoted_position_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "promoted_cash_balance_count": {
+          "name": "promoted_cash_balance_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "sync_runs_owner_id_users_id_fk": {
+          "name": "sync_runs_owner_id_users_id_fk",
+          "tableFrom": "sync_runs",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "sync_runs_owner_id_connection_id_connections_owner_id_id_fk": {
+          "name": "sync_runs_owner_id_connection_id_connections_owner_id_id_fk",
+          "tableFrom": "sync_runs",
+          "tableTo": "connections",
+          "columnsFrom": [
+            "owner_id",
+            "connection_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "sync_runs_owner_id_id_unique": {
+          "name": "sync_runs_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.sync_staging": {
+      "name": "sync_staging",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sync_run_id": {
+          "name": "sync_run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "account_id": {
+          "name": "account_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "raw_payload_ct": {
+          "name": "raw_payload_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "import_key": {
+          "name": "import_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "scraper_status": {
+          "name": "scraper_status",
+          "type": "sync_staging_scraper_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reconcile_state": {
+          "name": "reconcile_state",
+          "type": "reconcile_state",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'new'"
+        },
+        "promoted_entry_id": {
+          "name": "promoted_entry_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "sync_staging_owner_id_users_id_fk": {
+          "name": "sync_staging_owner_id_users_id_fk",
+          "tableFrom": "sync_staging",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "sync_staging_owner_id_sync_run_id_sync_runs_owner_id_id_fk": {
+          "name": "sync_staging_owner_id_sync_run_id_sync_runs_owner_id_id_fk",
+          "tableFrom": "sync_staging",
+          "tableTo": "sync_runs",
+          "columnsFrom": [
+            "owner_id",
+            "sync_run_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "sync_staging_owner_id_account_id_accounts_owner_id_id_fk": {
+          "name": "sync_staging_owner_id_account_id_accounts_owner_id_id_fk",
+          "tableFrom": "sync_staging",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "owner_id",
+            "account_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "sync_staging_owner_id_promoted_entry_id_entries_owner_id_id_fk": {
+          "name": "sync_staging_owner_id_promoted_entry_id_entries_owner_id_id_fk",
+          "tableFrom": "sync_staging",
+          "tableTo": "entries",
+          "columnsFrom": [
+            "owner_id",
+            "promoted_entry_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.account_balance_snapshots": {
+      "name": "account_balance_snapshots",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "account_id": {
+          "name": "account_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "date": {
+          "name": "date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "native_balance_ct": {
+          "name": "native_balance_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source": {
+          "name": "source",
+          "type": "account_balance_snapshot_source",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "account_balance_snapshots_owner_id_users_id_fk": {
+          "name": "account_balance_snapshots_owner_id_users_id_fk",
+          "tableFrom": "account_balance_snapshots",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "account_balance_snapshots_owner_id_account_id_accounts_owner_id_id_fk": {
+          "name": "account_balance_snapshots_owner_id_account_id_accounts_owner_id_id_fk",
+          "tableFrom": "account_balance_snapshots",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "owner_id",
+            "account_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "account_balance_snapshots_owner_id_id_unique": {
+          "name": "account_balance_snapshots_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.agent_tokens": {
+      "name": "agent_tokens",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token_hash": {
+          "name": "token_hash",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "wrapped_dk": {
+          "name": "wrapped_dk",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "label": {
+          "name": "label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_used_at": {
+          "name": "last_used_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "agent_tokens_token_hash_unique": {
+          "name": "agent_tokens_token_hash_unique",
+          "columns": [
+            {
+              "expression": "token_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "agent_tokens_owner_id_users_id_fk": {
+          "name": "agent_tokens_owner_id_users_id_fk",
+          "tableFrom": "agent_tokens",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "agent_tokens_owner_id_id_unique": {
+          "name": "agent_tokens_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.user_unlock_methods": {
+      "name": "user_unlock_methods",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "type": {
+          "name": "type",
+          "type": "unlock_method_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "wrapped_data_key": {
+          "name": "wrapped_data_key",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "wrapped_credential_key": {
+          "name": "wrapped_credential_key",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "unlock_ref": {
+          "name": "unlock_ref",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "user_unlock_methods_one_password_per_owner": {
+          "name": "user_unlock_methods_one_password_per_owner",
+          "columns": [
+            {
+              "expression": "owner_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"user_unlock_methods\".\"type\" = 'password-argon2id'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "user_unlock_methods_owner_id_users_id_fk": {
+          "name": "user_unlock_methods_owner_id_users_id_fk",
+          "tableFrom": "user_unlock_methods",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "user_unlock_methods_owner_id_id_unique": {
+          "name": "user_unlock_methods_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.users": {
+      "name": "users",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "base_currency": {
+          "name": "base_currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'ILS'"
+        },
+        "auto_sync_on_login": {
+          "name": "auto_sync_on_login",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "smart_categorize": {
+          "name": "smart_categorize",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "last_login_at": {
+          "name": "last_login_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "users_email_unique": {
+          "name": "users_email_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "email"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.entries": {
+      "name": "entries",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "account_id": {
+          "name": "account_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entry_type": {
+          "name": "entry_type",
+          "type": "entry_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "date": {
+          "name": "date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description_ct": {
+          "name": "description_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "notes_ct": {
+          "name": "notes_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "category_id": {
+          "name": "category_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "merchant_id": {
+          "name": "merchant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "entry_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "excluded": {
+          "name": "excluded",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "entered_amount_ct": {
+          "name": "entered_amount_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entered_currency": {
+          "name": "entered_currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "account_amount_ct": {
+          "name": "account_amount_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "account_currency": {
+          "name": "account_currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reporting_currency": {
+          "name": "reporting_currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "fx_rate": {
+          "name": "fx_rate",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fx_rate_date": {
+          "name": "fx_rate_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fx_source": {
+          "name": "fx_source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fx_status": {
+          "name": "fx_status",
+          "type": "fx_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "import_key": {
+          "name": "import_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "external_id": {
+          "name": "external_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source": {
+          "name": "source",
+          "type": "entry_source",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "locked_attributes": {
+          "name": "locked_attributes",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "entries_owner_account_date_idx": {
+          "name": "entries_owner_account_date_idx",
+          "columns": [
+            {
+              "expression": "owner_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "date",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "entries_owner_category_date_idx": {
+          "name": "entries_owner_category_date_idx",
+          "columns": [
+            {
+              "expression": "owner_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "category_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "date",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "entries_owner_id_users_id_fk": {
+          "name": "entries_owner_id_users_id_fk",
+          "tableFrom": "entries",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "entries_owner_id_account_id_accounts_owner_id_id_fk": {
+          "name": "entries_owner_id_account_id_accounts_owner_id_id_fk",
+          "tableFrom": "entries",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "owner_id",
+            "account_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "entries_owner_id_category_id_categories_owner_id_id_fk": {
+          "name": "entries_owner_id_category_id_categories_owner_id_id_fk",
+          "tableFrom": "entries",
+          "tableTo": "categories",
+          "columnsFrom": [
+            "owner_id",
+            "category_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "entries_owner_id_merchant_id_merchants_owner_id_id_fk": {
+          "name": "entries_owner_id_merchant_id_merchants_owner_id_id_fk",
+          "tableFrom": "entries",
+          "tableTo": "merchants",
+          "columnsFrom": [
+            "owner_id",
+            "merchant_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "entries_owner_id_id_unique": {
+          "name": "entries_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.entry_transactions": {
+      "name": "entry_transactions",
+      "schema": "",
+      "columns": {
+        "entry_id": {
+          "name": "entry_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "entry_transaction_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "installment_number": {
+          "name": "installment_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "total_installments": {
+          "name": "total_installments",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "installment_total_amount_ct": {
+          "name": "installment_total_amount_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "installment_total_currency": {
+          "name": "installment_total_currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "installment_purchase_date": {
+          "name": "installment_purchase_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "installment_group_id": {
+          "name": "installment_group_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "entry_transactions_owner_id_entry_id_entries_owner_id_id_fk": {
+          "name": "entry_transactions_owner_id_entry_id_entries_owner_id_id_fk",
+          "tableFrom": "entry_transactions",
+          "tableTo": "entries",
+          "columnsFrom": [
+            "owner_id",
+            "entry_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.fx_rates": {
+      "name": "fx_rates",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "from_currency": {
+          "name": "from_currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to_currency": {
+          "name": "to_currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "date": {
+          "name": "date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rate": {
+          "name": "rate",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "fx_rates_from_to_date_source_unique": {
+          "name": "fx_rates_from_to_date_source_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "from_currency",
+            "to_currency",
+            "date",
+            "source"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.instrument_source_mappings": {
+      "name": "instrument_source_mappings",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "instrument_id": {
+          "name": "instrument_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider": {
+          "name": "provider",
+          "type": "investment_provider",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "identifier_kind": {
+          "name": "identifier_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_identifier_ct": {
+          "name": "provider_identifier_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_symbol_ct": {
+          "name": "provider_symbol_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "provider_name_ct": {
+          "name": "provider_name_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "exchange_ct": {
+          "name": "exchange_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "instrument_source_mappings_owner_id_users_id_fk": {
+          "name": "instrument_source_mappings_owner_id_users_id_fk",
+          "tableFrom": "instrument_source_mappings",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "instrument_source_mappings_owner_id_instrument_id_instruments_owner_id_id_fk": {
+          "name": "instrument_source_mappings_owner_id_instrument_id_instruments_owner_id_id_fk",
+          "tableFrom": "instrument_source_mappings",
+          "tableTo": "instruments",
+          "columnsFrom": [
+            "owner_id",
+            "instrument_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "instrument_source_mappings_owner_id_id_unique": {
+          "name": "instrument_source_mappings_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        },
+        "instrument_source_mappings_owner_id_id_instrument_id_unique": {
+          "name": "instrument_source_mappings_owner_id_id_instrument_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id",
+            "instrument_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.instruments": {
+      "name": "instruments",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "instrument_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "canonical_name_ct": {
+          "name": "canonical_name_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "canonical_symbol_ct": {
+          "name": "canonical_symbol_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "instruments_owner_id_users_id_fk": {
+          "name": "instruments_owner_id_users_id_fk",
+          "tableFrom": "instruments",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "instruments_owner_id_id_unique": {
+          "name": "instruments_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.investment_market_quotes": {
+      "name": "investment_market_quotes",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "instrument_id": {
+          "name": "instrument_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "instrument_source_mapping_id": {
+          "name": "instrument_source_mapping_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider": {
+          "name": "provider",
+          "type": "investment_provider",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_symbol_ct": {
+          "name": "provider_symbol_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "price_ct": {
+          "name": "price_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_date": {
+          "name": "source_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "fetched_at": {
+          "name": "fetched_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "split_state": {
+          "name": "split_state",
+          "type": "investment_quote_split_state",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quality_state": {
+          "name": "quality_state",
+          "type": "investment_quote_quality_state",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "investment_market_quotes_owner_id_users_id_fk": {
+          "name": "investment_market_quotes_owner_id_users_id_fk",
+          "tableFrom": "investment_market_quotes",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "investment_market_quotes_owner_id_instrument_id_instruments_owner_id_id_fk": {
+          "name": "investment_market_quotes_owner_id_instrument_id_instruments_owner_id_id_fk",
+          "tableFrom": "investment_market_quotes",
+          "tableTo": "instruments",
+          "columnsFrom": [
+            "owner_id",
+            "instrument_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "investment_market_quotes_owner_id_instrument_source_mapping_id_instrument_id_instrument_source_mappings_owner_id_id_instrument_id_fk": {
+          "name": "investment_market_quotes_owner_id_instrument_source_mapping_id_instrument_id_instrument_source_mappings_owner_id_id_instrument_id_fk",
+          "tableFrom": "investment_market_quotes",
+          "tableTo": "instrument_source_mappings",
+          "columnsFrom": [
+            "owner_id",
+            "instrument_source_mapping_id",
+            "instrument_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id",
+            "instrument_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "investment_market_quotes_owner_id_id_unique": {
+          "name": "investment_market_quotes_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        },
+        "investment_market_quotes_owner_instrument_provider_unique": {
+          "name": "investment_market_quotes_owner_instrument_provider_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "instrument_id",
+            "provider"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.investment_snapshot_cash_balances": {
+      "name": "investment_snapshot_cash_balances",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "snapshot_id": {
+          "name": "snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount_ct": {
+          "name": "amount_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "investment_snapshot_cash_balances_owner_id_users_id_fk": {
+          "name": "investment_snapshot_cash_balances_owner_id_users_id_fk",
+          "tableFrom": "investment_snapshot_cash_balances",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "investment_snapshot_cash_balances_owner_id_snapshot_id_investment_snapshot_details_owner_id_id_fk": {
+          "name": "investment_snapshot_cash_balances_owner_id_snapshot_id_investment_snapshot_details_owner_id_id_fk",
+          "tableFrom": "investment_snapshot_cash_balances",
+          "tableTo": "investment_snapshot_details",
+          "columnsFrom": [
+            "owner_id",
+            "snapshot_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "investment_snapshot_cash_balances_owner_id_id_unique": {
+          "name": "investment_snapshot_cash_balances_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        },
+        "investment_snapshot_cash_balances_owner_snapshot_currency_unique": {
+          "name": "investment_snapshot_cash_balances_owner_snapshot_currency_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "snapshot_id",
+            "currency"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.investment_snapshot_details": {
+      "name": "investment_snapshot_details",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "account_balance_snapshot_id": {
+          "name": "account_balance_snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "account_id": {
+          "name": "account_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sync_run_id": {
+          "name": "sync_run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "week_start": {
+          "name": "week_start",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "investment_source",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_as_of": {
+          "name": "source_as_of",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_as_of_precision": {
+          "name": "source_as_of_precision",
+          "type": "source_as_of_precision",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "broker_total_ct": {
+          "name": "broker_total_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "broker_total_currency": {
+          "name": "broker_total_currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reconciliation_state": {
+          "name": "reconciliation_state",
+          "type": "investment_reconciliation_state",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "validation_version": {
+          "name": "validation_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "investment_snapshot_details_owner_id_users_id_fk": {
+          "name": "investment_snapshot_details_owner_id_users_id_fk",
+          "tableFrom": "investment_snapshot_details",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "investment_snapshot_details_owner_id_account_balance_snapshot_id_account_balance_snapshots_owner_id_id_fk": {
+          "name": "investment_snapshot_details_owner_id_account_balance_snapshot_id_account_balance_snapshots_owner_id_id_fk",
+          "tableFrom": "investment_snapshot_details",
+          "tableTo": "account_balance_snapshots",
+          "columnsFrom": [
+            "owner_id",
+            "account_balance_snapshot_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "investment_snapshot_details_owner_id_account_id_accounts_owner_id_id_fk": {
+          "name": "investment_snapshot_details_owner_id_account_id_accounts_owner_id_id_fk",
+          "tableFrom": "investment_snapshot_details",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "owner_id",
+            "account_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "investment_snapshot_details_owner_id_connection_id_connections_owner_id_id_fk": {
+          "name": "investment_snapshot_details_owner_id_connection_id_connections_owner_id_id_fk",
+          "tableFrom": "investment_snapshot_details",
+          "tableTo": "connections",
+          "columnsFrom": [
+            "owner_id",
+            "connection_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "investment_snapshot_details_owner_id_sync_run_id_sync_runs_owner_id_id_fk": {
+          "name": "investment_snapshot_details_owner_id_sync_run_id_sync_runs_owner_id_id_fk",
+          "tableFrom": "investment_snapshot_details",
+          "tableTo": "sync_runs",
+          "columnsFrom": [
+            "owner_id",
+            "sync_run_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "investment_snapshot_details_owner_id_id_unique": {
+          "name": "investment_snapshot_details_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        },
+        "investment_snapshot_details_owner_id_snapshot_unique": {
+          "name": "investment_snapshot_details_owner_id_snapshot_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "account_balance_snapshot_id"
+          ]
+        },
+        "investment_snapshot_details_owner_id_account_week_unique": {
+          "name": "investment_snapshot_details_owner_id_account_week_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "account_id",
+            "week_start"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.investment_snapshot_positions": {
+      "name": "investment_snapshot_positions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "snapshot_id": {
+          "name": "snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "instrument_id": {
+          "name": "instrument_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quantity_ct": {
+          "name": "quantity_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quantity_unit": {
+          "name": "quantity_unit",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_price_ct": {
+          "name": "source_price_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_price_currency": {
+          "name": "source_price_currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_value_ct": {
+          "name": "source_value_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_value_currency": {
+          "name": "source_value_currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_as_of": {
+          "name": "source_as_of",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "broker_valuation_basis": {
+          "name": "broker_valuation_basis",
+          "type": "broker_valuation_basis",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "investment_snapshot_positions_owner_id_users_id_fk": {
+          "name": "investment_snapshot_positions_owner_id_users_id_fk",
+          "tableFrom": "investment_snapshot_positions",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "investment_snapshot_positions_owner_id_snapshot_id_investment_snapshot_details_owner_id_id_fk": {
+          "name": "investment_snapshot_positions_owner_id_snapshot_id_investment_snapshot_details_owner_id_id_fk",
+          "tableFrom": "investment_snapshot_positions",
+          "tableTo": "investment_snapshot_details",
+          "columnsFrom": [
+            "owner_id",
+            "snapshot_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "investment_snapshot_positions_owner_id_instrument_id_instruments_owner_id_id_fk": {
+          "name": "investment_snapshot_positions_owner_id_instrument_id_instruments_owner_id_id_fk",
+          "tableFrom": "investment_snapshot_positions",
+          "tableTo": "instruments",
+          "columnsFrom": [
+            "owner_id",
+            "instrument_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "investment_snapshot_positions_owner_id_id_unique": {
+          "name": "investment_snapshot_positions_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        },
+        "investment_snapshot_positions_owner_snapshot_instrument_unique": {
+          "name": "investment_snapshot_positions_owner_snapshot_instrument_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "snapshot_id",
+            "instrument_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.investment_source_evidence": {
+      "name": "investment_source_evidence",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sync_run_id": {
+          "name": "sync_run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "account_id": {
+          "name": "account_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "investment_source",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_period_start": {
+          "name": "source_period_start",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_period_end": {
+          "name": "source_period_end",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_as_of": {
+          "name": "source_as_of",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_as_of_precision": {
+          "name": "source_as_of_precision",
+          "type": "source_as_of_precision",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "validation_version": {
+          "name": "validation_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "position_row_count": {
+          "name": "position_row_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cash_row_count": {
+          "name": "cash_row_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quality_codes": {
+          "name": "quality_codes",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "normalized_fingerprint": {
+          "name": "normalized_fingerprint",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "investment_source_evidence_owner_id_users_id_fk": {
+          "name": "investment_source_evidence_owner_id_users_id_fk",
+          "tableFrom": "investment_source_evidence",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "investment_source_evidence_owner_id_connection_id_connections_owner_id_id_fk": {
+          "name": "investment_source_evidence_owner_id_connection_id_connections_owner_id_id_fk",
+          "tableFrom": "investment_source_evidence",
+          "tableTo": "connections",
+          "columnsFrom": [
+            "owner_id",
+            "connection_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "investment_source_evidence_owner_id_sync_run_id_sync_runs_owner_id_id_fk": {
+          "name": "investment_source_evidence_owner_id_sync_run_id_sync_runs_owner_id_id_fk",
+          "tableFrom": "investment_source_evidence",
+          "tableTo": "sync_runs",
+          "columnsFrom": [
+            "owner_id",
+            "sync_run_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "investment_source_evidence_owner_id_account_id_accounts_owner_id_id_fk": {
+          "name": "investment_source_evidence_owner_id_account_id_accounts_owner_id_id_fk",
+          "tableFrom": "investment_source_evidence",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "owner_id",
+            "account_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "investment_source_evidence_owner_id_id_unique": {
+          "name": "investment_source_evidence_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        },
+        "investment_source_evidence_owner_sync_account_unique": {
+          "name": "investment_source_evidence_owner_sync_account_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "sync_run_id",
+            "account_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.long_term_savings_details": {
+      "name": "long_term_savings_details",
+      "schema": "",
+      "columns": {
+        "account_id": {
+          "name": "account_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "product": {
+          "name": "product",
+          "type": "long_term_savings_product",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "liquidity": {
+          "name": "liquidity",
+          "type": "long_term_savings_liquidity",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "liquid_from": {
+          "name": "liquid_from",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "long_term_savings_details_owner_id_account_id_accounts_owner_id_id_fk": {
+          "name": "long_term_savings_details_owner_id_account_id_accounts_owner_id_id_fk",
+          "tableFrom": "long_term_savings_details",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "owner_id",
+            "account_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.long_term_savings_snapshot_deposits": {
+      "name": "long_term_savings_snapshot_deposits",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "snapshot_id": {
+          "name": "snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "row_index": {
+          "name": "row_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "employer_ct": {
+          "name": "employer_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "deposit_date": {
+          "name": "deposit_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "for_month": {
+          "name": "for_month",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "salary_ct": {
+          "name": "salary_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "employee_ct": {
+          "name": "employee_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "employer_contribution_ct": {
+          "name": "employer_contribution_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "severance_ct": {
+          "name": "severance_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "total_ct": {
+          "name": "total_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "long_term_savings_snapshot_deposits_owner_id_users_id_fk": {
+          "name": "long_term_savings_snapshot_deposits_owner_id_users_id_fk",
+          "tableFrom": "long_term_savings_snapshot_deposits",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "long_term_savings_snapshot_deposits_owner_id_snapshot_id_long_term_savings_snapshots_owner_id_id_fk": {
+          "name": "long_term_savings_snapshot_deposits_owner_id_snapshot_id_long_term_savings_snapshots_owner_id_id_fk",
+          "tableFrom": "long_term_savings_snapshot_deposits",
+          "tableTo": "long_term_savings_snapshots",
+          "columnsFrom": [
+            "owner_id",
+            "snapshot_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "long_term_savings_snapshot_deposits_owner_id_id_unique": {
+          "name": "long_term_savings_snapshot_deposits_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        },
+        "long_term_savings_snapshot_deposits_owner_snapshot_row_unique": {
+          "name": "long_term_savings_snapshot_deposits_owner_snapshot_row_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "snapshot_id",
+            "row_index"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.long_term_savings_snapshot_tracks": {
+      "name": "long_term_savings_snapshot_tracks",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "snapshot_id": {
+          "name": "snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "row_index": {
+          "name": "row_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name_ct": {
+          "name": "name_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "return_pct": {
+          "name": "return_pct",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "annual_cost_pct": {
+          "name": "annual_cost_pct",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "long_term_savings_snapshot_tracks_owner_id_users_id_fk": {
+          "name": "long_term_savings_snapshot_tracks_owner_id_users_id_fk",
+          "tableFrom": "long_term_savings_snapshot_tracks",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "long_term_savings_snapshot_tracks_owner_id_snapshot_id_long_term_savings_snapshots_owner_id_id_fk": {
+          "name": "long_term_savings_snapshot_tracks_owner_id_snapshot_id_long_term_savings_snapshots_owner_id_id_fk",
+          "tableFrom": "long_term_savings_snapshot_tracks",
+          "tableTo": "long_term_savings_snapshots",
+          "columnsFrom": [
+            "owner_id",
+            "snapshot_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "long_term_savings_snapshot_tracks_owner_id_id_unique": {
+          "name": "long_term_savings_snapshot_tracks_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        },
+        "long_term_savings_snapshot_tracks_owner_snapshot_row_unique": {
+          "name": "long_term_savings_snapshot_tracks_owner_snapshot_row_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "snapshot_id",
+            "row_index"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.long_term_savings_snapshots": {
+      "name": "long_term_savings_snapshots",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "account_balance_snapshot_id": {
+          "name": "account_balance_snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "account_id": {
+          "name": "account_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sync_run_id": {
+          "name": "sync_run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "as_of": {
+          "name": "as_of",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "stated_period_start": {
+          "name": "stated_period_start",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "stated_period_end": {
+          "name": "stated_period_end",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quarter": {
+          "name": "quarter",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fiscal_year": {
+          "name": "fiscal_year",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "closing_balance_ct": {
+          "name": "closing_balance_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "opening_balance_ct": {
+          "name": "opening_balance_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "contributions_ct": {
+          "name": "contributions_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "investment_result_ct": {
+          "name": "investment_result_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "fees_charged_ct": {
+          "name": "fees_charged_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "insurance_disability_ct": {
+          "name": "insurance_disability_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "insurance_death_ct": {
+          "name": "insurance_death_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "fee_rate_deposit": {
+          "name": "fee_rate_deposit",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fee_rate_savings": {
+          "name": "fee_rate_savings",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fee_rate_investment_expenses": {
+          "name": "fee_rate_investment_expenses",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fund_avg_fee_deposit": {
+          "name": "fund_avg_fee_deposit",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fund_avg_fee_savings": {
+          "name": "fund_avg_fee_savings",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "projection_retirement_age": {
+          "name": "projection_retirement_age",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "projection_monthly_pension_ct": {
+          "name": "projection_monthly_pension_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "projection_survivor_pension_ct": {
+          "name": "projection_survivor_pension_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "projection_orphan_pension_ct": {
+          "name": "projection_orphan_pension_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "projection_dependent_parent_pension_ct": {
+          "name": "projection_dependent_parent_pension_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "projection_disability_pension_ct": {
+          "name": "projection_disability_pension_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "projection_contribution_waiver_ct": {
+          "name": "projection_contribution_waiver_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "deposits_total_employee_ct": {
+          "name": "deposits_total_employee_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "deposits_total_employer_ct": {
+          "name": "deposits_total_employer_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "deposits_total_severance_ct": {
+          "name": "deposits_total_severance_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "deposits_total_ct": {
+          "name": "deposits_total_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "balance_drift_ct": {
+          "name": "balance_drift_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "check_results_ct": {
+          "name": "check_results_ct",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "parser_id": {
+          "name": "parser_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "parser_version": {
+          "name": "parser_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "long_term_savings_snapshots_owner_id_users_id_fk": {
+          "name": "long_term_savings_snapshots_owner_id_users_id_fk",
+          "tableFrom": "long_term_savings_snapshots",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "long_term_savings_snapshots_owner_id_account_balance_snapshot_id_account_balance_snapshots_owner_id_id_fk": {
+          "name": "long_term_savings_snapshots_owner_id_account_balance_snapshot_id_account_balance_snapshots_owner_id_id_fk",
+          "tableFrom": "long_term_savings_snapshots",
+          "tableTo": "account_balance_snapshots",
+          "columnsFrom": [
+            "owner_id",
+            "account_balance_snapshot_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "long_term_savings_snapshots_owner_id_account_id_accounts_owner_id_id_fk": {
+          "name": "long_term_savings_snapshots_owner_id_account_id_accounts_owner_id_id_fk",
+          "tableFrom": "long_term_savings_snapshots",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "owner_id",
+            "account_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "long_term_savings_snapshots_owner_id_connection_id_connections_owner_id_id_fk": {
+          "name": "long_term_savings_snapshots_owner_id_connection_id_connections_owner_id_id_fk",
+          "tableFrom": "long_term_savings_snapshots",
+          "tableTo": "connections",
+          "columnsFrom": [
+            "owner_id",
+            "connection_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "long_term_savings_snapshots_owner_id_sync_run_id_sync_runs_owner_id_id_fk": {
+          "name": "long_term_savings_snapshots_owner_id_sync_run_id_sync_runs_owner_id_id_fk",
+          "tableFrom": "long_term_savings_snapshots",
+          "tableTo": "sync_runs",
+          "columnsFrom": [
+            "owner_id",
+            "sync_run_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "long_term_savings_snapshots_owner_id_id_unique": {
+          "name": "long_term_savings_snapshots_owner_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "id"
+          ]
+        },
+        "long_term_savings_snapshots_owner_account_as_of_unique": {
+          "name": "long_term_savings_snapshots_owner_account_as_of_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "account_id",
+            "as_of"
+          ]
+        },
+        "long_term_savings_snapshots_owner_balance_snapshot_unique": {
+          "name": "long_term_savings_snapshots_owner_balance_snapshot_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner_id",
+            "account_balance_snapshot_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {
+    "public.account_classification": {
+      "name": "account_classification",
+      "schema": "public",
+      "values": [
+        "asset",
+        "liability"
+      ]
+    },
+    "public.account_status": {
+      "name": "account_status",
+      "schema": "public",
+      "values": [
+        "active",
+        "archived"
+      ]
+    },
+    "public.account_type": {
+      "name": "account_type",
+      "schema": "public",
+      "values": [
+        "checking",
+        "savings",
+        "credit_card",
+        "investment",
+        "loan",
+        "other_asset",
+        "other_liability",
+        "long_term_savings"
+      ]
+    },
+    "public.category_classification": {
+      "name": "category_classification",
+      "schema": "public",
+      "values": [
+        "income",
+        "expense",
+        "transfer"
+      ]
+    },
+    "public.entry_field_change_source": {
+      "name": "entry_field_change_source",
+      "schema": "public",
+      "values": [
+        "bank",
+        "rule",
+        "model",
+        "user"
+      ]
+    },
+    "public.connection_mode": {
+      "name": "connection_mode",
+      "schema": "public",
+      "values": [
+        "credentialed_fetch",
+        "user_mediated_import"
+      ]
+    },
+    "public.connection_status": {
+      "name": "connection_status",
+      "schema": "public",
+      "values": [
+        "active",
+        "error",
+        "disconnected"
+      ]
+    },
+    "public.reconcile_state": {
+      "name": "reconcile_state",
+      "schema": "public",
+      "values": [
+        "new",
+        "matched",
+        "promoted",
+        "superseded"
+      ]
+    },
+    "public.sync_run_status": {
+      "name": "sync_run_status",
+      "schema": "public",
+      "values": [
+        "pending",
+        "running",
+        "succeeded",
+        "failed"
+      ]
+    },
+    "public.sync_staging_scraper_status": {
+      "name": "sync_staging_scraper_status",
+      "schema": "public",
+      "values": [
+        "pending",
+        "completed"
+      ]
+    },
+    "public.account_balance_snapshot_source": {
+      "name": "account_balance_snapshot_source",
+      "schema": "public",
+      "values": [
+        "scrape",
+        "manual",
+        "investment",
+        "long_term_savings"
+      ]
+    },
+    "public.unlock_method_type": {
+      "name": "unlock_method_type",
+      "schema": "public",
+      "values": [
+        "password-argon2id",
+        "webauthn-prf",
+        "recovery-code"
+      ]
+    },
+    "public.entry_source": {
+      "name": "entry_source",
+      "schema": "public",
+      "values": [
+        "scrape",
+        "manual",
+        "rule",
+        "model"
+      ]
+    },
+    "public.entry_status": {
+      "name": "entry_status",
+      "schema": "public",
+      "values": [
+        "posted",
+        "pending"
+      ]
+    },
+    "public.entry_transaction_kind": {
+      "name": "entry_transaction_kind",
+      "schema": "public",
+      "values": [
+        "standard",
+        "transfer",
+        "fee",
+        "refund"
+      ]
+    },
+    "public.entry_type": {
+      "name": "entry_type",
+      "schema": "public",
+      "values": [
+        "transaction",
+        "trade"
+      ]
+    },
+    "public.fx_status": {
+      "name": "fx_status",
+      "schema": "public",
+      "values": [
+        "locked",
+        "pending"
+      ]
+    },
+    "public.broker_valuation_basis": {
+      "name": "broker_valuation_basis",
+      "schema": "public",
+      "values": [
+        "market_value",
+        "quantity_times_price"
+      ]
+    },
+    "public.instrument_kind": {
+      "name": "instrument_kind",
+      "schema": "public",
+      "values": [
+        "stock",
+        "etf",
+        "mutual_fund",
+        "generic"
+      ]
+    },
+    "public.investment_provider": {
+      "name": "investment_provider",
+      "schema": "public",
+      "values": [
+        "ibkr_flex",
+        "schwab_positions_csv",
+        "snaptrade",
+        "tiingo"
+      ]
+    },
+    "public.investment_source": {
+      "name": "investment_source",
+      "schema": "public",
+      "values": [
+        "ibkr_flex",
+        "schwab_positions_csv",
+        "snaptrade"
+      ]
+    },
+    "public.investment_quote_quality_state": {
+      "name": "investment_quote_quality_state",
+      "schema": "public",
+      "values": [
+        "accepted",
+        "stale"
+      ]
+    },
+    "public.investment_quote_split_state": {
+      "name": "investment_quote_split_state",
+      "schema": "public",
+      "values": [
+        "safe",
+        "post_split",
+        "unknown"
+      ]
+    },
+    "public.investment_reconciliation_state": {
+      "name": "investment_reconciliation_state",
+      "schema": "public",
+      "values": [
+        "matched",
+        "mismatch"
+      ]
+    },
+    "public.source_as_of_precision": {
+      "name": "source_as_of_precision",
+      "schema": "public",
+      "values": [
+        "date",
+        "timestamp"
+      ]
+    },
+    "public.long_term_savings_liquidity": {
+      "name": "long_term_savings_liquidity",
+      "schema": "public",
+      "values": [
+        "locked_retirement",
+        "liquid_after",
+        "liquid"
+      ]
+    },
+    "public.long_term_savings_product": {
+      "name": "long_term_savings_product",
+      "schema": "public",
+      "values": [
+        "pension",
+        "hishtalmut",
+        "gemel",
+        "gemel_investment",
+        "managers_insurance"
+      ]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
