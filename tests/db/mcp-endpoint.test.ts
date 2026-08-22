@@ -202,10 +202,13 @@ describe("MCP endpoint (issue #113 Phase 2)", () => {
 
   describe("the /api/mcp route", () => {
     it("401s with no bearer token", async () => {
-      const res = await mcpPost(jsonRpcRequest(INITIALIZE));
+      const request = jsonRpcRequest(INITIALIZE);
+      request.headers.set("host", "moni.example");
+      request.headers.set("x-forwarded-proto", "https");
+      const res = await mcpPost(request);
       expect(res.status).toBe(401);
       expect(res.headers.get("WWW-Authenticate")).toBe(
-        'Bearer error="invalid_token", resource_metadata="http://localhost:3000/.well-known/oauth-protected-resource/mcp", scope="mcp:read"',
+        'Bearer error="invalid_token", resource_metadata="https://moni.example/.well-known/oauth-protected-resource/mcp", scope="mcp:read"',
       );
     });
 

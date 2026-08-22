@@ -122,6 +122,24 @@ describe("MCP OAuth routes", () => {
     });
   });
 
+  it("advertises the public origin when Next runs behind the TLS proxy", async () => {
+    const request = (path: string) =>
+      new NextRequest(`http://127.0.0.1:3000${path}`, {
+        headers: { host: "moni.example", "x-forwarded-proto": "https" },
+      });
+    const resource = protectedResource(request("/.well-known/oauth-protected-resource"));
+    const server = authorizationServer(request("/.well-known/oauth-authorization-server"));
+
+    await expect(resource.json()).resolves.toMatchObject({
+      resource: "https://moni.example/api/mcp",
+      authorization_servers: ["https://moni.example"],
+    });
+    await expect(server.json()).resolves.toMatchObject({
+      issuer: "https://moni.example",
+      authorization_endpoint: "https://moni.example/api/oauth/authorize",
+    });
+  });
+
   it("rejects an unsupported client_id before making an outbound request", async () => {
     const sessionId = await loggedInUser("oauth-untrusted-client");
     const fetchSpy = vi.fn();

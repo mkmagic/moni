@@ -166,7 +166,20 @@ export async function validateAuthorizationRequest(
 }
 
 export function issuerFromRequest(request: Request): string {
-  return new URL(request.url).origin;
+  const requestOrigin = new URL(request.url).origin;
+  const host = request.headers.get("host");
+  const forwardedProto = request.headers
+    .get("x-forwarded-proto")
+    ?.split(",")[0]
+    .trim()
+    .toLowerCase();
+  if (!host || (forwardedProto !== "http" && forwardedProto !== "https")) return requestOrigin;
+
+  try {
+    return new URL(`${forwardedProto}://${host}`).origin;
+  } catch {
+    return requestOrigin;
+  }
 }
 
 export function escapeHtml(value: string): string {

@@ -11,6 +11,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { AgentAuthError, withAgentRequest } from "@/lib/mcp/agent-request";
 import { buildAgentMcpServer } from "@/lib/mcp/server";
+import { issuerFromRequest } from "@/lib/mcp/oauth-http";
 
 function unauthorized(req: NextRequest): NextResponse {
   // A bearer scheme challenge, and never a hint about *why* it failed —
@@ -20,7 +21,7 @@ function unauthorized(req: NextRequest): NextResponse {
     {
       status: 401,
       headers: {
-        "WWW-Authenticate": `Bearer error="invalid_token", resource_metadata="${req.nextUrl.origin}/.well-known/oauth-protected-resource/mcp", scope="mcp:read"`,
+        "WWW-Authenticate": `Bearer error="invalid_token", resource_metadata="${issuerFromRequest(req)}/.well-known/oauth-protected-resource/mcp", scope="mcp:read"`,
       },
     },
   );
