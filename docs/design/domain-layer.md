@@ -72,8 +72,8 @@ The domain layer exposes two distinct interfaces to accommodate different consum
 ### 4.2 The MCP Surface (AI Agents)
 - **Read-Only (v1.0):** Cannot create, modify, or delete entries, rules, or categories.
 - **Data Tagging:** The domain layer wraps untrusted fields (like transaction descriptions or merchant names) in specific data tags before handing them to the MCP to mitigate prompt injection.
-- **Live Key Dependency:** The MCP can only read encrypted fields if an active unlock window (or opt-in warm-key window) exists. If not, the domain layer will only serve non-sensitive structural data (dates, IDs, categorizations).
-- **Explicit Denials:** If an agent attempts to write or requests encrypted data without a live key, the domain layer returns an explicit, handled error.
+- **Per-request DK unwrap:** A user who has opted in mints a **per-user agent token** that lets the server unwrap **that user's DK for the duration of a single request** (threat-model §5.6, `mcp-and-api.md`). The domain layer decrypts, aggregates, and wipes DK within the request — no standing key. A request without a valid token (or for a user who has not opted in) serves only non-sensitive structural data. **DK only, never CK:** no agent path can arm the credential window or reach bank credentials.
+- **Explicit Denials:** If an agent attempts to write, or requests encrypted data without a valid token, the domain layer returns an explicit, handled error.
 
 ---
 
