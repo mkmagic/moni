@@ -12,6 +12,7 @@ const PatchSchema = z
     displayName: z.string().max(80).nullable().optional(),
     autoSyncOnLogin: z.boolean().optional(),
     smartCategorize: z.boolean().optional(),
+    agentAccessEnabled: z.boolean().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, { message: "nothing to update" });
 

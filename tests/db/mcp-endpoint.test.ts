@@ -11,6 +11,7 @@ import { NextRequest } from "next/server";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { createUser } from "@/domain/registration";
+import { updateProfile } from "@/domain/profile";
 import { mintToken, revokeToken } from "@/domain/agent-token";
 import { AgentAuthError, withAgentRequest } from "@/lib/mcp/agent-request";
 import { buildAgentMcpServer } from "@/lib/mcp/server";
@@ -61,6 +62,8 @@ describe("MCP endpoint (issue #113 Phase 2)", () => {
       SIGNUP_TOKEN!,
     );
     createdUserIds.push(userId);
+    // Agent access is opt-in (Phase 5): minting and verify both require it on.
+    await updateProfile(userId, { agentAccessEnabled: true });
     return { userId, dataKey };
   }
 
@@ -120,7 +123,10 @@ describe("MCP endpoint (issue #113 Phase 2)", () => {
   describe("the whoami tool, over an in-memory MCP session", () => {
     it("returns the authenticated user's own identity, RLS-scoped", async () => {
       const { userId, dataKey } = await user("mcp-whoami");
-      const server = await buildAgentMcpServer({ userId, dataKey });
+      // A real token id is needed: every tool call now writes an audit row
+      // whose token_id FKs agent_tokens (Phase 4).
+      const { tokenId } = await mintToken(userId, dataKey);
+      const server = await buildAgentMcpServer({ userId, tokenId, dataKey });
       const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
       const client = new Client({ name: "test", version: "0.0.0" });
 
@@ -128,7 +134,9 @@ describe("MCP endpoint (issue #113 Phase 2)", () => {
       try {
         const res = await client.callTool({ name: "whoami", arguments: {} });
         const content = res.content as Array<{ type: string; text: string }>;
-        const payload = JSON.parse(content[0].text) as { userId: string; baseCurrency: string };
+        // Result is tagged (Phase 4): an untrusted-data notice, then the JSON.
+        expect(content[0].text).toContain("untrusted");
+        const payload = JSON.parse(content[1].text) as { userId: string; baseCurrency: string };
         expect(payload.userId).toBe(userId);
         expect(payload.baseCurrency).toBe("ILS");
       } finally {

@@ -211,6 +211,27 @@
       "when": 1787383248028,
       "tag": "0029_agent_tokens_rls_and_roles",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1787391781264,
+      "tag": "0030_agent_access_log",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1787391809533,
+      "tag": "0031_agent_access_log_rls_and_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1787398983232,
+      "tag": "0032_agent_token_expiry_nullable",
+      "breakpoints": true
     }
   ]
 }

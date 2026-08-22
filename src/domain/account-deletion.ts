@@ -37,6 +37,7 @@ import { withUser } from "@/db/client";
 import {
   accountBalanceSnapshots,
   accounts,
+  agentAccessLog,
   agentTokens,
   categories,
   budgetCeilings,
@@ -153,7 +154,9 @@ export async function deleteAccount(
     await tx.delete(categories).where(eq(categories.ownerId, userId));
 
     // Agent tokens (issue #113) — each carries a DK wrap that must not outlive
-    // the account. A leaf referencing only `users`, so it goes with key custody.
+    // the account. Its access-log rows (child, FK cascade) go first so the
+    // delete is explicit rather than relying on the cascade.
+    await tx.delete(agentAccessLog).where(eq(agentAccessLog.ownerId, userId));
     await tx.delete(agentTokens).where(eq(agentTokens.ownerId, userId));
 
     // Key custody, then the identity row itself.

@@ -16,6 +16,9 @@ import { wipe } from "@/lib/crypto";
 /** The live read context a token grants for the span of one request. */
 export interface AgentRequestContext {
   userId: string;
+  /** The verified token's row id — how the audit log and rate cap attribute a
+   * call to one token (issue #113 Phase 4). Not a secret. */
+  tokenId: string;
   /**
    * The user's data key, valid ONLY for the duration of the callback. It is
    * `fill(0)`-wiped when the callback settles — do not retain a reference past
@@ -59,7 +62,11 @@ export async function withAgentRequest<T>(
   if (!verified) throw new AgentAuthError("invalid or expired token");
 
   try {
-    return await fn({ userId: verified.userId, dataKey: verified.dataKey });
+    return await fn({
+      userId: verified.userId,
+      tokenId: verified.tokenId,
+      dataKey: verified.dataKey,
+    });
   } finally {
     wipe(verified.dataKey);
   }

@@ -418,12 +418,23 @@ async function seedFullOwner(label: string): Promise<OwnerFixture> {
 
   // Agent token (issue #113). Placeholder hash + ciphertext — the delete test
   // only cares that the row exists and is removed, not that it verifies.
+  const agentTokenId = randomUUID();
   await elevatedDb.insert(schema.agentTokens).values({
+    id: agentTokenId,
     ownerId: userId,
     tokenHash: randomBytes(32),
     wrappedDk: ct(`${label}-token`),
     label: `${label}-agent`,
     expiresAt: new Date("2030-01-01T00:00:00Z"),
+  });
+
+  // Agent access log (issue #113 Phase 4) — a child of the token row.
+  await elevatedDb.insert(schema.agentAccessLog).values({
+    ownerId: userId,
+    tokenId: agentTokenId,
+    tool: "whoami",
+    argShape: {},
+    rowCount: 1,
   });
 
   return { userId, email };

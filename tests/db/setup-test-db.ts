@@ -71,6 +71,9 @@ const MIGRATION_FILES = [
   "0027_long_term_savings_investment_expense_rate.sql",
   "0028_agent_tokens.sql",
   "0029_agent_tokens_rls_and_roles.sql",
+  "0030_agent_access_log.sql",
+  "0031_agent_access_log_rls_and_roles.sql",
+  "0032_agent_token_expiry_nullable.sql",
 ];
 
 /** Bookkeeping for which of MIGRATION_FILES this database has already seen.

@@ -23,7 +23,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import { db, withUser } from "@/db/client";
-import { agentTokens } from "@/db/schema";
+import { agentTokens, users } from "@/db/schema";
 import { wrapWithKek, unwrapWithKek } from "@/lib/auth/password";
 import { deriveKekFromUnlockSecret, UNLOCK_SECRET_LENGTH } from "@/lib/auth/unlock-secret";
 import { wipe, type AadContext } from "@/lib/crypto";
@@ -47,7 +47,8 @@ export interface MintedToken {
   tokenId: string;
   /** The one-time bearer secret. Show once, never persisted server-side. */
   secret: string;
-  expiresAt: Date;
+  /** When it lapses, or null for a token the user chose never to expire. */
+  expiresAt: Date | null;
 }
 
 /** Non-secret metadata for the token-management list (never hash or wrap). */
@@ -55,7 +56,7 @@ export interface AgentTokenSummary {
   id: string;
   label: string | null;
   createdAt: Date;
-  expiresAt: Date;
+  expiresAt: Date | null;
   lastUsedAt: Date | null;
   revokedAt: Date | null;
 }
@@ -63,8 +64,19 @@ export interface AgentTokenSummary {
 /** The result of verifying a presented token: one user + a fresh DK to wipe. */
 export interface VerifiedToken {
   userId: string;
+  /** The verified token's row id — the key the audit log and rate cap use to
+   * attribute a call to one token. Not a secret. */
+  tokenId: string;
   /** Tier-0, caller-owned — `fill(0)` after the request. */
   dataKey: Buffer;
+}
+
+/** Thrown by {@link mintToken} when the user has not opted into agent access. */
+export class AgentAccessDisabledError extends Error {
+  constructor() {
+    super("agent access is not enabled for this user");
+    this.name = "AgentAccessDisabledError";
+  }
 }
 
 function wrappedDkAad(tokenId: string): AadContext {
@@ -90,7 +102,7 @@ function hashSecret(secret: Buffer): Buffer {
 export async function mintToken(
   userId: string,
   dataKey: Buffer,
-  opts: { label?: string; ttlMs?: number } = {},
+  opts: { label?: string; ttlMs?: number | null } = {},
 ): Promise<MintedToken> {
   const tokenId = randomUUID();
   const secret = randomBytes(TOKEN_SECRET_LENGTH);
@@ -121,9 +133,22 @@ export async function mintToken(
   }
 
   const tokenHash = hashSecret(secret);
-  const expiresAt = new Date(Date.now() + (opts.ttlMs ?? DEFAULT_TOKEN_TTL_MS));
+  // ttlMs null = never expires (the user's explicit choice); undefined = the
+  // 90-day default backstop; a number = that far out.
+  const expiresAt =
+    opts.ttlMs === null ? null : new Date(Date.now() + (opts.ttlMs ?? DEFAULT_TOKEN_TTL_MS));
 
   await withUser(userId, async (tx) => {
+    // Opt-in is a precondition of minting: a token may only exist for a user
+    // who has enabled agent access. Checked inside the tenant scope so the read
+    // is the user's own row under RLS.
+    const [me] = await tx
+      .select({ enabled: users.agentAccessEnabled })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    if (!me?.enabled) throw new AgentAccessDisabledError();
+
     await tx.insert(agentTokens).values({
       id: tokenId,
       ownerId: userId,
@@ -182,7 +207,19 @@ export async function verifyAndUnwrapDk(tokenString: string): Promise<VerifiedTo
     const row = rows[0];
     if (!row) return null;
     if (row.revokedAt !== null) return null;
-    if (row.expiresAt.getTime() <= Date.now()) return null;
+    // A null expiry ("never") has no backstop to trip; a dated one must be live.
+    if (row.expiresAt !== null && row.expiresAt.getTime() <= Date.now()) return null;
+
+    // Master kill switch: a user who has toggled agent access off disables
+    // every one of their tokens at once, without revoking each. Fail closed
+    // before DK is unwrapped. Read pre-auth by id via users_app_select
+    // (drizzle/0002), the same pre-auth window the token lookup above uses.
+    const [owner] = await db
+      .select({ enabled: users.agentAccessEnabled })
+      .from(users)
+      .where(eq(users.id, row.ownerId))
+      .limit(1);
+    if (!owner?.enabled) return null;
 
     const kek = deriveKekFromUnlockSecret(secret);
     let dataKey: Buffer;
@@ -209,7 +246,7 @@ export async function verifyAndUnwrapDk(tokenString: string): Promise<VerifiedTo
       // Non-fatal telemetry; ignore.
     }
 
-    return { userId: row.ownerId, dataKey };
+    return { userId: row.ownerId, tokenId: row.id, dataKey };
   } finally {
     wipe(secret);
   }
@@ -229,6 +266,37 @@ export async function revokeToken(userId: string, tokenId: string): Promise<bool
       .returning({ id: agentTokens.id });
     return revoked.length > 0;
   });
+}
+
+/**
+ * Rotates a token: mints a fresh one (inheriting the old label unless a new one
+ * is given) and revokes the old one. Returns the new one-time secret. If the
+ * old token was already unknown/revoked nothing is minted and this returns null
+ * — rotation of a dead token is a no-op, not a way to spawn a spare.
+ *
+ * Mint-then-revoke ordering means a transient failure between the two leaves the
+ * old token live (safe: the user can revoke it) rather than the new one absent.
+ */
+export async function rotateToken(
+  userId: string,
+  dataKey: Buffer,
+  tokenId: string,
+  opts: { label?: string } = {},
+): Promise<MintedToken | null> {
+  const label = await withUser(userId, async (tx) => {
+    const [row] = await tx
+      .select({ label: agentTokens.label, revokedAt: agentTokens.revokedAt })
+      .from(agentTokens)
+      .where(eq(agentTokens.id, tokenId))
+      .limit(1);
+    if (!row || row.revokedAt !== null) return undefined;
+    return row.label;
+  });
+  if (label === undefined) return null;
+
+  const minted = await mintToken(userId, dataKey, { label: opts.label ?? label ?? undefined });
+  await revokeToken(userId, tokenId);
+  return minted;
 }
 
 /** Every token the user owns, newest first — non-secret metadata only. */

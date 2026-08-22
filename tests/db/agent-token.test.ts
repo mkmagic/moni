@@ -11,11 +11,14 @@ import { eq } from "drizzle-orm";
 import { withUser } from "@/db/client";
 import * as schema from "@/db/schema";
 import { createUser } from "@/domain/registration";
+import { updateProfile } from "@/domain/profile";
 import {
+  AgentAccessDisabledError,
   DEFAULT_TOKEN_TTL_MS,
   listTokens,
   mintToken,
   revokeToken,
+  rotateToken,
   verifyAndUnwrapDk,
 } from "@/domain/agent-token";
 import { cleanupOwners, enrollTestCredentialKey } from "./helpers";
@@ -31,7 +34,10 @@ describe("domain/agent-token", () => {
   const createdUserIds: string[] = [];
   afterAll(async () => cleanupOwners(createdUserIds));
 
-  async function user(label: string): Promise<{ userId: string; dataKey: Buffer }> {
+  async function user(
+    label: string,
+    opts: { agentAccess?: boolean } = {},
+  ): Promise<{ userId: string; dataKey: Buffer }> {
     const email = `${label}-${randomUUID()}@test.moni`;
     const { userId, dataKey } = await createUser(
       email,
@@ -39,6 +45,9 @@ describe("domain/agent-token", () => {
       SIGNUP_TOKEN!,
     );
     createdUserIds.push(userId);
+    // Agent access is opt-in (Phase 5); on by default here so the round-trip
+    // tests can mint. The opt-in tests below pass `{ agentAccess: false }`.
+    if (opts.agentAccess !== false) await updateProfile(userId, { agentAccessEnabled: true });
     return { userId, dataKey };
   }
 
@@ -53,7 +62,24 @@ describe("domain/agent-token", () => {
 
     // Default TTL is the 90-day backstop.
     const [row] = await listTokens(userId);
-    expect(row.expiresAt.getTime() - row.createdAt.getTime()).toBeCloseTo(DEFAULT_TOKEN_TTL_MS, -4);
+    expect(row.expiresAt!.getTime() - row.createdAt.getTime()).toBeCloseTo(
+      DEFAULT_TOKEN_TTL_MS,
+      -4,
+    );
+  });
+
+  it("mints a never-expiring token (ttlMs null) that keeps verifying", async () => {
+    const { userId, dataKey } = await user("at-never");
+    const minted = await mintToken(userId, dataKey, { ttlMs: null });
+    expect(minted.expiresAt).toBeNull();
+
+    const [row] = await listTokens(userId);
+    expect(row.expiresAt).toBeNull();
+
+    // No backstop to trip — it verifies.
+    const verified = await verifyAndUnwrapDk(minted.secret);
+    expect(verified).not.toBeNull();
+    expect(verified!.dataKey.equals(dataKey)).toBe(true);
   });
 
   it("stores the token hashed and DK wrapped — neither plaintext is in the row", async () => {
@@ -149,5 +175,50 @@ describe("domain/agent-token", () => {
     expect(verified!.userId).toBe(a.userId);
     expect(verified!.dataKey.equals(a.dataKey)).toBe(true);
     expect(verified!.dataKey.equals(b.dataKey)).toBe(false);
+  });
+
+  // --- Phase 5: per-user opt-in as a master kill switch ---
+
+  it("refuses to mint when the user has not opted into agent access", async () => {
+    const { userId, dataKey } = await user("at-optout-mint", { agentAccess: false });
+    await expect(mintToken(userId, dataKey)).rejects.toBeInstanceOf(AgentAccessDisabledError);
+    expect(await listTokens(userId)).toEqual([]);
+  });
+
+  it("opt-out is a kill switch: an existing token fails closed, and re-opt-in restores it", async () => {
+    const { userId, dataKey } = await user("at-killswitch");
+    const { secret } = await mintToken(userId, dataKey);
+    expect(await verifyAndUnwrapDk(secret)).not.toBeNull();
+
+    // Toggle off — every one of this user's tokens stops verifying at once,
+    // without any token being revoked.
+    await updateProfile(userId, { agentAccessEnabled: false });
+    expect(await verifyAndUnwrapDk(secret)).toBeNull();
+
+    // Toggle back on — the same token works again (it was never revoked).
+    await updateProfile(userId, { agentAccessEnabled: true });
+    const back = await verifyAndUnwrapDk(secret);
+    expect(back).not.toBeNull();
+    expect(back!.dataKey.equals(dataKey)).toBe(true);
+  });
+
+  it("rotate mints a working replacement and revokes the old token", async () => {
+    const { userId, dataKey } = await user("at-rotate");
+    const { tokenId, secret: oldSecret } = await mintToken(userId, dataKey, { label: "phone" });
+
+    const rotated = await rotateToken(userId, dataKey, tokenId);
+    expect(rotated).not.toBeNull();
+
+    // Old secret is dead; the new one works and yields the same DK.
+    expect(await verifyAndUnwrapDk(oldSecret)).toBeNull();
+    const verified = await verifyAndUnwrapDk(rotated!.secret);
+    expect(verified!.userId).toBe(userId);
+    expect(verified!.dataKey.equals(dataKey)).toBe(true);
+
+    // The label carried over, and rotating an already-dead token is a no-op.
+    const live = (await listTokens(userId)).filter((t) => t.revokedAt === null);
+    expect(live).toHaveLength(1);
+    expect(live[0].label).toBe("phone");
+    expect(await rotateToken(userId, dataKey, tokenId)).toBeNull();
   });
 });

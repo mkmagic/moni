@@ -13,6 +13,7 @@ export interface UserProfile {
   baseCurrency: string;
   autoSyncOnLogin: boolean;
   smartCategorize: boolean;
+  agentAccessEnabled: boolean;
 }
 
 export interface ProfileUpdate {
@@ -20,6 +21,9 @@ export interface ProfileUpdate {
   displayName?: string | null;
   autoSyncOnLogin?: boolean;
   smartCategorize?: boolean;
+  /** Master opt-in for agent (MCP) access. Off disables every existing token
+   * for this user at once (issue #113 Phase 5). */
+  agentAccessEnabled?: boolean;
 }
 
 /** Reads the caller's own profile. RLS scopes this to their row. */
@@ -32,6 +36,7 @@ export async function getProfile(userId: string): Promise<UserProfile | null> {
         baseCurrency: users.baseCurrency,
         autoSyncOnLogin: users.autoSyncOnLogin,
         smartCategorize: users.smartCategorize,
+        agentAccessEnabled: users.agentAccessEnabled,
       })
       .from(users)
       .where(eq(users.id, userId))
@@ -54,6 +59,7 @@ export async function updateProfile(userId: string, update: ProfileUpdate): Prom
     displayName?: string | null;
     autoSyncOnLogin?: boolean;
     smartCategorize?: boolean;
+    agentAccessEnabled?: boolean;
   } = {};
   if (update.displayName !== undefined) {
     const trimmed = update.displayName?.trim() ?? "";
@@ -61,6 +67,7 @@ export async function updateProfile(userId: string, update: ProfileUpdate): Prom
   }
   if (update.autoSyncOnLogin !== undefined) patch.autoSyncOnLogin = update.autoSyncOnLogin;
   if (update.smartCategorize !== undefined) patch.smartCategorize = update.smartCategorize;
+  if (update.agentAccessEnabled !== undefined) patch.agentAccessEnabled = update.agentAccessEnabled;
   if (Object.keys(patch).length === 0) return;
 
   await withUser(userId, async (tx) => {

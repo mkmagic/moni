@@ -15,6 +15,8 @@ import { randomUUID } from "node:crypto";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { createUser } from "@/domain/registration";
+import { updateProfile } from "@/domain/profile";
+import { mintToken } from "@/domain/agent-token";
 import { createCategory } from "@/domain/categorization";
 import { getOverview } from "@/domain/dashboard";
 import { aggregateSpending } from "@/domain/aggregates";
@@ -49,6 +51,10 @@ async function freshFixture(label: string): Promise<Fixture> {
     SIGNUP_TOKEN!,
   );
   createdUserIds.push(userId);
+  // Agent access is opt-in (Phase 5), and a real token id is needed because
+  // every tool call writes an audit row FK'd to agent_tokens (Phase 4).
+  await updateProfile(userId, { agentAccessEnabled: true });
+  const { tokenId } = await mintToken(userId, dataKey);
   const session = { id: randomUUID(), userId, dataKey, baseCurrency: "ILS" } as Session;
 
   const accountId = randomUUID();
@@ -63,7 +69,7 @@ async function freshFixture(label: string): Promise<Fixture> {
     status: "active",
   });
 
-  return { userId, dataKey, session, ctx: { userId, dataKey }, accountId };
+  return { userId, dataKey, session, ctx: { userId, tokenId, dataKey }, accountId };
 }
 
 async function category(
@@ -142,7 +148,8 @@ async function connect(ctx: AgentRequestContext) {
   async function call(name: string, args: Record<string, unknown> = {}) {
     const res = await client.callTool({ name, arguments: args });
     const content = res.content as Array<{ type: string; text: string }>;
-    return JSON.parse(content[0].text) as Record<string, unknown>;
+    // content[0] is the untrusted-data notice (Phase 4); the payload is [1].
+    return JSON.parse(content[1].text) as Record<string, unknown>;
   }
   async function close() {
     await client.close();
