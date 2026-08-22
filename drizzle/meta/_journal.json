@@ -232,6 +232,41 @@
       "when": 1787398983232,
       "tag": "0032_agent_token_expiry_nullable",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1787400742399,
+      "tag": "0033_zippy_firedrake",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1787400751022,
+      "tag": "0034_mcp_oauth_grants_rls_and_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1787401936539,
+      "tag": "0035_messy_ser_duncan",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1787401936927,
+      "tag": "0036_mcp_oauth_auth_codes_rls_and_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1787403151729,
+      "tag": "0037_mean_runaways",
+      "breakpoints": true
     }
   ]
 }

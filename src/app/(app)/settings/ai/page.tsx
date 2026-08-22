@@ -2,9 +2,10 @@ import { headers } from "next/headers";
 import { requireSession } from "@/domain/auth";
 import { getProfile } from "@/domain/profile";
 import { listTokens } from "@/domain/agent-token";
+import { listGrants } from "@/domain/mcp-oauth";
 import { SmartCategorizePreference } from "../smart-categorize-preference";
 import { AgentAccessPreference } from "../agent-access-preference";
-import { AgentTokensPanel, type TokenRow } from "../agent-tokens-panel";
+import { AgentTokensPanel, type GrantRow, type TokenRow } from "../agent-tokens-panel";
 
 // Dates are formatted server-side with a pinned locale and handed across the
 // boundary as strings — the client component holds no date logic (the hydration
@@ -39,6 +40,17 @@ export default async function AiSettingsPage() {
         expired: t.revokedAt === null && t.expiresAt !== null && t.expiresAt <= now,
       }))
     : [];
+  const grants: GrantRow[] = profile.agentAccessEnabled
+    ? (await listGrants(session.userId)).map((grant) => ({
+        id: grant.id,
+        client: new URL(grant.clientId).hostname,
+        createdLabel: DATE_FMT.format(grant.createdAt),
+        lastUsedLabel: grant.lastUsedAt ? DATE_FMT.format(grant.lastUsedAt) : "Never",
+        expiresLabel: grant.expiresAt ? DATE_FMT.format(grant.expiresAt) : "Never",
+        revoked: grant.revokedAt !== null,
+        expired: grant.revokedAt === null && grant.expiresAt !== null && grant.expiresAt <= now,
+      }))
+    : [];
 
   return (
     <div className="flex max-w-xl flex-col gap-8">
@@ -46,7 +58,9 @@ export default async function AiSettingsPage() {
 
       <div className="flex flex-col gap-4">
         <AgentAccessPreference initial={profile.agentAccessEnabled} />
-        {profile.agentAccessEnabled && <AgentTokensPanel tokens={tokens} endpoint={endpoint} />}
+        {profile.agentAccessEnabled && (
+          <AgentTokensPanel tokens={tokens} grants={grants} endpoint={endpoint} />
+        )}
       </div>
     </div>
   );

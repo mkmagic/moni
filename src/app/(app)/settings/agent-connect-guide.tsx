@@ -81,10 +81,13 @@ export function AgentConnectGuide({ endpoint }: { endpoint: string }) {
         <div className="flex flex-col gap-1.5">
           <span className="text-sm font-medium text-foreground">Connect an agent</span>
           <span className="text-xs leading-relaxed text-muted-foreground">
-            Point an MCP client at this endpoint with a token in the{" "}
-            <code className="font-mono">Authorization</code> header. The agent discovers what it can
-            read automatically. Replace <code className="font-mono">{TOKEN}</code> with the secret
-            shown when you created a token.
+            In Claude or ChatGPT developer mode, add <code className="font-mono">{endpoint}</code>{" "}
+            as a custom connector or app and choose OAuth with CIMD; Moni will open a browser
+            consent flow automatically. For clients that accept manual credentials, point them at
+            the same endpoint with a token in the <code className="font-mono">Authorization</code>{" "}
+            header. The agent discovers what it can read automatically. Replace{" "}
+            <code className="font-mono">{TOKEN}</code> with the secret shown when you created a
+            token.
           </span>
         </div>
 

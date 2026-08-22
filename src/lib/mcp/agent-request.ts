@@ -11,14 +11,16 @@
 // round-trip: the security-critical properties (right user, DK usable during
 // the window, DK wiped after) are asserted directly against this function.
 import { verifyAndUnwrapDk } from "@/domain/agent-token";
+import { OAUTH_ACCESS_TOKEN_PREFIX, validateAccessToken } from "@/domain/mcp-oauth";
 import { wipe } from "@/lib/crypto";
 
 /** The live read context a token grants for the span of one request. */
 export interface AgentRequestContext {
   userId: string;
-  /** The verified token's row id — how the audit log and rate cap attribute a
-   * call to one token (issue #113 Phase 4). Not a secret. */
+  /** Static token id or OAuth grant id. `credentialKind` selects the audit FK. */
   tokenId: string;
+  /** Omitted by legacy/internal callers means the existing static-token path. */
+  credentialKind?: "agent-token" | "oauth-grant";
   /**
    * The user's data key, valid ONLY for the duration of the callback. It is
    * `fill(0)`-wiped when the callback settles — do not retain a reference past
@@ -58,9 +60,23 @@ export async function withAgentRequest<T>(
   const token = parseBearer(authorizationHeader);
   if (!token) throw new AgentAuthError("missing bearer token");
 
+  if (token.startsWith(OAUTH_ACCESS_TOKEN_PREFIX)) {
+    const verified = await validateAccessToken(token);
+    if (!verified) throw new AgentAuthError("invalid or expired token");
+    try {
+      return await fn({
+        userId: verified.userId,
+        tokenId: verified.grantId,
+        credentialKind: "oauth-grant",
+        dataKey: verified.dataKey,
+      });
+    } finally {
+      wipe(verified.dataKey);
+    }
+  }
+
   const verified = await verifyAndUnwrapDk(token);
   if (!verified) throw new AgentAuthError("invalid or expired token");
-
   try {
     return await fn({
       userId: verified.userId,

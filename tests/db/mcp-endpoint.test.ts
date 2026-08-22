@@ -6,13 +6,17 @@
 //      bearer token reaches an RLS-scoped read and comes back as JSON, and a
 //      missing/bad token is 401.
 import { afterAll, describe, expect, it } from "vitest";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
+import { eq } from "drizzle-orm";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { createUser } from "@/domain/registration";
 import { updateProfile } from "@/domain/profile";
 import { mintToken, revokeToken } from "@/domain/agent-token";
+import { createAuthCode, exchangeAuthCode, listGrants } from "@/domain/mcp-oauth";
+import { withUser } from "@/db/client";
+import * as schema from "@/db/schema";
 import { AgentAuthError, withAgentRequest } from "@/lib/mcp/agent-request";
 import { buildAgentMcpServer } from "@/lib/mcp/server";
 import { POST as mcpPost, GET as mcpGet } from "@/app/api/mcp/route";
@@ -67,6 +71,22 @@ describe("MCP endpoint (issue #113 Phase 2)", () => {
     return { userId, dataKey };
   }
 
+  async function oauthAccessToken(userId: string, dataKey: Buffer): Promise<string> {
+    const verifier = randomBytes(32).toString("base64url");
+    const { code } = await createAuthCode(userId, dataKey, {
+      clientId: "https://claude.ai/oauth/claude-code-client-metadata",
+      redirectUri: "https://claude.ai/api/mcp/auth_callback",
+      scope: "mcp:read offline_access",
+      codeChallenge: createHash("sha256").update(verifier, "ascii").digest("base64url"),
+    });
+    const result = await exchangeAuthCode(code, verifier, {
+      clientId: "https://claude.ai/oauth/claude-code-client-metadata",
+      redirectUri: "https://claude.ai/api/mcp/auth_callback",
+    });
+    if (!result.ok) throw new Error(`test setup: OAuth exchange failed (${result.error})`);
+    return result.accessToken;
+  }
+
   describe("withAgentRequest", () => {
     it("resolves a valid token to its user, hands over a usable DK, and wipes it after", async () => {
       const { userId, dataKey } = await user("mcp-window");
@@ -100,6 +120,23 @@ describe("MCP endpoint (issue #113 Phase 2)", () => {
       expect(Buffer.alloc(captured!.length).equals(captured!)).toBe(true);
     });
 
+    it("accepts an OAuth access token and wipes its DK when the window closes", async () => {
+      const { userId, dataKey } = await user("mcp-oauth-window");
+      const accessToken = await oauthAccessToken(userId, dataKey);
+      let captured: Buffer | null = null;
+
+      const result = await withAgentRequest(`Bearer ${accessToken}`, async (ctx) => {
+        expect(ctx.userId).toBe(userId);
+        expect(ctx.dataKey.equals(dataKey)).toBe(true);
+        expect(ctx.credentialKind).toBe("oauth-grant");
+        captured = ctx.dataKey;
+        return "ok";
+      });
+
+      expect(result).toBe("ok");
+      expect(Buffer.alloc(captured!.length).equals(captured!)).toBe(true);
+    });
+
     it("rejects a missing, malformed, revoked, or expired token before running fn", async () => {
       const { userId, dataKey } = await user("mcp-window-bad");
       const { tokenId, secret } = await mintToken(userId, dataKey);
@@ -121,6 +158,23 @@ describe("MCP endpoint (issue #113 Phase 2)", () => {
   });
 
   describe("the whoami tool, over an in-memory MCP session", () => {
+    it("advertises every tool as read-only", async () => {
+      const { userId, dataKey } = await user("mcp-tool-annotations");
+      const server = await buildAgentMcpServer({ userId, tokenId: randomUUID(), dataKey });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      const client = new Client({ name: "test", version: "0.0.0" });
+
+      await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+      try {
+        const { tools } = await client.listTools();
+        expect(tools.length).toBeGreaterThan(0);
+        expect(tools.every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
+      } finally {
+        await client.close();
+        await server.close();
+      }
+    });
+
     it("returns the authenticated user's own identity, RLS-scoped", async () => {
       const { userId, dataKey } = await user("mcp-whoami");
       // A real token id is needed: every tool call now writes an audit row
@@ -150,7 +204,9 @@ describe("MCP endpoint (issue #113 Phase 2)", () => {
     it("401s with no bearer token", async () => {
       const res = await mcpPost(jsonRpcRequest(INITIALIZE));
       expect(res.status).toBe(401);
-      expect(res.headers.get("WWW-Authenticate")).toBe("Bearer");
+      expect(res.headers.get("WWW-Authenticate")).toBe(
+        'Bearer error="invalid_token", resource_metadata="http://localhost:3000/.well-known/oauth-protected-resource/mcp", scope="mcp:read"',
+      );
     });
 
     it("401s with a bad bearer token", async () => {
@@ -168,6 +224,46 @@ describe("MCP endpoint (issue #113 Phase 2)", () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as { result?: { serverInfo?: { name?: string } } };
       expect(body.result?.serverInfo?.name).toBe("moni");
+    });
+
+    it("completes the initialize handshake for a valid OAuth access token", async () => {
+      const { userId, dataKey } = await user("mcp-route-oauth-init");
+      const accessToken = await oauthAccessToken(userId, dataKey);
+
+      const res = await mcpPost(jsonRpcRequest(INITIALIZE, accessToken));
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { result?: { serverInfo?: { name?: string } } };
+      expect(body.result?.serverInfo?.name).toBe("moni");
+    });
+
+    it("attributes an OAuth tool call to its grant in the audit log", async () => {
+      const { userId, dataKey } = await user("mcp-route-oauth-audit");
+      const accessToken = await oauthAccessToken(userId, dataKey);
+      const [grant] = await listGrants(userId);
+
+      const res = await mcpPost(
+        jsonRpcRequest(
+          {
+            jsonrpc: "2.0",
+            id: 2,
+            method: "tools/call",
+            params: { name: "whoami", arguments: {} },
+          },
+          accessToken,
+        ),
+      );
+      expect(res.status).toBe(200);
+
+      const rows = await withUser(userId, (tx) =>
+        tx
+          .select({
+            tokenId: schema.agentAccessLog.tokenId,
+            oauthGrantId: schema.agentAccessLog.oauthGrantId,
+          })
+          .from(schema.agentAccessLog)
+          .where(eq(schema.agentAccessLog.oauthGrantId, grant.id)),
+      );
+      expect(rows).toEqual([{ tokenId: null, oauthGrantId: grant.id }]);
     });
 
     it("405s a GET (no server-initiated stream in stateless mode)", () => {

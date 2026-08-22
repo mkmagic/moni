@@ -58,6 +58,12 @@ import {
 } from "@/domain/agent-access-log";
 
 const SERVER_INFO = { name: "moni", version: "1.3.0" } as const;
+const READ_ONLY_ANNOTATIONS = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+} as const;
 
 /** Server-level guidance returned in the `initialize` response (MCP clients
  * surface this to the model). It orients the agent on what this endpoint is and
@@ -197,15 +203,19 @@ async function guardedTool(
   args: Record<string, unknown>,
   run: () => Promise<ToolOutput>,
 ) {
+  const credential =
+    ctx.credentialKind === "oauth-grant"
+      ? ({ oauthGrantId: ctx.tokenId } as const)
+      : ({ tokenId: ctx.tokenId } as const);
   try {
-    await assertUnderRateCap(ctx.userId, ctx.tokenId);
+    await assertUnderRateCap(ctx.userId, credential);
   } catch (err) {
     if (err instanceof AgentAccessCapError) return capExceeded(err.message);
     throw err;
   }
   const { payload, provenance, rowCount } = await run();
   await recordAccess(ctx.userId, {
-    tokenId: ctx.tokenId,
+    ...credential,
     tool: name,
     argShape: argShapeOf(args),
     rowCount,
@@ -247,6 +257,7 @@ export async function buildAgentMcpServer(ctx: AgentRequestContext): Promise<Mcp
         "Returns the identity of the account this agent token belongs to " +
         "(user id and base currency). Read-only.",
       inputSchema: {},
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     () =>
       guardedTool(ctx, "whoami", {}, async () => ({
@@ -264,6 +275,7 @@ export async function buildAgentMcpServer(ctx: AgentRequestContext): Promise<Mcp
         "computed by Moni's own money engine (exact-decimal, in base currency). " +
         "Use this figure directly — do not recompute it. Read-only.",
       inputSchema: {},
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     () =>
       guardedTool(ctx, "net_worth", {}, async () => {
@@ -306,6 +318,7 @@ export async function buildAgentMcpServer(ctx: AgentRequestContext): Promise<Mcp
         from: ISO_DATE,
         to: ISO_DATE,
       },
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     ({ group_by, from, to }) =>
       guardedTool(ctx, "spending", { group_by, from, to }, async () => {
@@ -347,6 +360,7 @@ export async function buildAgentMcpServer(ctx: AgentRequestContext): Promise<Mcp
         category: optionalNameEnum(categoryNames),
         merchant: optionalNameEnum(merchantNames),
       },
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     ({ from, to, limit, category, merchant }) =>
       guardedTool(ctx, "transactions", { from, to, limit, category, merchant }, async () => {
@@ -386,6 +400,7 @@ export async function buildAgentMcpServer(ctx: AgentRequestContext): Promise<Mcp
         "currency subtotal per group, plus liabilities. Balances are the latest " +
         "known figures, computed by Moni's money engine. Read-only.",
       inputSchema: {},
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     () =>
       guardedTool(ctx, "accounts", {}, async () => {
@@ -426,10 +441,14 @@ export async function buildAgentMcpServer(ctx: AgentRequestContext): Promise<Mcp
         "all computed by Moni's money engine. `month` is YYYY-MM and defaults to " +
         "the current month. For trends across months use `budget_history`. Read-only.",
       inputSchema: { month: ISO_MONTH },
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     ({ month }) =>
       guardedTool(ctx, "budget", { month }, async () => {
-        const view = await getBudgetMonth(sessionFor(ctx, data.baseCurrency), month ?? currentMonth());
+        const view = await getBudgetMonth(
+          sessionFor(ctx, data.baseCurrency),
+          month ?? currentMonth(),
+        );
         return {
           payload: view,
           provenance: {
@@ -450,6 +469,7 @@ export async function buildAgentMcpServer(ctx: AgentRequestContext): Promise<Mcp
         "plan for each — plus a verdict on each ceiling history says is set too " +
         "high or too low. Use `budget` for a single month's detail. Read-only.",
       inputSchema: {},
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     () =>
       guardedTool(ctx, "budget_history", {}, async () => {
@@ -475,6 +495,7 @@ export async function buildAgentMcpServer(ctx: AgentRequestContext): Promise<Mcp
         "this for portfolio totals; use `holdings` only for individual-lot detail. " +
         "Read-only.",
       inputSchema: {},
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     () =>
       guardedTool(ctx, "portfolio", {}, async () => {
@@ -509,6 +530,7 @@ export async function buildAgentMcpServer(ctx: AgentRequestContext): Promise<Mcp
         limit: z.number().int().positive().max(200).optional(),
         cursor: z.string().optional(),
       },
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     ({ instrument_kind, kind, limit, cursor }) =>
       guardedTool(ctx, "holdings", { instrument_kind, kind, limit, cursor }, async () => {
@@ -543,10 +565,13 @@ export async function buildAgentMcpServer(ctx: AgentRequestContext): Promise<Mcp
         "the fund average, and when the money unlocks. Figures are as published, " +
         "in base currency. Read-only.",
       inputSchema: {},
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     () =>
       guardedTool(ctx, "long_term_savings", {}, async () => {
-        const savingsAccounts = await listLongTermSavingsAccounts(sessionFor(ctx, data.baseCurrency));
+        const savingsAccounts = await listLongTermSavingsAccounts(
+          sessionFor(ctx, data.baseCurrency),
+        );
         const newestAsOf = savingsAccounts
           .map((a) => a.latest?.asOf)
           .filter((asOf): asOf is string => asOf != null)
@@ -575,6 +600,7 @@ export async function buildAgentMcpServer(ctx: AgentRequestContext): Promise<Mcp
         "subcategories) with per-category transaction and rule counts. Structural " +
         "labels, no money. Read-only.",
       inputSchema: {},
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     () =>
       guardedTool(ctx, "categories", {}, async () => {
@@ -600,6 +626,7 @@ export async function buildAgentMcpServer(ctx: AgentRequestContext): Promise<Mcp
         "with a human-readable summary and its target category. Structural, no " +
         "money. Read-only.",
       inputSchema: {},
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     () =>
       guardedTool(ctx, "rules", {}, async () => {

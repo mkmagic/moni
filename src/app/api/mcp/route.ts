@@ -12,12 +12,17 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { AgentAuthError, withAgentRequest } from "@/lib/mcp/agent-request";
 import { buildAgentMcpServer } from "@/lib/mcp/server";
 
-function unauthorized(): NextResponse {
+function unauthorized(req: NextRequest): NextResponse {
   // A bearer scheme challenge, and never a hint about *why* it failed —
   // unknown/expired/revoked are indistinguishable, matching the auth layer.
   return NextResponse.json(
     { jsonrpc: "2.0", error: { code: -32001, message: "Unauthorized" }, id: null },
-    { status: 401, headers: { "WWW-Authenticate": "Bearer" } },
+    {
+      status: 401,
+      headers: {
+        "WWW-Authenticate": `Bearer error="invalid_token", resource_metadata="${req.nextUrl.origin}/.well-known/oauth-protected-resource/mcp", scope="mcp:read"`,
+      },
+    },
   );
 }
 
@@ -41,7 +46,7 @@ export async function POST(req: NextRequest): Promise<Response> {
       }
     });
   } catch (err) {
-    if (err instanceof AgentAuthError) return unauthorized();
+    if (err instanceof AgentAuthError) return unauthorized(req);
     throw err;
   }
 }

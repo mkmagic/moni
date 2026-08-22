@@ -74,6 +74,11 @@ const MIGRATION_FILES = [
   "0030_agent_access_log.sql",
   "0031_agent_access_log_rls_and_roles.sql",
   "0032_agent_token_expiry_nullable.sql",
+  "0033_zippy_firedrake.sql",
+  "0034_mcp_oauth_grants_rls_and_roles.sql",
+  "0035_messy_ser_duncan.sql",
+  "0036_mcp_oauth_auth_codes_rls_and_roles.sql",
+  "0037_mean_runaways.sql",
 ];
 
 /** Bookkeeping for which of MIGRATION_FILES this database has already seen.

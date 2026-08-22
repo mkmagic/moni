@@ -428,6 +428,27 @@ async function seedFullOwner(label: string): Promise<OwnerFixture> {
     expiresAt: new Date("2030-01-01T00:00:00Z"),
   });
 
+  await elevatedDb.insert(schema.mcpOauthGrants).values({
+    ownerId: userId,
+    clientId: "https://claude.ai/oauth/claude-code-client-metadata",
+    refreshTokenHash: randomBytes(32),
+    refreshWrappedDk: ct(`${label}-oauth-refresh`),
+    scope: "mcp:read offline_access",
+    label: `${label}-oauth-grant`,
+    expiresAt: new Date("2030-01-01T00:00:00Z"),
+  });
+
+  await elevatedDb.insert(schema.mcpOauthAuthCodes).values({
+    ownerId: userId,
+    clientId: "https://claude.ai/oauth/claude-code-client-metadata",
+    codeHash: randomBytes(32),
+    wrappedDk: ct(`${label}-oauth-code`),
+    codeChallenge: randomBytes(32).toString("base64url"),
+    redirectUri: "http://localhost:3118/callback",
+    scope: "mcp:read offline_access",
+    expiresAt: new Date("2030-01-01T00:00:00Z"),
+  });
+
   // Agent access log (issue #113 Phase 4) — a child of the token row.
   await elevatedDb.insert(schema.agentAccessLog).values({
     ownerId: userId,

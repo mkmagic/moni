@@ -21,6 +21,16 @@ export interface TokenRow {
   expired: boolean;
 }
 
+export interface GrantRow {
+  id: string;
+  client: string;
+  createdLabel: string;
+  lastUsedLabel: string;
+  expiresLabel: string;
+  revoked: boolean;
+  expired: boolean;
+}
+
 /** A freshly minted/rotated secret — shown exactly once, then gone. */
 interface RevealedSecret {
   secret: string;
@@ -36,14 +46,25 @@ const TTL_OPTIONS: { value: Ttl; label: string }[] = [
   { value: "never", label: "Never" },
 ];
 
-export function AgentTokensPanel({ tokens, endpoint }: { tokens: TokenRow[]; endpoint: string }) {
+export function AgentTokensPanel({
+  tokens,
+  grants,
+  endpoint,
+}: {
+  tokens: TokenRow[];
+  grants: GrantRow[];
+  endpoint: string;
+}) {
   const router = useRouter();
   const [label, setLabel] = useState("");
   const [ttl, setTtl] = useState<Ttl>("1m");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<RevealedSecret | null>(null);
-  const [confirm, setConfirm] = useState<{ id: string; action: "revoke" | "rotate" } | null>(null);
+  const [confirm, setConfirm] = useState<{
+    id: string;
+    action: "revoke" | "rotate" | "revoke-grant";
+  } | null>(null);
 
   async function mint() {
     setBusy(true);
@@ -98,9 +119,97 @@ export function AgentTokensPanel({ tokens, endpoint }: { tokens: TokenRow[]; end
     }
   }
 
+  async function revokeGrant(id: string) {
+    setBusy(true);
+    setError(null);
+    setConfirm(null);
+    try {
+      const res = await fetch(`/api/agent-tokens/grants/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error();
+      router.refresh();
+    } catch {
+      setError("Could not revoke that connection — try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       {revealed && <SecretReveal revealed={revealed} onDismiss={() => setRevealed(null)} />}
+
+      <AgentConnectGuide endpoint={endpoint} />
+
+      <Card>
+        <div className="flex flex-col px-6 pb-2 pt-6">
+          <span className="text-sm font-medium text-foreground">OAuth connections</span>
+          <span className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            Claude and ChatGPT connections created through the browser consent flow. Revocation
+            takes effect on the next MCP request.
+          </span>
+        </div>
+        {grants.length === 0 ? (
+          <p className="px-6 pb-6 pt-2 text-xs text-muted-foreground">No OAuth connections yet.</p>
+        ) : (
+          <ul className="flex flex-col divide-y divide-border">
+            {grants.map((grant) => {
+              const dead = grant.revoked || grant.expired;
+              return (
+                <li
+                  key={grant.id}
+                  className="flex flex-col gap-3 px-6 py-4 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={
+                          dead
+                            ? "truncate text-sm text-muted-foreground line-through"
+                            : "truncate text-sm font-medium text-foreground"
+                        }
+                      >
+                        {grant.client}
+                      </span>
+                      <StatusBadge revoked={grant.revoked} expired={grant.expired} />
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      Connected {grant.createdLabel} · Last used {grant.lastUsedLabel} · Expires{" "}
+                      {grant.expiresLabel}
+                    </span>
+                  </div>
+                  {!dead &&
+                    (confirm?.id === grant.id && confirm.action === "revoke-grant" ? (
+                      <div className="flex shrink-0 items-center gap-2">
+                        <span className="text-xs text-muted-foreground">
+                          Revoke this connection?
+                        </span>
+                        <Button
+                          variant="destructive"
+                          disabled={busy}
+                          onClick={() => void revokeGrant(grant.id)}
+                        >
+                          Yes
+                        </Button>
+                        <Button variant="ghost" disabled={busy} onClick={() => setConfirm(null)}>
+                          Cancel
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        variant="destructive"
+                        disabled={busy}
+                        onClick={() => setConfirm({ id: grant.id, action: "revoke-grant" })}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        Revoke
+                      </Button>
+                    ))}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Card>
 
       {/* Mint */}
       <Card>
@@ -144,8 +253,6 @@ export function AgentTokensPanel({ tokens, endpoint }: { tokens: TokenRow[]; end
           {error && <span className="text-xs text-negative">{error}</span>}
         </div>
       </Card>
-
-      <AgentConnectGuide endpoint={endpoint} />
 
       {/* List */}
       <Card>

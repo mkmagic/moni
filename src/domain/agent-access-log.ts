@@ -42,12 +42,24 @@ export function argShapeOf(args: Record<string, unknown>): Record<string, string
   return shape;
 }
 
-async function callsSince(userId: string, tokenId: string, since: Date): Promise<number> {
+export type AgentCredential = { tokenId: string } | { oauthGrantId: string };
+
+async function callsSince(
+  userId: string,
+  credential: AgentCredential | string,
+  since: Date,
+): Promise<number> {
   return withUser(userId, async (tx) => {
+    const credentialMatch =
+      typeof credential === "string"
+        ? eq(agentAccessLog.tokenId, credential)
+        : "tokenId" in credential
+          ? eq(agentAccessLog.tokenId, credential.tokenId)
+          : eq(agentAccessLog.oauthGrantId, credential.oauthGrantId);
     const [row] = await tx
       .select({ n: count() })
       .from(agentAccessLog)
-      .where(and(eq(agentAccessLog.tokenId, tokenId), gte(agentAccessLog.createdAt, since)));
+      .where(and(credentialMatch, gte(agentAccessLog.createdAt, since)));
     return row?.n ?? 0;
   });
 }
@@ -57,13 +69,16 @@ async function callsSince(userId: string, tokenId: string, since: Date): Promise
  * trailing window. Counts the audit log itself — an appended row is a call that
  * happened — so the cap is consistent across processes and survives a restart.
  */
-export async function assertUnderRateCap(userId: string, tokenId: string): Promise<void> {
+export async function assertUnderRateCap(
+  userId: string,
+  credential: AgentCredential | string,
+): Promise<void> {
   const now = Date.now();
-  const perDay = await callsSince(userId, tokenId, new Date(now - DAY_MS));
+  const perDay = await callsSince(userId, credential, new Date(now - DAY_MS));
   if (perDay >= RATE_CAP_PER_DAY) {
     throw new AgentAccessCapError("daily call cap exceeded for this token");
   }
-  const perMinute = await callsSince(userId, tokenId, new Date(now - MINUTE_MS));
+  const perMinute = await callsSince(userId, credential, new Date(now - MINUTE_MS));
   if (perMinute >= RATE_CAP_PER_MINUTE) {
     throw new AgentAccessCapError("per-minute call cap exceeded for this token");
   }
@@ -72,12 +87,18 @@ export async function assertUnderRateCap(userId: string, tokenId: string): Promi
 /** Appends one audit row for a completed tool call. */
 export async function recordAccess(
   userId: string,
-  entry: { tokenId: string; tool: string; argShape: Record<string, string>; rowCount: number },
+  entry: AgentCredential & {
+    tool: string;
+    argShape: Record<string, string>;
+    rowCount: number;
+  },
 ): Promise<void> {
   await withUser(userId, async (tx) => {
+    const credential =
+      "tokenId" in entry ? { tokenId: entry.tokenId } : { oauthGrantId: entry.oauthGrantId };
     await tx.insert(agentAccessLog).values({
       ownerId: userId,
-      tokenId: entry.tokenId,
+      ...credential,
       tool: entry.tool,
       argShape: entry.argShape,
       rowCount: entry.rowCount,

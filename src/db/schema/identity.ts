@@ -10,6 +10,7 @@ import {
   unique,
   uniqueIndex,
   index,
+  check,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { bytea, timestamps } from "./shared";
@@ -180,9 +181,13 @@ export const agentAccessLog = pgTable(
       .references(() => users.id),
     // The token whose call this was. Cascades so an account deletion that drops
     // agent_tokens also drops its log rows without a manual ordering step.
-    tokenId: uuid("token_id")
-      .notNull()
-      .references(() => agentTokens.id, { onDelete: "cascade" }),
+    tokenId: uuid("token_id").references(() => agentTokens.id, { onDelete: "cascade" }),
+    // OAuth calls are attributed to the long-lived grant instead. Exactly one
+    // credential FK is present on every row (enforced below), so rate caps and
+    // audit visibility remain per credential across both auth ceremonies.
+    oauthGrantId: uuid("oauth_grant_id").references(() => mcpOauthGrants.id, {
+      onDelete: "cascade",
+    }),
     tool: text("tool").notNull(),
     // `{ argName: "string" | "number" | "boolean" | ... }` — key presence and
     // JS type only. NEVER the argument values (an enum value would be Tier-1).
@@ -192,7 +197,133 @@ export const agentAccessLog = pgTable(
   },
   (table) => [
     unique("agent_access_log_owner_id_id_unique").on(table.ownerId, table.id),
+    check(
+      "agent_access_log_one_credential_check",
+      sql`num_nonnulls(${table.tokenId}, ${table.oauthGrantId}) = 1`,
+    ),
     // The rate-cap query key: count a token's recent calls (token_id, time).
     index("agent_access_log_token_id_created_at_idx").on(table.tokenId, table.createdAt),
+    index("agent_access_log_oauth_grant_id_created_at_idx").on(table.oauthGrantId, table.createdAt),
+  ],
+);
+
+/**
+ * Per-user **OAuth grants** — one row per (user, connected supported client)
+ * pair from the OAuth 2.1 authorization-code flow that lets Claude or ChatGPT
+ * reach `/api/mcp` (issue #113 OAuth phase, docs/design/mcp-and-api.md).
+ * RLS-scoped to its owner exactly like `agent_tokens`.
+ *
+ * This table stores **only the long-lived refresh envelope**, never an access
+ * token. Access tokens are stateless and self-contained (they carry their own
+ * `wrapped_dk` + this grant's id, with the AEAD standing in for a signature),
+ * so issuing one is a zero-write operation; instant revocation is the
+ * `revoked_at` check on this row that every MCP request performs.
+ *
+ * `refresh_wrapped_dk` is the user's data key (DK) re-wrapped under a KEK
+ * derived from the current refresh-token secret — the same 32-byte-secret→KEK
+ * seam `agent_tokens`/`webauthn-prf` use. The refresh secret rotates on every
+ * refresh (RFC 6819 §5.2.2.3), so both `refresh_token_hash` and
+ * `refresh_wrapped_dk` are overwritten in place each time. Neither column is
+ * usable without the presented secret, which is why the pre-auth SELECT policy
+ * that finds a row by `refresh_token_hash` before `app.user_id` is known is
+ * safe — the same shape as `agent_tokens_app_select` (drizzle/0029).
+ *
+ * **DK only, never CK.** Like `agent_tokens`, there is deliberately no
+ * credential-key column: an OAuth grant can disclose Tier-1 financial data but
+ * can never reach the bank-credential key. The boundary is structural.
+ *
+ * `client_id` is the connecting client's Client ID Metadata Document URL
+ * (CIMD — MCP 2025-11-25). The client identifies itself with an HTTPS URL
+ * rather than registering dynamically, so there is no clients table: the URL
+ * is validated against the Anthropic/OpenAI host allowlist at authorize time
+ * and stored here verbatim. Not a secret.
+ */
+export const mcpOauthGrants = pgTable(
+  "mcp_oauth_grants",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => users.id),
+    clientId: text("client_id").notNull(),
+    // SHA-256 of the current refresh-token secret. Rotates every refresh.
+    refreshTokenHash: bytea("refresh_token_hash").notNull(),
+    // DK wrapped under a KEK derived from the current refresh secret. Opaque
+    // ciphertext; re-wrapped on every refresh alongside the hash.
+    refreshWrappedDk: bytea("refresh_wrapped_dk").notNull(),
+    scope: text("scope").notNull(),
+    label: text("label"),
+    /** Refresh/grant expiry backstop; server-side `revoked_at` is the primary
+     * lever. NULL means no expiry ("never") — the user's explicit choice,
+     * mirroring `agent_tokens`. */
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    unique("mcp_oauth_grants_owner_id_id_unique").on(table.ownerId, table.id),
+    // The pre-auth lookup key: the /token refresh grant resolves a presented
+    // refresh secret to its row by hash before any user is scoped in.
+    uniqueIndex("mcp_oauth_grants_refresh_token_hash_unique").on(table.refreshTokenHash),
+  ],
+);
+
+/**
+ * Short-lived **OAuth authorization codes** — the single-use envelope that
+ * carries the user's data key (DK) from the interactive `/authorize` consent
+ * step (where a live Moni session has DK in RAM) to the back-channel `/token`
+ * exchange (which has no session). This is the crux of preserving the
+ * no-server-side-key invariant across the OAuth dance: DK is wrapped here at
+ * authorize time and unwrapped exactly once at token time, then re-wrapped into
+ * the grant's refresh envelope and the stateless access token.
+ *
+ * `wrapped_dk` holds DK under a KEK derived from a secret embedded in the code
+ * string itself (the same 32-byte-secret→KEK seam the rest of the system uses).
+ * The row is useless without that secret, which travels only in the redirect to
+ * the legitimate client — so the pre-auth SELECT policy that finds a row by
+ * `code_hash` before `app.user_id` is known is safe (mirrors
+ * `agent_tokens_app_select`, drizzle/0029).
+ *
+ * `code_challenge` is the PKCE S256 challenge (RFC 7636); `/token` requires a
+ * `code_verifier` whose SHA-256 matches it. `consumed_at` enforces single use
+ * (OAuth 2.1) — a second exchange of the same code is refused. Codes are
+ * ultra-short-lived (`expires_at`, ~60s), so unlike grants there is no
+ * "never" expiry: the column is NOT NULL.
+ *
+ * **DK only, never CK** — structurally, like every other envelope on the agent
+ * surface: no credential-key column exists here.
+ */
+export const mcpOauthAuthCodes = pgTable(
+  "mcp_oauth_auth_codes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => users.id),
+    // The connecting client's CIMD URL — carried through to the grant on
+    // exchange, and re-validated against the redirect_uri at /token.
+    clientId: text("client_id").notNull(),
+    // SHA-256 of the code secret. The pre-auth lookup key at /token.
+    codeHash: bytea("code_hash").notNull(),
+    // DK wrapped under a KEK derived from the code secret. Opaque ciphertext,
+    // written once at authorize, unwrapped once at token, then this row dies.
+    wrappedDk: bytea("wrapped_dk").notNull(),
+    // PKCE S256 challenge (base64url). Bound to the client that began the flow.
+    codeChallenge: text("code_challenge").notNull(),
+    // The redirect_uri the flow began with; re-checked at /token (RFC 6749).
+    redirectUri: text("redirect_uri").notNull(),
+    scope: text("scope").notNull(),
+    // Always dated (~60s out) — an auth code has no "never" lifetime.
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    // Single-use marker (OAuth 2.1): set on first exchange; a second is refused.
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    unique("mcp_oauth_auth_codes_owner_id_id_unique").on(table.ownerId, table.id),
+    // The pre-auth lookup key: /token resolves a presented code to its row by
+    // hash before any user is scoped in.
+    uniqueIndex("mcp_oauth_auth_codes_code_hash_unique").on(table.codeHash),
   ],
 );

@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSessionFromRequest } from "@/domain/auth";
 import { AgentAccessDisabledError, listTokens, mintToken } from "@/domain/agent-token";
+import { listGrants } from "@/domain/mcp-oauth";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Token lifetimes offered in the UI → ttlMs (null = never expires). */
@@ -29,8 +30,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const session = getSessionFromRequest(req);
   if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  const tokens = await listTokens(session.userId);
-  return NextResponse.json({ tokens });
+  const [tokens, grants] = await Promise.all([
+    listTokens(session.userId),
+    listGrants(session.userId),
+  ]);
+  return NextResponse.json({ tokens, grants });
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
