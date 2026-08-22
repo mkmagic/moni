@@ -24,7 +24,7 @@ function unauthorized(): NextResponse {
 export async function POST(req: NextRequest): Promise<Response> {
   try {
     return await withAgentRequest(req.headers.get("authorization"), async (ctx) => {
-      const server = buildAgentMcpServer(ctx);
+      const server = await buildAgentMcpServer(ctx);
       // Stateless: no session id, buffered JSON response (not an SSE stream),
       // so `handleRequest` resolves only after the tool has run — i.e. while
       // the DK window is still open. The window closes (DK wiped) the moment

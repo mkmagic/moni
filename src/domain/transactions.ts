@@ -64,6 +64,9 @@ export interface EntryFilters {
   from?: string;
   to?: string;
   accountId?: string;
+  /** Restrict to one merchant. Plaintext-column filter like `accountId`; the
+   * MCP surface resolves a (DK-decrypted) merchant name to its id first. */
+  merchantId?: string;
   /** A category id, or `NO_CATEGORY` for entries with none. A parent category
    * also matches everything filed under its children. This is a statement
    * about the category column and nothing else — unlike `uncategorized`, it
@@ -106,6 +109,7 @@ export async function listEntries(
     if (filters.from) conds.push(gte(entries.date, filters.from));
     if (filters.to) conds.push(lte(entries.date, filters.to));
     if (filters.accountId) conds.push(eq(entries.accountId, filters.accountId));
+    if (filters.merchantId) conds.push(eq(entries.merchantId, filters.merchantId));
     if (filters.categoryId) {
       const { categoryId } = filters;
       conds.push(

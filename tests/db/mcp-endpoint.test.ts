@@ -120,7 +120,7 @@ describe("MCP endpoint (issue #113 Phase 2)", () => {
   describe("the whoami tool, over an in-memory MCP session", () => {
     it("returns the authenticated user's own identity, RLS-scoped", async () => {
       const { userId, dataKey } = await user("mcp-whoami");
-      const server = buildAgentMcpServer({ userId, dataKey });
+      const server = await buildAgentMcpServer({ userId, dataKey });
       const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
       const client = new Client({ name: "test", version: "0.0.0" });
 
