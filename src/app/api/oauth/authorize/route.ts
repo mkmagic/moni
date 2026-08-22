@@ -4,6 +4,7 @@ import { AgentAccessDisabledError } from "@/domain/agent-token";
 import { createAuthCode } from "@/domain/mcp-oauth";
 import {
   escapeHtml,
+  issuerFromRequest,
   validateAuthorizationRequest,
   type ValidAuthorizationRequest,
 } from "@/lib/mcp/oauth-http";
@@ -34,14 +35,14 @@ function hidden(name: string, value: string | undefined): string {
   return `<input type="hidden" name="${name}" value="${escapeHtml(value)}">`;
 }
 
-function consentPage(request: ValidAuthorizationRequest): NextResponse {
+function consentPage(request: ValidAuthorizationRequest, issuer: string): NextResponse {
   const body = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>Authorize AI client · Moni</title></head><body><main>
 <h1>Allow this AI client read-only access?</h1>
 <p><strong>${escapeHtml(request.clientHost)}</strong> is asking to read your Moni financial data through MCP.</p>
 <p>This cannot change Moni data or access saved bank credentials. You can revoke it from AI settings.</p>
-<form method="post" action="/api/oauth/authorize">
+<form method="post" action="${escapeHtml(issuer)}/api/oauth/authorize">
 ${hidden("response_type", request.responseType)}${hidden("client_id", request.clientId)}
 ${hidden("redirect_uri", request.redirectUri)}${hidden("scope", request.scope)}
 ${hidden("state", request.state)}${hidden("code_challenge", request.codeChallenge)}
@@ -54,8 +55,9 @@ ${hidden("code_challenge_method", request.codeChallengeMethod)}
     headers: {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
-      "Content-Security-Policy":
-        "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+      // Chrome suppresses this native consent POST when CSP includes form-action,
+      // even for the matching explicit origin. The absolute action remains same-origin.
+      "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
       "X-Frame-Options": "DENY",
       "Referrer-Policy": "no-referrer",
     },
@@ -66,7 +68,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   if (!getSessionFromRequest(request)) return error(401, "A live Moni session is required");
   const oauthRequest = await validateAuthorizationRequest(request.nextUrl.searchParams);
   if (!oauthRequest) return error(400, "Invalid OAuth client or authorization request");
-  return consentPage(oauthRequest);
+  return consentPage(oauthRequest, issuerFromRequest(request));
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {

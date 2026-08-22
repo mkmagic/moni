@@ -177,12 +177,23 @@ describe("MCP OAuth routes", () => {
 
     const consent = await authorizeGet(
       new NextRequest(
-        `https://moni.example/api/oauth/authorize?${new URLSearchParams(authorizeValues)}`,
-        { headers: { cookie: `${SESSION_COOKIE}=${sessionId}` } },
+        `http://127.0.0.1:3000/api/oauth/authorize?${new URLSearchParams(authorizeValues)}`,
+        {
+          headers: {
+            cookie: `${SESSION_COOKIE}=${sessionId}`,
+            host: "moni.example",
+            "x-forwarded-proto": "https",
+          },
+        },
       ),
     );
     expect(consent.status).toBe(200);
-    expect(await consent.text()).toContain("chatgpt.com");
+    const consentCsp = consent.headers.get("content-security-policy");
+    expect(consentCsp).toContain("default-src 'none'");
+    expect(consentCsp).not.toContain("form-action");
+    const consentHtml = await consent.text();
+    expect(consentHtml).toContain("chatgpt.com");
+    expect(consentHtml).toContain('action="https://moni.example/api/oauth/authorize"');
 
     const approved = await authorizePost(
       formRequest(
