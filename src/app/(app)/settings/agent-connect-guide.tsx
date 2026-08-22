@@ -61,15 +61,26 @@ function snippet(key: TabKey, endpoint: string): string {
 
 export function AgentConnectGuide({ endpoint }: { endpoint: string }) {
   const [tab, setTab] = useState<TabKey>("claude-code");
-  const [copied, setCopied] = useState(false);
+  const [copiedEndpoint, setCopiedEndpoint] = useState(false);
+  const [copiedSnippet, setCopiedSnippet] = useState(false);
 
   const code = snippet(tab, endpoint);
 
-  async function copy() {
+  async function copyEndpoint() {
+    try {
+      await navigator.clipboard.writeText(endpoint);
+      setCopiedEndpoint(true);
+      setTimeout(() => setCopiedEndpoint(false), 2000);
+    } catch {
+      /* clipboard blocked — the URL is still selectable on screen */
+    }
+  }
+
+  async function copySnippet() {
     try {
       await navigator.clipboard.writeText(code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setCopiedSnippet(true);
+      setTimeout(() => setCopiedSnippet(false), 2000);
     } catch {
       /* clipboard blocked — the snippet is still selectable on screen */
     }
@@ -81,15 +92,35 @@ export function AgentConnectGuide({ endpoint }: { endpoint: string }) {
         <div className="flex flex-col gap-1.5">
           <span className="text-sm font-medium text-foreground">Connect an agent</span>
           <span className="text-xs leading-relaxed text-muted-foreground">
-            In Claude or ChatGPT developer mode, add <code className="font-mono">{endpoint}</code>{" "}
-            as a custom connector or app and choose OAuth with CIMD; Moni will open a browser
-            consent flow automatically. For clients that accept manual credentials, point them at
-            the same endpoint with a token in the <code className="font-mono">Authorization</code>{" "}
-            header. The agent discovers what it can read automatically. Replace{" "}
-            <code className="font-mono">{TOKEN}</code> with the secret shown when you created a
-            token.
+            Add this URL in Claude or ChatGPT and choose OAuth.
           </span>
         </div>
+
+        <div className="flex flex-col gap-1.5">
+          <span className="text-xs font-medium text-muted-foreground">OAuth connector URL</span>
+          <div className="flex items-center gap-2 rounded-[var(--radius)] border border-border bg-background p-2">
+            <code className="min-w-0 flex-1 select-all truncate px-1 font-mono text-xs text-foreground">
+              {endpoint}
+            </code>
+            <button
+              onClick={() => void copyEndpoint()}
+              aria-label="Copy OAuth connector URL"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-[var(--radius)] border border-border bg-card px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            >
+              {copiedEndpoint ? (
+                <Check className="h-3.5 w-3.5" />
+              ) : (
+                <Copy className="h-3.5 w-3.5" />
+              )}
+              {copiedEndpoint ? "Copied" : "Copy"}
+            </button>
+          </div>
+        </div>
+
+        <span className="text-xs leading-relaxed text-muted-foreground">
+          Manual setup: create a token below, then replace{" "}
+          <code className="font-mono">{TOKEN}</code> in a snippet.
+        </span>
 
         {/* Tabs */}
         <div className="overflow-x-auto">
@@ -117,20 +148,13 @@ export function AgentConnectGuide({ endpoint }: { endpoint: string }) {
             <code>{code}</code>
           </pre>
           <button
-            onClick={() => void copy()}
+            onClick={() => void copySnippet()}
             aria-label="Copy snippet"
             className="absolute right-2 top-2 rounded-[var(--radius)] border border-border bg-card p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
           >
-            {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+            {copiedSnippet ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
           </button>
         </div>
-
-        <span className="text-xs leading-relaxed text-muted-foreground">
-          Available tools: <code className="font-mono">net_worth</code>,{" "}
-          <code className="font-mono">spending</code>,{" "}
-          <code className="font-mono">transactions</code>, <code className="font-mono">whoami</code>{" "}
-          — all read-only.
-        </span>
       </div>
     </Card>
   );

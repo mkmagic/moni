@@ -190,9 +190,13 @@ describe("MCP OAuth routes", () => {
     expect(consent.status).toBe(200);
     const consentCsp = consent.headers.get("content-security-policy");
     expect(consentCsp).toContain("default-src 'none'");
+    expect(consentCsp).toContain("img-src 'self'");
+    expect(consentCsp).toContain("style-src 'unsafe-inline'");
     expect(consentCsp).not.toContain("form-action");
     const consentHtml = await consent.text();
     expect(consentHtml).toContain("chatgpt.com");
+    expect(consentHtml).toContain('src="/moni-icon.png"');
+    expect(consentHtml).toContain('class="brand-logo"');
     expect(consentHtml).toContain('action="https://moni.example/api/oauth/authorize"');
 
     const approved = await authorizePost(
