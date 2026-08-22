@@ -5,14 +5,24 @@
 // one user and one DK window; a tool never has to remember to filter by user,
 // and never sees another user's data (docs/design/mcp-and-api.md §7).
 //
-// Three read-only tools, the shape #19 fixed:
-//   * `net_worth`      — an authoritative computed figure, reusing the EXACT
-//                        domain computation the dashboard uses (getOverview),
-//                        so the model never reimplements Moni's money math.
+// The read-only tool surface, the shape #19 fixed. Every tool reuses the EXACT
+// domain computation the UI uses, so the model never reimplements Moni's money
+// math, and stamps a provenance block (see below):
+//   * `net_worth`      — an authoritative computed figure (getOverview).
 //   * `spending`       — the aggregation workhorse: server-side group/sum over
 //                        the whole ledger (aggregateSpending).
 //   * `transactions`   — the raw-row escape hatch for genuine drill-downs,
 //                        high-capped (physics, not a security control).
+//   * `accounts`       — balances grouped by reachability, with base-currency
+//                        subtotals (listAccountsGrouped).
+//   * `budget` /       — one month's ceilings vs. spend (getBudgetMonth), and
+//     `budget_history`   past months + ceiling verdicts (getBudgetHistory).
+//   * `portfolio` /    — the authoritative investment position
+//     `holdings`         (getPortfolioOverview) and its raw-lot drill-down
+//                        (listPortfolioHoldings, capped).
+//   * `long_term_savings` — pension / gemel reports (listLongTermSavingsAccounts).
+//   * `categories` /   — the structural category tree (listCategoryTree) and the
+//     `rules`            categorization rules (listRules); no money.
 // (`whoami` stays as the trivial identity probe.)
 //
 // Every tool result carries a provenance block — identity (the user it ran
@@ -34,6 +44,11 @@ import { decText } from "@/domain/fields";
 import { getOverview } from "@/domain/dashboard";
 import { aggregateSpending } from "@/domain/aggregates";
 import { listEntries } from "@/domain/transactions";
+import { listAccountsGrouped } from "@/domain/accounts";
+import { getBudgetMonth, getBudgetHistory, currentMonth } from "@/domain/budget";
+import { getPortfolioOverview, listPortfolioHoldings } from "@/domain/investments";
+import { listLongTermSavingsAccounts } from "@/domain/long-term-savings";
+import { listCategoryTree, listRules } from "@/domain/categorization";
 import type { AgentRequestContext } from "@/lib/mcp/agent-request";
 import {
   AgentAccessCapError,
@@ -59,6 +74,16 @@ const SERVER_INSTRUCTIONS = [
   "for any 'how much did I spend/earn' question (it aggregates server-side over the whole",
   "ledger); use `transactions` only for a genuine row-level drill-down (one merchant, one",
   "month) — it is capped and must not be summed for totals (use `spending` for that).",
+  "",
+  "The rest of the app is read the same way, each reusing Moni's own computation:",
+  "`accounts` (balances grouped by how soon the money is reachable, with base-currency",
+  "subtotals); `budget` (a month's ceilings vs. spend — pass `month`, defaults to the current",
+  "one) and `budget_history` (past months plus verdicts on ceilings set too high or low);",
+  "`portfolio` (the authoritative investment position — total, cash, allocation) and its raw",
+  "drill-down `holdings` (individual lots, capped — prefer `portfolio` for totals);",
+  "`long_term_savings` (pension / קרן השתלמות / gemel reports); and the structural `categories`",
+  "(the category tree) and `rules` (the categorization rules). Investment and savings figures",
+  "carry their own valuation freshness — surface it, never restate a stale figure as current.",
   "",
   "Every result carries a `provenance` block (identity, freshness, completeness) — tell the",
   "user how current and how complete a figure is; never present a stale or partial number as",
@@ -197,6 +222,11 @@ function optionalNameEnum(names: string[]) {
 const ISO_DATE = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "expected an ISO date (YYYY-MM-DD)")
+  .optional();
+
+const ISO_MONTH = z
+  .string()
+  .regex(/^\d{4}-\d{2}$/, "expected a month (YYYY-MM)")
   .optional();
 
 /**
@@ -343,6 +373,245 @@ export async function buildAgentMcpServer(ctx: AgentRequestContext): Promise<Mcp
             },
           },
           rowCount: rows.length,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "accounts",
+    {
+      description:
+        "The account owner's accounts, grouped by how soon the money can be " +
+        "reached (cash, investments, long-term savings, other) with a base-" +
+        "currency subtotal per group, plus liabilities. Balances are the latest " +
+        "known figures, computed by Moni's money engine. Read-only.",
+      inputSchema: {},
+    },
+    () =>
+      guardedTool(ctx, "accounts", {}, async () => {
+        const grouped = await listAccountsGrouped(sessionFor(ctx, data.baseCurrency));
+        const accountCount =
+          grouped.assetGroups.reduce((n, g) => n + g.accounts.length, 0) +
+          grouped.liabilities.length;
+        return {
+          payload: {
+            assetGroups: grouped.assetGroups,
+            liabilities: grouped.liabilities,
+            // Map<accountId, ilsValue> for investment accounts, whose worth
+            // comes from holdings rather than a stored balance — plain object
+            // so it survives JSON.
+            investmentValues: Object.fromEntries(grouped.investmentValues),
+          },
+          provenance: {
+            identity,
+            freshness: { asOf: "now" },
+            completeness: {
+              // Accounts left out of a subtotal (no balance, or no recent
+              // FX rate to value one) — so a subtotal smaller than its cards
+              // is explained, not a bug.
+              unvaluedAccounts: grouped.assetGroups.reduce((n, g) => n + g.unvaluedCount, 0),
+            },
+          },
+          rowCount: accountCount,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "budget",
+    {
+      description:
+        "One month's budget: each budgeted category's ceiling, spent, and " +
+        "remaining, plus section and month totals and planned-vs-actual savings, " +
+        "all computed by Moni's money engine. `month` is YYYY-MM and defaults to " +
+        "the current month. For trends across months use `budget_history`. Read-only.",
+      inputSchema: { month: ISO_MONTH },
+    },
+    ({ month }) =>
+      guardedTool(ctx, "budget", { month }, async () => {
+        const view = await getBudgetMonth(sessionFor(ctx, data.baseCurrency), month ?? currentMonth());
+        return {
+          payload: view,
+          provenance: {
+            identity,
+            freshness: { asOf: view.month },
+            completeness: { hasBudget: view.hasBudget },
+          },
+          rowCount: view.fixed.rows.length + view.everyday.rows.length,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "budget_history",
+    {
+      description:
+        "Every complete month a budget has governed — income, spending and the " +
+        "plan for each — plus a verdict on each ceiling history says is set too " +
+        "high or too low. Use `budget` for a single month's detail. Read-only.",
+      inputSchema: {},
+    },
+    () =>
+      guardedTool(ctx, "budget_history", {}, async () => {
+        const view = await getBudgetHistory(sessionFor(ctx, data.baseCurrency));
+        return {
+          payload: view,
+          provenance: {
+            identity,
+            freshness: { asOf: view.months.at(-1)?.month ?? "now" },
+            completeness: { monthsObserved: view.months.length },
+          },
+          rowCount: view.months.length,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "portfolio",
+    {
+      description:
+        "The authoritative investment position: total value, cash, and allocation " +
+        "by holding, in base currency, computed by Moni's valuation engine. Use " +
+        "this for portfolio totals; use `holdings` only for individual-lot detail. " +
+        "Read-only.",
+      inputSchema: {},
+    },
+    () =>
+      guardedTool(ctx, "portfolio", {}, async () => {
+        const overview = await getPortfolioOverview(sessionFor(ctx, data.baseCurrency));
+        return {
+          payload: overview,
+          provenance: {
+            identity,
+            // The valuation's own freshness/basis and its source/quote/fx
+            // as-of dates — Moni computes these; the model must not restate.
+            freshness: overview.metadata,
+            completeness: {
+              affectedComponentCount: overview.metadata.affectedComponentCount,
+              qualityFlags: overview.metadata.qualityFlags,
+            },
+          },
+          rowCount: overview.accounts.length,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "holdings",
+    {
+      description:
+        "Individual investment holdings (positions and cash lots) for a drill-down: " +
+        "quantity, price, native and base-currency value per lot. Capped and " +
+        "paginated — for portfolio totals use `portfolio` instead. Read-only.",
+      inputSchema: {
+        instrument_kind: z.enum(["stock", "etf", "mutual_fund", "generic"]).optional(),
+        kind: z.enum(["position", "cash"]).optional(),
+        limit: z.number().int().positive().max(200).optional(),
+        cursor: z.string().optional(),
+      },
+    },
+    ({ instrument_kind, kind, limit, cursor }) =>
+      guardedTool(ctx, "holdings", { instrument_kind, kind, limit, cursor }, async () => {
+        const pageResult = await listPortfolioHoldings(sessionFor(ctx, data.baseCurrency), {
+          instrumentKind: instrument_kind,
+          kind,
+          limit,
+          cursor,
+        });
+        return {
+          payload: {
+            holdings: pageResult.rows,
+            hasMore: pageResult.hasMore,
+            nextCursor: pageResult.nextCursor,
+          },
+          provenance: {
+            identity,
+            freshness: { asOf: "now" },
+            completeness: { returned: pageResult.rows.length, hasMore: pageResult.hasMore },
+          },
+          rowCount: pageResult.rows.length,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "long_term_savings",
+    {
+      description:
+        "Long-term-savings accounts (pension, קרן השתלמות, קופת גמל) and their " +
+        "imported reports: balances, contributions, investment result, fees vs. " +
+        "the fund average, and when the money unlocks. Figures are as published, " +
+        "in base currency. Read-only.",
+      inputSchema: {},
+    },
+    () =>
+      guardedTool(ctx, "long_term_savings", {}, async () => {
+        const savingsAccounts = await listLongTermSavingsAccounts(sessionFor(ctx, data.baseCurrency));
+        const newestAsOf = savingsAccounts
+          .map((a) => a.latest?.asOf)
+          .filter((asOf): asOf is string => asOf != null)
+          .sort()
+          .at(-1);
+        return {
+          payload: { accounts: savingsAccounts },
+          provenance: {
+            identity,
+            freshness: { asOf: newestAsOf ?? "now" },
+            completeness: {
+              accounts: savingsAccounts.length,
+              withReports: savingsAccounts.filter((a) => a.reports.length > 0).length,
+            },
+          },
+          rowCount: savingsAccounts.length,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "categories",
+    {
+      description:
+        "The account owner's category tree (top-level groups and their " +
+        "subcategories) with per-category transaction and rule counts. Structural " +
+        "labels, no money. Read-only.",
+      inputSchema: {},
+    },
+    () =>
+      guardedTool(ctx, "categories", {}, async () => {
+        const tree = await listCategoryTree(sessionFor(ctx, data.baseCurrency));
+        const categoryCount = tree.reduce((n, group) => n + 1 + group.children.length, 0);
+        return {
+          payload: { categories: tree },
+          provenance: {
+            identity,
+            freshness: { asOf: "now" },
+            completeness: { full: true },
+          },
+          rowCount: categoryCount,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "rules",
+    {
+      description:
+        "The categorization rules that assign categories to transactions — each " +
+        "with a human-readable summary and its target category. Structural, no " +
+        "money. Read-only.",
+      inputSchema: {},
+    },
+    () =>
+      guardedTool(ctx, "rules", {}, async () => {
+        const ruleViews = await listRules(sessionFor(ctx, data.baseCurrency));
+        return {
+          payload: { rules: ruleViews },
+          provenance: {
+            identity,
+            freshness: { asOf: "now" },
+            completeness: { full: true },
+          },
+          rowCount: ruleViews.length,
         };
       }),
   );

@@ -17,7 +17,11 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { createUser } from "@/domain/registration";
 import { updateProfile } from "@/domain/profile";
 import { mintToken } from "@/domain/agent-token";
-import { createCategory } from "@/domain/categorization";
+import { createCategory, listCategoryTree, listRules, upsertRule } from "@/domain/categorization";
+import { listAccountsGrouped } from "@/domain/accounts";
+import { getBudgetMonth, getBudgetHistory, currentMonth, setCeiling } from "@/domain/budget";
+import { getPortfolioOverview, listPortfolioHoldings } from "@/domain/investments";
+import { listLongTermSavingsAccounts } from "@/domain/long-term-savings";
 import { getOverview } from "@/domain/dashboard";
 import { aggregateSpending } from "@/domain/aggregates";
 import { encText } from "@/domain/fields";
@@ -300,3 +304,175 @@ describe("MCP tools (issue #113 Phase 3)", () => {
     }
   });
 });
+
+/** Round-trips a domain value through JSON so Maps/Dates match the shape a tool
+ * returns over the wire, and drops the provenance block the tool appends. */
+function payload(value: unknown): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(value));
+}
+function stripProvenance(out: Record<string, unknown>): Record<string, unknown> {
+  const { provenance: _p, ...rest } = out;
+  void _p;
+  return rest;
+}
+
+describe("MCP tools (issue #113 Phase 6 — the rest of the read-only surface)", () => {
+  it("accounts matches listAccountsGrouped and is tenant-scoped", async () => {
+    const a = await freshFixture("acc-a");
+    const b = await freshFixture("acc-b");
+    const domain = await listAccountsGrouped(a.session);
+
+    const mcp = await connect(a.ctx);
+    try {
+      const out = await mcp.call("accounts");
+      expect(out.assetGroups).toEqual(payload(domain.assetGroups));
+      expect(out.liabilities).toEqual(payload(domain.liabilities));
+      expect(out.investmentValues).toEqual(payload(Object.fromEntries(domain.investmentValues)));
+      // A sees its own single "Checking" account, never B's.
+      const names = (out.assetGroups as Array<{ accounts: Array<{ name: string }> }>).flatMap((g) =>
+        g.accounts.map((acct) => acct.name),
+      );
+      expect(names).toEqual(["Checking"]);
+      expect((out.provenance as { identity: { userId: string } }).identity.userId).toBe(a.userId);
+    } finally {
+      await mcp.close();
+    }
+    // B's server is a fully independent scope — its own single account only.
+    const mcpB = await connect(b.ctx);
+    try {
+      const outB = await mcp2Names(mcpB);
+      expect(outB).toEqual(["Checking"]);
+    } finally {
+      await mcpB.close();
+    }
+  });
+
+  it("budget matches getBudgetMonth for the requested month", async () => {
+    const fx = await freshFixture("budget");
+    const rent = await category(fx, "Rent", "expense");
+    const month = currentMonth();
+    await setCeiling(fx.session, {
+      categoryId: rent,
+      amount: "3000",
+      effectiveFrom: month,
+      rollover: false,
+    });
+    const domain = await getBudgetMonth(fx.session, month);
+
+    const mcp = await connect(fx.ctx);
+    try {
+      const out = await mcp.call("budget", { month });
+      expect(stripProvenance(out)).toEqual(payload(domain));
+      expect((out as { hasBudget: boolean }).hasBudget).toBe(true);
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it("budget with no month argument defaults to the current month", async () => {
+    const fx = await freshFixture("budget-default");
+    const domain = await getBudgetMonth(fx.session, currentMonth());
+    const mcp = await connect(fx.ctx);
+    try {
+      const out = await mcp.call("budget", {});
+      expect(stripProvenance(out)).toEqual(payload(domain));
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it("budget_history matches getBudgetHistory", async () => {
+    const fx = await freshFixture("budget-history");
+    const domain = await getBudgetHistory(fx.session);
+    const mcp = await connect(fx.ctx);
+    try {
+      const out = await mcp.call("budget_history");
+      expect(stripProvenance(out)).toEqual(payload(domain));
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it("portfolio matches getPortfolioOverview", async () => {
+    const fx = await freshFixture("portfolio");
+    const domain = await getPortfolioOverview(fx.session);
+    const mcp = await connect(fx.ctx);
+    try {
+      const out = await mcp.call("portfolio");
+      expect(stripProvenance(out)).toEqual(payload(domain));
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it("holdings matches listPortfolioHoldings", async () => {
+    const fx = await freshFixture("holdings");
+    const domain = await listPortfolioHoldings(fx.session, {});
+    const mcp = await connect(fx.ctx);
+    try {
+      const out = await mcp.call("holdings", {});
+      expect(out.holdings).toEqual(payload(domain.rows));
+      expect(out.hasMore).toBe(domain.hasMore);
+      expect(out.nextCursor).toBe(domain.nextCursor);
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it("long_term_savings matches listLongTermSavingsAccounts", async () => {
+    const fx = await freshFixture("lts");
+    const domain = await listLongTermSavingsAccounts(fx.session);
+    const mcp = await connect(fx.ctx);
+    try {
+      const out = await mcp.call("long_term_savings");
+      expect(out.accounts).toEqual(payload(domain));
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it("categories matches listCategoryTree", async () => {
+    const fx = await freshFixture("cats");
+    await category(fx, "Coffee", "expense");
+    const domain = await listCategoryTree(fx.session);
+    const mcp = await connect(fx.ctx);
+    try {
+      const out = await mcp.call("categories");
+      expect(out.categories).toEqual(payload(domain));
+      expect((out.categories as unknown[]).length).toBeGreaterThan(0);
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it("rules matches listRules", async () => {
+    const fx = await freshFixture("rules");
+    const coffee = await category(fx, "Coffee", "expense");
+    await upsertRule(fx.session, {
+      name: "Cafelix",
+      active: true,
+      effectiveDate: null,
+      categoryId: coffee,
+      conditions: [{ conditionType: "description", operator: "contains", value: "cafelix" }],
+    });
+    const domain = await listRules(fx.session);
+
+    const mcp = await connect(fx.ctx);
+    try {
+      const out = await mcp.call("rules");
+      expect(out.rules).toEqual(payload(domain));
+      expect((out.rules as unknown[]).length).toBe(1);
+    } finally {
+      await mcp.close();
+    }
+  });
+});
+
+/** The asset-group account names an `accounts` server returns — the tenant
+ * isolation probe reused for a second scope. */
+async function mcp2Names(mcp: { call: (name: string) => Promise<Record<string, unknown>> }) {
+  const out = await mcp.call("accounts");
+  return (out.assetGroups as Array<{ accounts: Array<{ name: string }> }>).flatMap((g) =>
+    g.accounts.map((acct) => acct.name),
+  );
+}
