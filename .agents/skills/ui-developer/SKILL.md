@@ -42,6 +42,20 @@ new feedback lands.
 
 ## Feedback log (newest first — append, don't overwrite)
 
+### 2026-08-14 — mobile verification: `resize_window` can't be trusted, and don't fix mobile by breaking desktop
+
+- **`resize_window` does not reliably reflow the content viewport.** Chrome keeps the content at its
+  wide width, and the automation window can't shrink below a floor, so a post-resize screenshot stays
+  wide and the mobile pass reads as inconclusive (or worse, falsely "fine"). This recurred across
+  sessions. Don't verify a narrow-layout change from a resize + screenshot alone.
+- **What actually works:** inject a **same-origin iframe sized to the target viewport** (e.g. 390px)
+  and measure with `getBoundingClientRect` / `scrollWidth` via `javascript_tool` — deterministic,
+  and it catches horizontal overflow the screenshot hides. Screenshot zoom-region mapping is also
+  unreliable; measure the DOM, don't eyeball the pixels.
+- **Don't fix mobile by neglecting desktop.** Capture a desktop baseline *before* the change and
+  confirm it's unchanged *after* — a responsive pass that only checks the phone width regularly
+  regresses the desktop layout.
+
 ### 2026-08-09 — dashboard redesign: an adaptive top, a feed panel, and a spending % that would have lied
 
 - **The dashboard top is adaptive, by the owner's own call.** When there's work (uncategorized
