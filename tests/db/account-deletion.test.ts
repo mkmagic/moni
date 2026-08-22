@@ -15,7 +15,7 @@
 // absent from the list for the same structural reason the app excludes it
 // from RLS.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import * as schema from "@/db/schema";
 import { deleteAccount } from "@/domain/account-deletion";
 import { authenticate } from "@/domain/auth";
@@ -414,6 +414,16 @@ async function seedFullOwner(label: string): Promise<OwnerFixture> {
       returnPct: "-3.81",
       annualCostPct: "0.10",
     });
+  });
+
+  // Agent token (issue #113). Placeholder hash + ciphertext — the delete test
+  // only cares that the row exists and is removed, not that it verifies.
+  await elevatedDb.insert(schema.agentTokens).values({
+    ownerId: userId,
+    tokenHash: randomBytes(32),
+    wrappedDk: ct(`${label}-token`),
+    label: `${label}-agent`,
+    expiresAt: new Date("2030-01-01T00:00:00Z"),
   });
 
   return { userId, email };

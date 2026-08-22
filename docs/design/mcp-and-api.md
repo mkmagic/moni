@@ -99,6 +99,13 @@ Shape fixed by #19; concrete tools deferred to §7. Three layers, built on a **c
 
 ---
 
+## 7b. Implementation status (issue #113)
+
+- **Phase 1 — token domain + schema — done.** `agent_tokens` (`src/db/schema/identity.ts`, migrations `0028`/`0029`), RLS-scoped to `owner_id`. `src/domain/agent-token.ts` provides `mintToken` / `verifyAndUnwrapDk` / `revokeToken` / `listTokens`. Token secret is 32 random bytes shown once (prefix `moni_agent_`), stored only as a SHA-256 `token_hash`; `wrapped_dk` re-wraps DK under `deriveKekFromUnlockSecret(secret)` — the same seam `webauthn-prf` uses for CK, so no CK column exists on this surface.
+  - **Pre-auth lookup wrinkle (worth knowing before touching `0029`):** verify must find a row *by hash* before `app.user_id` is set, so `agent_tokens` carries a second, SELECT-only policy `agent_tokens_app_select` gated on the GUC being unset (mirrors `users_app_select`, drizzle/0002). Because that gate doesn't constant-fold the tenant qual away, the tenant policy is written with `nullif(current_setting('app.user_id', true), '')::uuid` — the standard bare `''::uuid` cast would *throw* on a pooled connection whose GUC reverted to `''` after a prior `withUser` commit. Still fail-closed (unset/empty ⇒ zero rows), and `listTokens`/`revokeToken` stay tenant-scoped because they run inside `withUser`.
+- **Phase 2 — MCP server + auth — done.** `POST /api/mcp` (`src/app/api/mcp/route.ts`), MCP **Streamable HTTP** in stateless JSON mode via `WebStandardStreamableHTTPServerTransport`. `withAgentRequest` (`src/lib/mcp/agent-request.ts`) turns the bearer token into a one-request `{ userId, dataKey }` window and `fill(0)`-wipes DK in a `finally`. One trivial read-only tool (`whoami`) proves the pipe; the real tool surface (§6) is Phase 3.
+- **Phases 3–5 (tool surface, abuse/injection posture, token-management UI) — not started.**
+
 ## 8. Out of scope for this document
 
 - **In-app chat assistant** — deferred by #19 to propose-and-confirm; its model-backend binding (#3) and rules-only degradation go with it.

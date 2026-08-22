@@ -97,3 +97,50 @@ export const userUnlockMethods = pgTable(
       .where(sql`${table.type} = 'password-argon2id'`),
   ],
 );
+
+/**
+ * Per-user **agent tokens** — the bearer secret a remote MCP client carries to
+ * read that user's own financial data headless (issue #113, docs/design/
+ * mcp-and-api.md §4). One row per minted token, RLS-scoped to its owner.
+ *
+ * The token is opaque and **hashed at rest** — `token_hash` is the SHA-256 of
+ * the secret, never the secret itself; the plaintext is shown to the user
+ * exactly once at mint time and stored only by the client. `wrapped_dk` holds
+ * the user's data key (DK) re-wrapped under a KEK derived from the token
+ * secret (the same 32-byte-secret→KEK seam `webauthn-prf` uses for CK), so a
+ * request bearing the token can unwrap DK for that one request and nothing
+ * else. Neither column is usable without the secret, which is why the pre-auth
+ * lookup policy that finds a row by `token_hash` before `app.user_id` is known
+ * is safe — mirroring `users_app_select` (drizzle/0002).
+ *
+ * **DK only, never CK.** There is deliberately no credential-key column here:
+ * the two-key boundary (docs/design/mcp-and-api.md §3) is that an agent token
+ * can disclose Tier-1 financial data but can never reach the bank-credential
+ * key. That boundary is structural — this table cannot hold a CK wrap.
+ */
+export const agentTokens = pgTable(
+  "agent_tokens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => users.id),
+    // SHA-256 of the opaque token secret. High-entropy, so an equality lookup
+    // needs no constant-time compare (unlike a low-entropy secret).
+    tokenHash: bytea("token_hash").notNull(),
+    // DK wrapped under a KEK derived from the token secret. Opaque ciphertext.
+    wrappedDk: bytea("wrapped_dk").notNull(),
+    label: text("label"),
+    /** TTL backstop; server-side revocation (`revoked_at`) is the primary lever. */
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    unique("agent_tokens_owner_id_id_unique").on(table.ownerId, table.id),
+    // The pre-auth lookup key: verify resolves a presented token to its row by
+    // hash before any user is scoped in.
+    uniqueIndex("agent_tokens_token_hash_unique").on(table.tokenHash),
+  ],
+);

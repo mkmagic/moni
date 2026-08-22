@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { elevatedPool } from "./helpers";
 
 describe("migrations: structural facts about moni_test", () => {
-  it("creates exactly the 33 application tables, including four long-term-savings tables", async () => {
+  it("creates exactly the 34 application tables, including four long-term-savings tables", async () => {
     const { rows } = await elevatedPool.query<{ count: string }>(
       // `_moni_test_migrations` is this harness's own bookkeeping (see
       // setup-test-db.ts), not part of the data model — excluded so the
@@ -18,24 +18,24 @@ describe("migrations: structural facts about moni_test", () => {
        where table_schema = 'public' and table_type = 'BASE TABLE'
          and table_name <> '_moni_test_migrations'`,
     );
-    expect(Number(rows[0].count)).toBe(33);
+    expect(Number(rows[0].count)).toBe(34);
   });
 
-  it("enables + forces RLS on exactly 32 tables (every user-owned table, excluding fx_rates)", async () => {
+  it("enables + forces RLS on exactly 33 tables (every user-owned table, excluding fx_rates)", async () => {
     const { rows } = await elevatedPool.query<{ count: string }>(
       `select count(*)::int as count
        from pg_class c
        join pg_namespace n on n.oid = c.relnamespace
        where n.nspname = 'public' and c.relkind = 'r' and c.relrowsecurity = true and c.relforcerowsecurity = true`,
     );
-    expect(Number(rows[0].count)).toBe(32);
+    expect(Number(rows[0].count)).toBe(33);
   });
 
-  it("has a tenant-isolation policy on every one of those 32 tables", async () => {
+  it("has a tenant-isolation policy on every one of those 33 tables", async () => {
     const { rows } = await elevatedPool.query<{ tablename: string }>(
       `select distinct tablename from pg_policies where schemaname = 'public'`,
     );
-    expect(rows.length).toBe(32);
+    expect(rows.length).toBe(33);
   });
 
   it("leaves fx_rates without RLS (global reference data, data-model.md §5)", async () => {
