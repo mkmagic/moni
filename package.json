@@ -25,6 +25,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@noble/ciphers": "2.2.0",
     "@noble/hashes": "2.2.0",
     "@node-rs/argon2": "^2.0.2",

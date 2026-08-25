@@ -9,6 +9,8 @@ AGENTS.md
 CLAUDE.md
 vision.md
 .agents/
+.worktrees/
+.claude/worktrees/
 scripts/scraper-test/
 
 # Build output

@@ -35,13 +35,16 @@ export function SmartCategorizeButton({ count }: SmartCategorizeButtonProps) {
   }
 
   return (
-    <div className="flex flex-col items-end gap-1">
+    // Full width on a phone so the long label and any error sit in the flow
+    // instead of being crammed against the right edge; auto width from `sm` up
+    // where it sits inline in the toolbar (#107).
+    <div className="flex w-full flex-col gap-1 sm:w-auto">
       <Button
         type="button"
         variant="outline"
         disabled={loading || count === 0}
         onClick={() => void onClick()}
-        className="gap-1.5 px-3 py-1.5 text-xs font-medium"
+        className="w-full justify-center gap-1.5 px-3 py-1.5 text-xs font-medium sm:w-auto"
       >
         {loading ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />

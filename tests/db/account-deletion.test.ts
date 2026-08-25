@@ -15,7 +15,7 @@
 // absent from the list for the same structural reason the app excludes it
 // from RLS.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import * as schema from "@/db/schema";
 import { deleteAccount } from "@/domain/account-deletion";
 import { authenticate } from "@/domain/auth";
@@ -414,6 +414,48 @@ async function seedFullOwner(label: string): Promise<OwnerFixture> {
       returnPct: "-3.81",
       annualCostPct: "0.10",
     });
+  });
+
+  // Agent token (issue #113). Placeholder hash + ciphertext — the delete test
+  // only cares that the row exists and is removed, not that it verifies.
+  const agentTokenId = randomUUID();
+  await elevatedDb.insert(schema.agentTokens).values({
+    id: agentTokenId,
+    ownerId: userId,
+    tokenHash: randomBytes(32),
+    wrappedDk: ct(`${label}-token`),
+    label: `${label}-agent`,
+    expiresAt: new Date("2030-01-01T00:00:00Z"),
+  });
+
+  await elevatedDb.insert(schema.mcpOauthGrants).values({
+    ownerId: userId,
+    clientId: "https://claude.ai/oauth/claude-code-client-metadata",
+    refreshTokenHash: randomBytes(32),
+    refreshWrappedDk: ct(`${label}-oauth-refresh`),
+    scope: "mcp:read offline_access",
+    label: `${label}-oauth-grant`,
+    expiresAt: new Date("2030-01-01T00:00:00Z"),
+  });
+
+  await elevatedDb.insert(schema.mcpOauthAuthCodes).values({
+    ownerId: userId,
+    clientId: "https://claude.ai/oauth/claude-code-client-metadata",
+    codeHash: randomBytes(32),
+    wrappedDk: ct(`${label}-oauth-code`),
+    codeChallenge: randomBytes(32).toString("base64url"),
+    redirectUri: "http://localhost:3118/callback",
+    scope: "mcp:read offline_access",
+    expiresAt: new Date("2030-01-01T00:00:00Z"),
+  });
+
+  // Agent access log (issue #113 Phase 4) — a child of the token row.
+  await elevatedDb.insert(schema.agentAccessLog).values({
+    ownerId: userId,
+    tokenId: agentTokenId,
+    tool: "whoami",
+    argShape: {},
+    rowCount: 1,
   });
 
   return { userId, email };

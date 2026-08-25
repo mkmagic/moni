@@ -14,6 +14,7 @@ import {
   payeeOf,
   type SortColumn,
   type TableControls,
+  type ViewFilters,
 } from "@/lib/transactions/table-view";
 import { cn } from "@/lib/utils";
 import type { CategoryView, SuggestionView } from "@/domain/categorization";
@@ -27,6 +28,14 @@ interface TransactionsTableProps {
   suggestions: Record<string, SuggestionView>;
   /** The SQL-side filters currently in the URL, echoed into the toolbar. */
   serverFilters: ServerFilters;
+  /** Income/Payment and expense-size, from the URL. Applied here over the
+   * window, and — when `searchAll` — already applied completely by the server. */
+  viewFilters: ViewFilters;
+  /** True when Income/Payment and size were filtered across the whole history
+   * server-side, so the "covers only the window" caveat doesn't apply to them. */
+  searchAll: boolean;
+  /** Asia/Jerusalem "today" from the server, for the timeframe presets. */
+  today: string;
   /** How many entries the server was willing to return, so the table can say
    * how far the client-side search, sort and amount filters actually reach. */
   windowSize: number;
@@ -57,6 +66,9 @@ export function TransactionsTable({
   categories,
   suggestions,
   serverFilters,
+  viewFilters,
+  searchAll,
+  today,
   windowSize,
   capped,
   smartCategorizeEnabled = false,
@@ -74,7 +86,10 @@ export function TransactionsTable({
     [entries, suggestions],
   );
 
-  const visible = useMemo(() => applyTableControls(entries, controls), [entries, controls]);
+  const visible = useMemo(
+    () => applyTableControls(entries, controls, viewFilters),
+    [entries, controls, viewFilters],
+  );
 
   function toggleSort(column: SortColumn) {
     setControls((c) => ({
@@ -87,10 +102,13 @@ export function TransactionsTable({
   }
 
   const hasAmountBound = controls.minAmount !== "" || controls.maxAmount !== "";
-  const clientFiltered = controls.query !== "" || hasAmountBound;
+  // Income/Payment and size only refine the window client-side while
+  // `searchAll` is off; with it on, the server already filtered them completely.
+  const windowViewFiltered =
+    !searchAll && (viewFilters.direction !== "all" || viewFilters.size !== "all");
 
   const notes: string[] = [];
-  if (clientFiltered) notes.push(`${visible.length} of ${entries.length} shown`);
+  if (visible.length < entries.length) notes.push(`${visible.length} of ${entries.length} shown`);
   if (capped) {
     // Sorting has to be named here too, not just the filters. "Amount,
     // descending" over a truncated window presents the largest of the newest
@@ -99,6 +117,13 @@ export function TransactionsTable({
     notes.push(
       `Search, sorting and amount filters cover only the ${windowSize} most recent transactions in this range — narrow the dates to look further back.`,
     );
+    if (windowViewFiltered) {
+      // The remedy the user actually has for Income/Payment and size is the
+      // Advanced Search toggle, so name it rather than the date workaround.
+      notes.push(
+        "Income/Payment and size cover only that window too — turn on “Search the whole timeframe” in Advanced Search to filter all of them.",
+      );
+    }
   }
   if (hasAmountBound) {
     // Currency belongs in this caveat alongside sign: a pending-FX row carries
@@ -110,12 +135,15 @@ export function TransactionsTable({
   // An empty table has three quite different causes, and telling the user
   // "nothing matched" when they have never synced is the unhelpful one.
   const serverFiltered =
-    serverFilters.category !== "" || serverFilters.from !== "" || serverFilters.to !== "";
+    serverFilters.category !== "" ||
+    serverFilters.from !== "" ||
+    serverFilters.to !== "" ||
+    (searchAll && (viewFilters.direction !== "all" || viewFilters.size !== "all"));
   const emptyMessage =
     entries.length > 0
       ? "No transaction matches that search."
       : serverFiltered
-        ? "No transactions in this range."
+        ? "No transactions match these filters."
         : "No transactions yet.";
 
   return (
@@ -123,6 +151,9 @@ export function TransactionsTable({
       <TransactionsToolbar
         categories={categories}
         serverFilters={serverFilters}
+        viewFilters={viewFilters}
+        searchAll={searchAll}
+        today={today}
         controls={controls}
         onControlsChange={setControls}
         smartCategorizeEnabled={smartCategorizeEnabled}

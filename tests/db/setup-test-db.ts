@@ -69,6 +69,17 @@ const MIGRATION_FILES = [
   "0025_long_term_savings_tables.sql",
   "0026_long_term_savings_rls_and_roles.sql",
   "0027_long_term_savings_investment_expense_rate.sql",
+  "0028_agent_tokens.sql",
+  "0029_agent_tokens_rls_and_roles.sql",
+  "0030_agent_access_log.sql",
+  "0031_agent_access_log_rls_and_roles.sql",
+  "0032_agent_token_expiry_nullable.sql",
+  "0033_zippy_firedrake.sql",
+  "0034_mcp_oauth_grants_rls_and_roles.sql",
+  "0035_messy_ser_duncan.sql",
+  "0036_mcp_oauth_auth_codes_rls_and_roles.sql",
+  "0037_mean_runaways.sql",
+  "0038_ambiguous_charles_xavier.sql",
 ];
 
 /** Bookkeeping for which of MIGRATION_FILES this database has already seen.

@@ -27,5 +27,5 @@ This document provides actionable guidelines for implementing encryption in Moni
 
 ## 4. Application & Agent Context
 - **AI Agents:** Agents are **read-only** in v1.0. Do not construct write paths for AI agents.
-- **Decryption Requirements:** Headless or MCP agent reads are only possible when the user's data key is actively in RAM (a live unlock window or an opt-in warm key). An API/MCP identity provides authorization only, not a decryption capability.
+- **Decryption Requirements:** A user may opt **their own** account into AI reads by minting a **per-user agent token** that lets the server unwrap **that user's DK for one request** (server decrypts, aggregates, wipes DK — no standing key). The token reaches **DK only** — never CK, which stays passkey-PRF-only and unreachable from any token/password KEK. Worst case a token yields is disclosure of that user's Tier-1 data; never write, never the bank, never another user. See `../security/threat-model.md` §5.6 and `mcp-and-api.md`.
 - **Worker Confinement:** The worker is the only component that touches plaintext bank credentials. It must wipe these credentials from memory immediately after the scrape finishes.

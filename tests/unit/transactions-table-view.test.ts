@@ -122,6 +122,41 @@ describe("applyTableControls — amount range", () => {
   });
 });
 
+describe("applyTableControls — Income/Payment and size", () => {
+  // The predicates themselves are pinned in transactions-predicates.test.ts;
+  // this only checks the third argument is honoured and composes with the rest.
+  const rows = [
+    entry({ id: "big-expense", amount: { amount: "-1200", currency: "ILS" } }),
+    entry({ id: "small-expense", amount: { amount: "-40", currency: "ILS" } }),
+    entry({ id: "salary", amount: { amount: "8000", currency: "ILS" } }),
+    entry({ id: "transfer", isTransfer: true, amount: { amount: "-500", currency: "ILS" } }),
+  ];
+
+  it("defaults to keeping every row when no view filter is passed", () => {
+    expect(ids(applyTableControls(rows, controls()))).toHaveLength(4);
+  });
+
+  it("filters to payments, dropping income and transfers", () => {
+    expect(
+      ids(applyTableControls(rows, controls(), { direction: "payment", size: "all" })),
+    ).toEqual(["big-expense", "small-expense"]);
+  });
+
+  it("filters to income", () => {
+    expect(ids(applyTableControls(rows, controls(), { direction: "income", size: "all" }))).toEqual(
+      ["salary"],
+    );
+  });
+
+  it("composes a size band with a direction", () => {
+    // Large (>₪1,000) payments only: the ₪8,000 salary is Large too, but it is
+    // income, so the direction drops it.
+    expect(ids(applyTableControls(rows, controls(), { direction: "payment", size: "l" }))).toEqual([
+      "big-expense",
+    ]);
+  });
+});
+
 describe("applyTableControls — sort", () => {
   const rows = [
     entry({ id: "a", date: "2026-07-03", accountName: "Visa", categoryName: "Rent" }),
