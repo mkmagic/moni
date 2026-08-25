@@ -1,8 +1,11 @@
-import { spawn } from "node:child_process";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSessionFromRequest } from "@/domain/auth";
-import { getConnection, getDecryptedCredentials } from "@/domain/connections";
+import {
+  getConnection,
+  getDecryptedCredentials,
+  getEncryptedCredentials,
+} from "@/domain/connections";
 import {
   computeSyncStartDate,
   markSyncRunFailed,
@@ -10,16 +13,10 @@ import {
 } from "@/domain/sync-promotion";
 import { getCredentialKey } from "@/lib/auth/cred-window";
 import { BACKFILL_MAX_MONTHS, isBackfillStartAllowed, todayIso } from "@/lib/backfill-window";
-import {
-  encodeChildStdinFrame,
-  getConnectorDefinition,
-  isConnectorId,
-  type ChildStdinPayload,
-} from "@/lib/connectors";
+import { getConnectorDefinition, isConnectorId } from "@/lib/connectors";
+import { startBankSync } from "@/lib/connectors/bank-sync";
 import { spawnInvestmentSyncWorker } from "@/lib/investments";
 import { PRODUCT_LABEL } from "@/lib/long-term-savings/labels";
-import { redactSecrets } from "@/lib/redact-secrets";
-import { workerRuntimePath } from "@/lib/worker-runtime";
 
 const Params = z.object({ id: z.uuid() });
 const validIsoDate = z
@@ -47,9 +44,6 @@ const Currency = z.string().regex(/^[A-Z]{3}$/);
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 /** Every PDF opens with this, whatever the browser claimed the type was. */
 const PDF_MAGIC = Buffer.from("%PDF-", "ascii");
-/** Cap on retained child stderr — enough for a stack trace, bounded so a
- * chatty (or hostile) scrape can't grow the server's heap. */
-const MAX_STDERR_CHARS = 8 * 1024;
 
 export async function POST(
   req: NextRequest,
@@ -149,13 +143,30 @@ export async function POST(
   // Multipart returned above, and JSON returned when the window was locked.
   if (!credentialKey)
     return NextResponse.json({ error: "credential_window_locked" }, { status: 423 });
-  const decrypted = await getDecryptedCredentials(session.userId, connection.id, credentialKey);
-  if (!decrypted) return NextResponse.json({ error: "not found" }, { status: 404 });
+  // IBKR/SnapTrade credentials are still decrypted parent-side (tracked #92
+  // follow-up). The bank path decrypts inside the disposable fetcher, so the
+  // parent only reads ciphertext here and never materializes plaintext.
+  const isBankScrape =
+    connection.connectorId !== "ibkr_flex" && connection.connectorId !== "snaptrade";
+  let decrypted: Awaited<ReturnType<typeof getDecryptedCredentials>> = null;
+  let encrypted: Awaited<ReturnType<typeof getEncryptedCredentials>> = null;
+  if (isBankScrape) {
+    encrypted = await getEncryptedCredentials(session.userId, connection.id);
+    if (!encrypted) return NextResponse.json({ error: "not found" }, { status: 404 });
+  } else {
+    decrypted = await getDecryptedCredentials(session.userId, connection.id, credentialKey);
+    if (!decrypted) return NextResponse.json({ error: "not found" }, { status: 404 });
+  }
   const syncRunId = await startActiveConnectionSyncRun(session.userId, connection.id);
-  if (!syncRunId) return NextResponse.json({ error: "connection_unavailable" }, { status: 409 });
+  if (!syncRunId) {
+    // A concurrent run won the slot; nothing downstream will consume the
+    // ciphertext copy, so clear it rather than abandon it to the GC.
+    encrypted?.ciphertext.fill(0);
+    return NextResponse.json({ error: "connection_unavailable" }, { status: 409 });
+  }
   if (connection.connectorId === "ibkr_flex") {
-    const token = Buffer.from(decrypted.credentials.flexToken ?? "", "utf8");
-    const queryId = Buffer.from(decrypted.credentials.queryId ?? "", "utf8");
+    const token = Buffer.from(decrypted!.credentials.flexToken ?? "", "utf8");
+    const queryId = Buffer.from(decrypted!.credentials.queryId ?? "", "utf8");
     if (!token.length || !queryId.length) {
       token.fill(0);
       queryId.fill(0);
@@ -171,8 +182,8 @@ export async function POST(
     });
     if (!started) return NextResponse.json({ error: "sync_unavailable" }, { status: 500 });
   } else if (connection.connectorId === "snaptrade") {
-    const clientId = Buffer.from(decrypted.credentials.clientId ?? "", "utf8");
-    const consumerKey = Buffer.from(decrypted.credentials.consumerKey ?? "", "utf8");
+    const clientId = Buffer.from(decrypted!.credentials.clientId ?? "", "utf8");
+    const consumerKey = Buffer.from(decrypted!.credentials.consumerKey ?? "", "utf8");
     if (!clientId.length || !consumerKey.length) {
       clientId.fill(0);
       consumerKey.fill(0);
@@ -188,82 +199,17 @@ export async function POST(
     });
     if (!started) return NextResponse.json({ error: "sync_unavailable" }, { status: 500 });
   } else {
-    spawnBankWorker(session.dataKey, {
-      syncRunId,
+    startBankSync({
+      credentialKey: Buffer.from(credentialKey),
+      ciphertext: encrypted!.ciphertext,
+      dataKey: Buffer.from(session.dataKey),
       userId: session.userId,
       connectionId: connection.id,
       connectorId: connection.connectorId,
+      syncRunId,
       startDate: parsed.data.startDate ?? computeSyncStartDate(connection.lastSyncAt),
-      credentials: decrypted.credentials,
+      version: encrypted!.version,
     });
   }
   return NextResponse.json({ syncRunId }, { status: 202 });
-}
-
-/**
- * The child's stderr is PIPED, not inherited. Inheriting pointed an
- * uninspected stream — from a process holding a plaintext bank credential —
- * straight at the server's log sink (journal, Docker log driver, aggregator),
- * against "credentials never to logs" (security-design-principles §1/§5).
- * The library's own debug output prints step names rather than values, but
- * `verbose: true` would enable Puppeteer protocol logging, which includes the
- * `Input.insertText` payload — i.e. the typed password. Piping means the
- * parent decides: bounded, redacted, and only on failure.
- */
-function spawnBankWorker(dataKey: Buffer, payload: ChildStdinPayload): void {
-  const child = spawn(
-    workerRuntimePath("node_modules", ".bin", "tsx"),
-    [workerRuntimePath("scripts", "scrape-worker.mts")],
-    { stdio: ["pipe", "ignore", "pipe"] },
-  );
-  const frame = encodeChildStdinFrame(dataKey, payload);
-  child.stdin.write(frame, () => frame.fill(0));
-  child.stdin.end();
-  child.once("error", () => frame.fill(0));
-
-  let stderr = "";
-  child.stderr?.on("data", (chunk: Buffer) => {
-    if (stderr.length >= MAX_STDERR_CHARS) return;
-    stderr += chunk.toString("utf8").slice(0, MAX_STDERR_CHARS - stderr.length);
-  });
-  /** Logs the child's stderr once, redacted and bounded, then drops it. */
-  const flushStderr = () => {
-    const captured = stderr;
-    stderr = "";
-    if (!captured.trim()) return;
-    const safe = redactSecrets(captured, Object.values(payload.credentials));
-    console.error(`scrape-worker[${payload.syncRunId}] stderr:\n${safe}`);
-  };
-
-  let kill: NodeJS.Timeout | undefined;
-  const term = setTimeout(
-    () => {
-      child.kill("SIGTERM");
-      kill = setTimeout(() => child.kill("SIGKILL"), 5_000);
-    },
-    5 * 60 * 1000,
-  );
-  const done = () => {
-    clearTimeout(term);
-    if (kill) clearTimeout(kill);
-  };
-  const failed = () => {
-    void markSyncRunFailed(payload.userId, payload.syncRunId, "scrape_worker_failed");
-  };
-  // `close` rather than `exit`: `exit` can fire before the stderr pipe has
-  // drained, which would log a truncated diagnostic (or none at all).
-  child.once("close", (code, signal) => {
-    done();
-    // Only a failed run is worth logging; a clean scrape's chatter is noise,
-    // and dropping it keeps scraper output out of the log by default.
-    if (code !== 0 || signal) {
-      flushStderr();
-      failed();
-    } else stderr = "";
-  });
-  child.once("error", () => {
-    done();
-    flushStderr();
-    failed();
-  });
 }

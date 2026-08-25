@@ -76,8 +76,12 @@ There is no way to have both *unattended scheduled sync* and *server-compromise-
   connection deliberately stores no credential. Losing every passkey requires
   deleting and re-entering a credentialed connection; there is no CK recovery path.
 - To run a credentialed sync, the user clicks **Sync** while the passkey-armed CK
-  window is open. The parent decrypts the credential in memory, passes only bounded
-  worker material, and the child wipes owned buffers on every exit path.
+  window is open. For a bank scrape the parent passes the encrypted `credentials_ct`
+  + CK to a disposable **fetcher** that decrypts them itself — the parent never holds
+  plaintext bank credentials, and the fetcher holds no data key and no database, so a
+  separate **promoter** does the ledger write (issue #92; `connector-interface.md` §3).
+  IBKR/SnapTrade still decrypt parent-side (tracked follow-up). Every side wipes its
+  owned buffers on each exit path.
 - Property achieved: a stolen disk/backup, a stolen DB, or a leaked API key yields **no usable bank credentials** — none of them contain the unlock secret. This is exactly the bar we want against Tier-0 theft.
 - Cost: **no unattended scheduled sync**, and a prompt on every sync. This is the "too cumbersome" part.
 
