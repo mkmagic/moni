@@ -28,6 +28,10 @@ interface ConnectionRowData {
   connectorId: string;
   displayName: string | null;
   status: string;
+  /** File-upload connections are excluded from "Sync all" — a credentialed
+   * fetch is the only thing the bulk chain can refresh (an import needs a
+   * user-picked file). */
+  mode: "credentialed_fetch" | "user_mediated_import";
   /** Pre-formatted on the server — see the comment in connections/page.tsx.
    * Do NOT pass a raw date here and format it in this component; that is a
    * hydration mismatch (server locale/timezone vs the browser's). */
@@ -101,8 +105,14 @@ export function ConnectionsList({ initialConnections }: ConnectionsListProps) {
     router.refresh();
   }
 
+  // Only credentialed fetches: an import source can't be refreshed without a
+  // user-picked file, so it belongs in neither the chain nor its "N of M" count.
+  const syncableIds = initialConnections
+    .filter((c) => c.mode === "credentialed_fetch")
+    .map((c) => c.id);
+
   function onSyncAll() {
-    bulkSync.start(initialConnections.map((c) => c.id));
+    bulkSync.start(syncableIds);
   }
 
   async function onArmRow(id: string) {
@@ -135,7 +145,7 @@ export function ConnectionsList({ initialConnections }: ConnectionsListProps) {
             type="button"
             variant="outline"
             onClick={onSyncAll}
-            disabled={bulkBusy}
+            disabled={bulkBusy || syncableIds.length === 0}
             className="gap-1.5 px-3 py-1.5 text-xs"
           >
             {bulkBusy ? (

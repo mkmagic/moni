@@ -37,6 +37,7 @@ export default async function ConnectionsSettingsPage() {
       connectorId: c.connectorId,
       displayName: c.displayName,
       status: c.status,
+      mode: c.mode,
       lastSyncLabel: c.lastSyncAt
         ? `Last synced ${syncedAtFmt.format(c.lastSyncAt)}`
         : "Never synced",
