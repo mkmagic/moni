@@ -23,6 +23,7 @@ import { listCategories, suggestCategories } from "@/domain/categorization";
 import { listEntries } from "@/domain/transactions";
 import { getBudgetSummary, type OverBudgetCategory } from "@/domain/budget";
 import { shouldPromptSync } from "@/lib/sync-reminder";
+import { isConnectionStale } from "@/lib/sync-staleness";
 import { cn } from "@/lib/utils";
 
 /** Time-of-day greeting from the SERVER's clock. This is a self-hosted,
@@ -34,9 +35,6 @@ function timeOfDay(hour: number): string {
   if (hour < 18) return "Good afternoon";
   return "Good evening";
 }
-
-/** A sync older than this is nagged about rather than noted quietly. */
-const STALE_SYNC_DAYS = 7;
 
 function daysSince(date: Date): number {
   return Math.floor((Date.now() - date.getTime()) / 86_400_000);
@@ -133,8 +131,11 @@ export default async function DashboardPage() {
   let syncMeta: string | undefined;
   let syncItem: InsightItem | undefined;
   if (connections.length > 0) {
-    const staleCount = connections.filter(
-      (c) => c.lastSyncAt == null || daysSince(c.lastSyncAt) >= STALE_SYNC_DAYS,
+    // Freshness is judged per connection with a mode-specific window (see
+    // sync-staleness.ts): an import source only refreshes on a file upload, so
+    // it isn't "out of date" until a quarter has passed with none.
+    const staleCount = connections.filter((c) =>
+      isConnectionStale({ mode: c.mode, lastSyncAt: c.lastSyncAt }),
     ).length;
     const freshestTime = connections
       .map((c) => c.lastSyncAt)
@@ -293,7 +294,7 @@ export default async function DashboardPage() {
   return (
     <div className="flex flex-col gap-6">
       <DashboardSync
-        connectionIds={connections.map((c) => c.id)}
+        connectionIds={connections.filter((c) => c.mode === "credentialed_fetch").map((c) => c.id)}
         importConnections={connections.filter((c) => c.mode === "user_mediated_import")}
         showReminder={showReminder}
         title="Overview"
