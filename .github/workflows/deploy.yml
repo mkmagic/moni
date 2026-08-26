@@ -64,6 +64,8 @@ jobs:
       - name: Build immutable release artifact
         env:
           RELEASE_SHA: ${{ steps.release.outputs.sha }}
+          # Baked into the client bundle so the app can display its version.
+          NEXT_PUBLIC_MONI_RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           npm ci --no-audit --no-fund
           npm run build
