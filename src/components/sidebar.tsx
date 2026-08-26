@@ -16,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { APP_VERSION } from "@/lib/version";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -41,6 +42,29 @@ function Logo({ className }: { className?: string }) {
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img src="/moni-icon.png" alt="" className={cn("w-auto", className)} />
+  );
+}
+
+/** The clickable brand mark — logo plus wordmark, linking home to the
+ * dashboard. Shared by the three headers so they can't drift apart. */
+function BrandLink({
+  logoClassName,
+  onNavigate,
+}: {
+  logoClassName: string;
+  /** Closes the mobile drawer when the brand is used to navigate. */
+  onNavigate?: () => void;
+}) {
+  return (
+    <Link
+      href="/dashboard"
+      onClick={onNavigate}
+      aria-label="Moni, go to dashboard"
+      className="flex items-center gap-2.5 rounded-[var(--radius)] transition hover:opacity-80"
+    >
+      <Logo className={logoClassName} />
+      <span className="text-base font-semibold text-foreground">Moni</span>
+    </Link>
   );
 }
 
@@ -119,6 +143,7 @@ function RailNav({
           <LogOut className="h-4 w-4" />
           Log out
         </button>
+        {APP_VERSION && <p className="px-3 text-xs text-muted-foreground">Version {APP_VERSION}</p>}
       </div>
     </>
   );
@@ -199,17 +224,13 @@ export function Sidebar({ baseCurrency }: SidebarProps) {
         >
           <Menu className="h-5 w-5" />
         </button>
-        <Logo className="h-6" />
-        <span className="text-base font-semibold text-foreground">Moni</span>
+        <BrandLink logoClassName="h-6" />
       </div>
 
       {/* Desktop rail — unchanged, just hidden below `md`. */}
       <aside className="hidden h-screen w-60 shrink-0 flex-col border-r border-border bg-background md:flex">
         <div className="flex flex-col gap-1 px-5 py-6">
-          <div className="flex items-center gap-2.5">
-            <Logo className="h-8" />
-            <span className="text-base font-semibold text-foreground">Moni</span>
-          </div>
+          <BrandLink logoClassName="h-8" />
           <p className="text-xs text-muted-foreground">Your finances, in one place</p>
         </div>
         <RailNav pathname={pathname} baseCurrency={baseCurrency} onLogout={onLogout} />
@@ -241,10 +262,7 @@ export function Sidebar({ baseCurrency }: SidebarProps) {
         )}
       >
         <div className="flex items-center justify-between px-5 py-4">
-          <div className="flex items-center gap-2.5">
-            <Logo className="h-7" />
-            <span className="text-base font-semibold text-foreground">Moni</span>
-          </div>
+          <BrandLink logoClassName="h-7" onNavigate={() => setOpen(false)} />
           <button
             ref={closeRef}
             type="button"
