@@ -30,8 +30,13 @@ export default async function ConnectionsSettingsPage() {
     dateStyle: "medium",
     timeStyle: "short",
   });
+  // Import connections have no fetch time — their `lastSyncAt` is the date the
+  // uploaded file is *as of* (see domain/connections.ts), a calendar date with
+  // no meaningful clock time, so it reads "As of 30 Jun 2026" with no "00:00".
+  const asOfFmt = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium" });
   const rows = connections.map((c) => {
     const run = latestRuns[c.id];
+    const isImport = c.mode === "user_mediated_import";
     return {
       id: c.id,
       connectorId: c.connectorId,
@@ -39,8 +44,12 @@ export default async function ConnectionsSettingsPage() {
       status: c.status,
       mode: c.mode,
       lastSyncLabel: c.lastSyncAt
-        ? `Last synced ${syncedAtFmt.format(c.lastSyncAt)}`
-        : "Never synced",
+        ? isImport
+          ? `As of ${asOfFmt.format(c.lastSyncAt)}`
+          : `Last synced ${syncedAtFmt.format(c.lastSyncAt)}`
+        : isImport
+          ? "No file uploaded"
+          : "Never synced",
       // Surfaced so a failure survives a page reload — the client's own
       // error state doesn't.
       lastRunFailed: run?.status === "failed",
