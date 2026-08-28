@@ -173,62 +173,74 @@ export async function POST(
       return NextResponse.json({ error: "sync_already_in_progress" }, { status: 409 });
     }
   }
-  const syncRunId = await startActiveConnectionSyncRun(session.userId, connection.id);
-  if (!syncRunId) {
+  // Once the slot is taken, EVERY exit from here must release it — a throw that
+  // leaked it would wedge every future scrape behind a lock nobody unlocks. On
+  // the happy bank path `startBankSync` takes ownership and releases the slot
+  // when its fetcher exits, so it does not throw; the catch only fires on an
+  // early failure (a DB error, a frame-encoding fault) before that handoff.
+  try {
+    const syncRunId = await startActiveConnectionSyncRun(session.userId, connection.id);
+    if (!syncRunId) {
+      slot?.release();
+      // A concurrent run won the slot; nothing downstream will consume the
+      // ciphertext copy, so clear it rather than abandon it to the GC.
+      encrypted?.ciphertext.fill(0);
+      return NextResponse.json({ error: "connection_unavailable" }, { status: 409 });
+    }
+    if (connection.connectorId === "ibkr_flex") {
+      const token = Buffer.from(decrypted!.credentials.flexToken ?? "", "utf8");
+      const queryId = Buffer.from(decrypted!.credentials.queryId ?? "", "utf8");
+      if (!token.length || !queryId.length) {
+        token.fill(0);
+        queryId.fill(0);
+        await markSyncRunFailed(session.userId, syncRunId, "invalid_credentials");
+        return NextResponse.json({ error: "invalid request" }, { status: 400 });
+      }
+      const started = await spawnInvestmentSyncWorker({
+        script: "ibkr-worker.mts",
+        metadata: { userId: session.userId, connectionId: connection.id, syncRunId },
+        segments: [Buffer.from(session.dataKey), token, queryId],
+        userId: session.userId,
+        syncRunId,
+      });
+      if (!started) return NextResponse.json({ error: "sync_unavailable" }, { status: 500 });
+    } else if (connection.connectorId === "snaptrade") {
+      const clientId = Buffer.from(decrypted!.credentials.clientId ?? "", "utf8");
+      const consumerKey = Buffer.from(decrypted!.credentials.consumerKey ?? "", "utf8");
+      if (!clientId.length || !consumerKey.length) {
+        clientId.fill(0);
+        consumerKey.fill(0);
+        await markSyncRunFailed(session.userId, syncRunId, "invalid_credentials");
+        return NextResponse.json({ error: "invalid request" }, { status: 400 });
+      }
+      const started = await spawnInvestmentSyncWorker({
+        script: "snaptrade-worker.mts",
+        metadata: { userId: session.userId, connectionId: connection.id, syncRunId },
+        segments: [Buffer.from(session.dataKey), clientId, consumerKey],
+        userId: session.userId,
+        syncRunId,
+      });
+      if (!started) return NextResponse.json({ error: "sync_unavailable" }, { status: 500 });
+    } else {
+      startBankSync({
+        credentialKey: Buffer.from(credentialKey),
+        ciphertext: encrypted!.ciphertext,
+        dataKey: Buffer.from(session.dataKey),
+        userId: session.userId,
+        connectionId: connection.id,
+        connectorId: connection.connectorId,
+        syncRunId,
+        startDate: parsed.data.startDate ?? computeSyncStartDate(connection.lastSyncAt),
+        version: encrypted!.version,
+        // Non-null on this branch: isBankScrape acquired the slot above.
+        slot: slot!,
+      });
+    }
+    return NextResponse.json({ syncRunId }, { status: 202 });
+  } catch (err) {
+    // `release()` is idempotent, so this is safe even if startBankSync had
+    // already handed the slot to its exit handlers.
     slot?.release();
-    // A concurrent run won the slot; nothing downstream will consume the
-    // ciphertext copy, so clear it rather than abandon it to the GC.
-    encrypted?.ciphertext.fill(0);
-    return NextResponse.json({ error: "connection_unavailable" }, { status: 409 });
+    throw err;
   }
-  if (connection.connectorId === "ibkr_flex") {
-    const token = Buffer.from(decrypted!.credentials.flexToken ?? "", "utf8");
-    const queryId = Buffer.from(decrypted!.credentials.queryId ?? "", "utf8");
-    if (!token.length || !queryId.length) {
-      token.fill(0);
-      queryId.fill(0);
-      await markSyncRunFailed(session.userId, syncRunId, "invalid_credentials");
-      return NextResponse.json({ error: "invalid request" }, { status: 400 });
-    }
-    const started = await spawnInvestmentSyncWorker({
-      script: "ibkr-worker.mts",
-      metadata: { userId: session.userId, connectionId: connection.id, syncRunId },
-      segments: [Buffer.from(session.dataKey), token, queryId],
-      userId: session.userId,
-      syncRunId,
-    });
-    if (!started) return NextResponse.json({ error: "sync_unavailable" }, { status: 500 });
-  } else if (connection.connectorId === "snaptrade") {
-    const clientId = Buffer.from(decrypted!.credentials.clientId ?? "", "utf8");
-    const consumerKey = Buffer.from(decrypted!.credentials.consumerKey ?? "", "utf8");
-    if (!clientId.length || !consumerKey.length) {
-      clientId.fill(0);
-      consumerKey.fill(0);
-      await markSyncRunFailed(session.userId, syncRunId, "invalid_credentials");
-      return NextResponse.json({ error: "invalid request" }, { status: 400 });
-    }
-    const started = await spawnInvestmentSyncWorker({
-      script: "snaptrade-worker.mts",
-      metadata: { userId: session.userId, connectionId: connection.id, syncRunId },
-      segments: [Buffer.from(session.dataKey), clientId, consumerKey],
-      userId: session.userId,
-      syncRunId,
-    });
-    if (!started) return NextResponse.json({ error: "sync_unavailable" }, { status: 500 });
-  } else {
-    startBankSync({
-      credentialKey: Buffer.from(credentialKey),
-      ciphertext: encrypted!.ciphertext,
-      dataKey: Buffer.from(session.dataKey),
-      userId: session.userId,
-      connectionId: connection.id,
-      connectorId: connection.connectorId,
-      syncRunId,
-      startDate: parsed.data.startDate ?? computeSyncStartDate(connection.lastSyncAt),
-      version: encrypted!.version,
-      // Non-null on this branch: isBankScrape acquired the slot above.
-      slot: slot!,
-    });
-  }
-  return NextResponse.json({ syncRunId }, { status: 202 });
 }
