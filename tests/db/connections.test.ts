@@ -179,3 +179,74 @@ describe("connection credential modes", () => {
     ).rejects.toBeInstanceOf(ConnectionCredentialsUnavailableError);
   });
 });
+
+describe("import connection freshness (the file's own date, not the upload time)", () => {
+  let userId: string;
+
+  beforeAll(async () => {
+    const [user] = await elevatedDb
+      .insert(schema.users)
+      .values({ email: `import-freshness-${randomUUID()}@test.moni` })
+      .returning({ id: schema.users.id });
+    userId = user.id;
+  });
+
+  afterAll(async () => cleanupOwners([userId]));
+
+  async function importConnectionWithSnapshots(dates: string[]): Promise<string> {
+    const [connection] = await elevatedDb
+      .insert(schema.connections)
+      .values({
+        ownerId: userId,
+        connectorId: "harel_pension_quarterly",
+        mode: "user_mediated_import",
+        credentialsCt: null,
+        status: "active",
+        // A raw upload timestamp that the derived date must NOT be taken from.
+        lastSyncAt: new Date("2020-01-01T00:00:00Z"),
+      })
+      .returning({ id: schema.connections.id });
+    const [account] = await elevatedDb
+      .insert(schema.accounts)
+      .values({
+        ownerId: userId,
+        accountType: "long_term_savings",
+        classification: "asset",
+        connectionId: connection.id,
+        nameCt: Buffer.alloc(1),
+        currency: "ILS",
+        status: "active",
+      })
+      .returning({ id: schema.accounts.id });
+    for (const date of dates) {
+      await elevatedDb.insert(schema.accountBalanceSnapshots).values({
+        ownerId: userId,
+        accountId: account.id,
+        date,
+        // A long-term-savings snapshot is an "ordinary" balance row, so the
+        // subtype trigger requires both a balance and a currency.
+        nativeBalanceCt: Buffer.alloc(1),
+        currency: "ILS",
+        source: "long_term_savings",
+      });
+    }
+    return connection.id;
+  }
+
+  it("reports the latest imported snapshot's date, ignoring the upload timestamp", async () => {
+    // Newest date is not the one inserted last — max, not insertion order.
+    const id = await importConnectionWithSnapshots(["2026-06-30", "2025-12-31", "2026-03-31"]);
+
+    const listed = await listConnections(userId);
+    const view = listed.find((c) => c.id === id);
+    expect(view?.lastSyncAt).toEqual(new Date("2026-06-30T00:00:00Z"));
+  });
+
+  it("stays 'never synced' (null) for an import connection with no file yet", async () => {
+    const id = await importConnectionWithSnapshots([]);
+
+    const listed = await listConnections(userId);
+    const view = listed.find((c) => c.id === id);
+    expect(view?.lastSyncAt).toBeNull();
+  });
+});

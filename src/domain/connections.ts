@@ -5,9 +5,9 @@
 // Tier-1 reads (threat-model.md §5, docs plan Decision #1). Nothing here
 // ever touches DK.
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
-import { withUser } from "@/db/client";
-import { connections, syncRuns } from "@/db/schema";
+import { and, eq, inArray, max } from "drizzle-orm";
+import { withUser, type UserTransaction } from "@/db/client";
+import { accountBalanceSnapshots, accounts, connections, syncRuns } from "@/db/schema";
 import { encryptField, decryptField, type AadContext } from "@/lib/crypto";
 import { getConnectorDefinition, isConnectorId, type ConnectorId } from "@/lib/connectors";
 
@@ -16,6 +16,15 @@ export interface ConnectionView {
   connectorId: string;
   displayName: string | null;
   status: string;
+  /**
+   * How current the connection's data is. For a credentialed fetch this is the
+   * stored `last_sync_at` — when Moni last pulled it. For a file import there
+   * is no meaningful "fetch time": the number that matters is the date the
+   * uploaded file itself is *as of* (a Q2 pension report is current as of June
+   * 30 however recently it was uploaded), so this reports the latest such date
+   * across the connection's imported snapshots instead. Null when nothing has
+   * been fetched or imported yet.
+   */
   lastSyncAt: Date | null;
   mode: "credentialed_fetch" | "user_mediated_import";
 }
@@ -76,10 +85,46 @@ function toView(row: typeof connections.$inferSelect): ConnectionView {
   };
 }
 
+/**
+ * The most recent date the imported data is *as of*, per import connection —
+ * `max(account_balance_snapshots.date)` over the connection's accounts. Both
+ * import kinds write that column with the file's own date (a long-term-savings
+ * report's report date, a positions CSV's source date), so it is the single
+ * source of truth for import freshness and needs no denormalised copy on the
+ * connection row. Connections with no snapshot yet are simply absent from the
+ * map (→ null lastSyncAt → "Never synced").
+ */
+async function latestImportedDataDate(
+  tx: UserTransaction,
+  connectionIds: string[],
+): Promise<Map<string, Date>> {
+  const rows = await tx
+    .select({ connectionId: accounts.connectionId, latest: max(accountBalanceSnapshots.date) })
+    .from(accountBalanceSnapshots)
+    .innerJoin(accounts, eq(accounts.id, accountBalanceSnapshots.accountId))
+    .where(inArray(accounts.connectionId, connectionIds))
+    .groupBy(accounts.connectionId);
+  const byConnection = new Map<string, Date>();
+  for (const row of rows) {
+    // `date` is a calendar date; anchor it at UTC midnight for the timestamp field.
+    if (row.connectionId && row.latest)
+      byConnection.set(row.connectionId, new Date(`${row.latest}T00:00:00Z`));
+  }
+  return byConnection;
+}
+
 export async function listConnections(userId: string): Promise<ConnectionView[]> {
   return withUser(userId, async (tx) => {
     const rows = await tx.select().from(connections).orderBy(connections.createdAt);
-    return rows.map(toView);
+    const importIds = rows.filter((r) => r.mode === "user_mediated_import").map((r) => r.id);
+    const importedAsOf = importIds.length
+      ? await latestImportedDataDate(tx, importIds)
+      : new Map<string, Date>();
+    return rows.map((row) =>
+      row.mode === "user_mediated_import"
+        ? { ...toView(row), lastSyncAt: importedAsOf.get(row.id) ?? null }
+        : toView(row),
+    );
   });
 }
 
