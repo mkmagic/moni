@@ -113,6 +113,64 @@ describe("parseAgamLiderimPortfolio", () => {
     ]);
   });
 
+  it("keeps two accounts with the same product name but different policies distinct", () => {
+    // A real second export held two מגדל השתלמות accounts sharing a product
+    // name but with distinct policy numbers (and different active/inactive
+    // statuses). They must parse as two separate accounts, since the policy
+    // number is what identifies an account — not its name.
+    const rows: AccountRow[] = [
+      {
+        productType: "קרן פנסיה מקיפה",
+        provider: 'הפניקס פנסיה וגמל בע"מ',
+        infoDate: 46234,
+        policyNumber: "10000001",
+        productName: "פנסיה דמו",
+        status: "פעיל",
+        joinDate: 44927,
+        balance: 300000,
+      },
+      {
+        productType: "קופת גמל",
+        provider: 'מגדל מקפת בע"מ',
+        infoDate: 46234,
+        policyNumber: "10000002",
+        productName: "גמל דמו",
+        status: "לא פעיל",
+        joinDate: 44927,
+        balance: 3500,
+      },
+      {
+        productType: "קרן השתלמות",
+        provider: 'מגדל מקפת בע"מ',
+        infoDate: 46234,
+        policyNumber: "10000003",
+        productName: "מגדל השתלמות דמו",
+        status: "לא פעיל",
+        joinDate: 44927,
+        balance: 60000,
+      },
+      {
+        productType: "קרן השתלמות",
+        provider: 'מגדל מקפת בע"מ',
+        infoDate: 46234,
+        policyNumber: "10000004", // same name, different policy
+        productName: "מגדל השתלמות דמו",
+        status: "פעיל",
+        joinDate: 44927,
+        balance: 61000,
+      },
+    ];
+    const accounts = parseAgamLiderimPortfolio(
+      buildPortfolio({ rows, totalsBalance: 424500 }),
+    ).accounts;
+    expect(accounts).toHaveLength(4);
+    // Both same-named hishtalmut accounts survive, keyed by policy.
+    const hishtalmut = accounts.filter((a) => a.product === "hishtalmut");
+    expect(hishtalmut.map((a) => a.policyNumber)).toEqual(["10000003", "10000004"]);
+    expect(hishtalmut.map((a) => a.status)).toEqual(["לא פעיל", "פעיל"]);
+    expect(accounts.reduce((acc, a) => acc + Number(a.balance), 0)).toBe(424500);
+  });
+
   it("takes the as-of from the data-validity column, not the produced banner", () => {
     // Produced 2026-08-28, but the balances are valid to 2026-07-31.
     const portfolio = parseAgamLiderimPortfolio(buildPortfolio({ rows: [PENSION] }));

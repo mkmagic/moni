@@ -261,6 +261,54 @@ describe("promoteAgamLiderimPortfolio", () => {
     expect(snaps.map((s) => s.date).sort()).toEqual(["2026-06-30", "2026-07-31"]);
   });
 
+  it("creates distinct accounts for two rows that share a product name", async () => {
+    // A real export held two מגדל השתלמות accounts with the same name but
+    // different policy numbers. They must become two accounts, matched by
+    // policy, not collapsed into one.
+    const ctx = await fixture();
+    const syncRunId = await startRun(ctx.userId, ctx.connectionId);
+    const twins: AgamLiderimAccount[] = [
+      account({
+        policyNumber: "10000003",
+        provider: 'מגדל מקפת בע"מ',
+        productType: "קרן השתלמות",
+        productName: "מגדל השתלמות דמו",
+        product: "hishtalmut",
+        balance: "60000",
+      }),
+      account({
+        policyNumber: "10000004",
+        provider: 'מגדל מקפת בע"מ',
+        productType: "קרן השתלמות",
+        productName: "מגדל השתלמות דמו",
+        product: "hishtalmut",
+        balance: "61000",
+      }),
+    ];
+    const result = await promoteAgamLiderimPortfolio({
+      userId: ctx.userId,
+      connectionId: ctx.connectionId,
+      syncRunId,
+      dataKey: ctx.dataKey,
+      parserId: "agam_liderim_portfolio",
+      parserVersion: 1,
+      accounts: twins,
+    });
+    expect(result.accountsCreated).toBe(2);
+
+    const accounts = await listLongTermSavingsAccounts(ctx.session);
+    expect(accounts).toHaveLength(2);
+    expect(accounts.map((a) => a.currentBalance?.amount).sort()).toEqual(["60000", "61000"]);
+    // Each carries its own policy number as its external ref.
+    const refs = await withUser(ctx.userId, (tx) => tx.select().from(schema.accounts));
+    const decrypted = refs
+      .map((r) =>
+        decText(ctx.dataKey, r.externalAccountRefCt, r.id, "external_account_ref_ct", r.version),
+      )
+      .sort();
+    expect(decrypted).toEqual(["10000003", "10000004"]);
+  });
+
   it("fails an empty portfolio, writing nothing and marking the run failed", async () => {
     const ctx = await fixture();
     const syncRunId = await startRun(ctx.userId, ctx.connectionId);
