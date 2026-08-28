@@ -20,6 +20,7 @@
 import { spawn } from "node:child_process";
 import { markSyncRunFailed } from "@/domain/sync-promotion";
 import { encodeBinaryChildFrame, MAX_CHILD_SEGMENT_BYTES } from "@/lib/connectors";
+import type { ScrapeSlot } from "@/lib/scrape-slot";
 import { workerRuntimePath } from "@/lib/worker-runtime";
 
 const WORKER_TIMEOUT_MS = 5 * 60 * 1000;
@@ -105,6 +106,10 @@ export interface StartBankSyncInput {
   syncRunId: string;
   startDate: string;
   version: number;
+  /** The box-wide scrape slot this run holds (issue #82). Released as soon as
+   * the Chrome-bearing fetcher exits — the light promoter that follows can
+   * overlap the next scrape's fetcher without OOM risk. */
+  slot: ScrapeSlot;
 }
 
 /**
@@ -138,6 +143,7 @@ export function startBankSync(input: StartBankSyncInput): void {
   } catch {
     inFrame.fill(0);
     input.dataKey.fill(0);
+    input.slot.release();
     fail("scrape_worker_start_failed");
     return;
   }
@@ -166,6 +172,10 @@ export function startBankSync(input: StartBankSyncInput): void {
     if (settled) return;
     settled = true;
     clearFetcherTimeout();
+    // The fetcher (Chrome + scraper deps) is the ~1.3–1.6 GB part; once it has
+    // exited, the box has the memory for the next scrape, so free the slot here
+    // rather than holding it through the light, DB-only promoter (issue #82).
+    input.slot.release();
     if (ok && !truncated) {
       startPromoter(input, stdout);
     } else {

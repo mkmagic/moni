@@ -15,6 +15,7 @@ import { getCredentialKey } from "@/lib/auth/cred-window";
 import { BACKFILL_MAX_MONTHS, isBackfillStartAllowed, todayIso } from "@/lib/backfill-window";
 import { getConnectorDefinition, isConnectorId } from "@/lib/connectors";
 import { startBankSync } from "@/lib/connectors/bank-sync";
+import { acquireScrapeSlot, type ScrapeSlot } from "@/lib/scrape-slot";
 import { spawnInvestmentSyncWorker } from "@/lib/investments";
 import { PRODUCT_LABEL } from "@/lib/long-term-savings/labels";
 
@@ -157,8 +158,24 @@ export async function POST(
     decrypted = await getDecryptedCredentials(session.userId, connection.id, credentialKey);
     if (!decrypted) return NextResponse.json({ error: "not found" }, { status: 404 });
   }
+  // Box-wide concurrency guard (issue #82): a bank scrape peaks ~1.3–1.6 GB RSS
+  // (#54) and two do not fit on the 4 GB host — including two started by
+  // DIFFERENT users. The advisory-lock slot is cluster-global and independent
+  // of RLS, so it serializes scrapes across every tenant without reading any
+  // cross-tenant row. Only the scrape path takes it: IBKR/SnapTrade/imports are
+  // light and never risk OOM. `startBankSync` releases the slot once the
+  // Chrome-bearing fetcher exits; a server crash auto-releases it.
+  let slot: ScrapeSlot | null = null;
+  if (isBankScrape) {
+    slot = await acquireScrapeSlot();
+    if (!slot) {
+      encrypted!.ciphertext.fill(0);
+      return NextResponse.json({ error: "sync_already_in_progress" }, { status: 409 });
+    }
+  }
   const syncRunId = await startActiveConnectionSyncRun(session.userId, connection.id);
   if (!syncRunId) {
+    slot?.release();
     // A concurrent run won the slot; nothing downstream will consume the
     // ciphertext copy, so clear it rather than abandon it to the GC.
     encrypted?.ciphertext.fill(0);
@@ -209,6 +226,8 @@ export async function POST(
       syncRunId,
       startDate: parsed.data.startDate ?? computeSyncStartDate(connection.lastSyncAt),
       version: encrypted!.version,
+      // Non-null on this branch: isBankScrape acquired the slot above.
+      slot: slot!,
     });
   }
   return NextResponse.json({ syncRunId }, { status: 202 });
