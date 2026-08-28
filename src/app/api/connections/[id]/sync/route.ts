@@ -45,6 +45,8 @@ const Currency = z.string().regex(/^[A-Z]{3}$/);
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 /** Every PDF opens with this, whatever the browser claimed the type was. */
 const PDF_MAGIC = Buffer.from("%PDF-", "ascii");
+/** An .xlsx is a ZIP, which opens with the local-file-header signature. */
+const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
 
 export async function POST(
   req: NextRequest,
@@ -92,13 +94,18 @@ export async function POST(
       bytes.fill(0);
       return NextResponse.json({ error: "source_too_large" }, { status: 400 });
     }
-    // A long-term-savings report is handed straight to pdfjs. Refuse anything
-    // that is not a PDF here, where it costs one comparison and produces a
-    // message, rather than in the worker as an opaque crash. The browser's
-    // Content-Type is the uploader's claim; these five bytes are the file's.
-    if (definition.kind === "long_term_savings" && !bytes.subarray(0, 5).equals(PDF_MAGIC)) {
-      bytes.fill(0);
-      return NextResponse.json({ error: "unreadable_document" }, { status: 400 });
+    // A long-term-savings import is handed straight to a parser — pdfjs for a
+    // single-provider PDF report, the xlsx reader for the Agam Liderim export.
+    // Refuse anything whose leading bytes are not that format here, where it
+    // costs one comparison and produces a message, rather than in the worker as
+    // an opaque crash. The browser's Content-Type is the uploader's claim;
+    // these bytes are the file's.
+    if (definition.kind === "long_term_savings") {
+      const magic = definition.importFormat === "xlsx" ? ZIP_MAGIC : PDF_MAGIC;
+      if (!bytes.subarray(0, magic.length).equals(magic)) {
+        bytes.fill(0);
+        return NextResponse.json({ error: "unreadable_document" }, { status: 400 });
+      }
     }
     const syncRunId = await startActiveConnectionSyncRun(session.userId, connection.id);
     if (!syncRunId) {
@@ -107,9 +114,11 @@ export async function POST(
     }
     const started = await spawnInvestmentSyncWorker({
       script:
-        definition.kind === "long_term_savings"
-          ? "long-term-savings-import-worker.mts"
-          : "schwab-import-worker.mts",
+        definition.importFormat === "xlsx"
+          ? "agam-liderim-import-worker.mts"
+          : definition.kind === "long_term_savings"
+            ? "long-term-savings-import-worker.mts"
+            : "schwab-import-worker.mts",
       metadata: {
         userId: session.userId,
         connectionId: connection.id,

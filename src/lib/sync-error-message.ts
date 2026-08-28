@@ -67,7 +67,9 @@ const CODES: Record<string, string> = {
   malformed_document:
     "Moni could not read this report's layout, so nothing was imported. It may be a format Moni has not seen yet.",
   unreadable_document:
-    "Moni could not open this file. Check it is the original PDF and not a re-saved or protected copy.",
+    "Moni could not open this file. Check it is the original PDF or Excel export and not a re-saved or protected copy.",
+  empty_portfolio:
+    "That export listed no long-term-savings accounts to import. Check it is the accounts export and that it covers at least one savings account.",
 };
 
 /** Returns actionable advice for a failure code, or the raw code when unrecognized. */

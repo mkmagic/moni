@@ -68,7 +68,8 @@ export async function spawnInvestmentSyncWorker(input: {
     | "ibkr-worker.mts"
     | "schwab-import-worker.mts"
     | "snaptrade-worker.mts"
-    | "long-term-savings-import-worker.mts";
+    | "long-term-savings-import-worker.mts"
+    | "agam-liderim-import-worker.mts";
   metadata: Record<string, unknown>;
   segments: Buffer[];
   userId: string;

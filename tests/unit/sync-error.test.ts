@@ -59,6 +59,7 @@ describe("syncErrorMessage", () => {
       "unrecognised_document",
       "malformed_document",
       "unreadable_document",
+      "empty_portfolio",
     ])
       expect(syncErrorMessage(code)).not.toBe(code);
 

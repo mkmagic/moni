@@ -9,6 +9,7 @@ export type {
   LoginFieldDescriptor,
   LoginFieldInputType,
   LongTermSavingsProduct,
+  ImportFormat,
 } from "./types";
 export { SCRAPER_BACKED_KINDS } from "./types";
 export {
