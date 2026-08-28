@@ -17,6 +17,20 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 export const db = drizzle(pool, { schema });
 
+/**
+ * Checks out a raw pooled client, for the rare caller that needs a single
+ * connection held across several statements OUTSIDE a `withUser` transaction —
+ * currently only the box-wide bank-scrape slot (src/lib/scrape-slot.ts), which
+ * holds a session-level advisory lock for a scrape's lifetime. The caller MUST
+ * `release()` the returned client. This is not an access path to user data:
+ * RLS still applies (no `app.user_id` is set here), so a query for a
+ * user-owned row would return zero rows — it exists only for connection-scoped
+ * primitives like advisory locks that are independent of RLS.
+ */
+export function checkoutClient(): Promise<import("pg").PoolClient> {
+  return pool.connect();
+}
+
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /**

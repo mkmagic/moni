@@ -36,6 +36,11 @@ export async function startSyncRun(
       return { kind: "started", syncRunId: body.syncRunId };
     }
     const body = (await res.json().catch(() => ({}))) as { error?: string };
+    if (body.error === "sync_already_in_progress")
+      return {
+        kind: "error",
+        message: "A sync is already in progress. Try again once it finishes.",
+      };
     return { kind: "error", message: body.error ?? "Could not start sync" };
   } catch {
     return { kind: "error", message: "Could not reach the server" };
