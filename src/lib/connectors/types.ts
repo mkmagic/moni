@@ -13,6 +13,20 @@ export type ConnectorKind = "bank" | "credit_card" | "investment" | "long_term_s
 export type ConnectorMode = "credentialed_fetch" | "user_mediated_import";
 
 /**
+ * For a `user_mediated_import` connector, the file the importer reads. Absent
+ * on `credentialed_fetch` connectors, which fetch rather than take a file.
+ *
+ * Load-bearing at exactly two edges — the upload dialog's accepted file type
+ * and the sync route's magic-byte check plus worker choice — so a connector
+ * whose format differs from the long-term-savings default (a PDF single
+ * statement) states it here rather than having those edges special-case its id.
+ * `xlsx` is also what marks the multi-account aggregator apart from a
+ * single-document report: it carries no connector-level `product`, because the
+ * product varies per account inside the file.
+ */
+export type ImportFormat = "pdf" | "csv" | "xlsx";
+
+/**
  * The kinds whose connector id is an israeli-bank-scrapers `SCRAPERS` key. The
  * registry drift gate only applies to these; everything else reaches its
  * provider by some other route entirely.
@@ -64,7 +78,8 @@ export type ConnectorId =
   | "schwab_positions_csv"
   | "snaptrade"
   | "harel_pension_quarterly"
-  | "harel_hishtalmut";
+  | "harel_hishtalmut"
+  | "agam_liderim";
 
 export interface ConnectorDefinition {
   id: ConnectorId;
@@ -78,8 +93,16 @@ export interface ConnectorDefinition {
    */
   institutionLabel?: string;
   kind: ConnectorKind;
-  /** Set exactly when `kind` is `long_term_savings`. */
+  /**
+   * Set on a `long_term_savings` connector that imports a single provider's
+   * statement, whose product is a property of the connector. The multi-account
+   * aggregator (`agam_liderim`) leaves it undefined: one file carries pension,
+   * גמל and השתלמות accounts at once, so the product is decided per account at
+   * promotion time, not by the connector.
+   */
   product?: LongTermSavingsProduct;
+  /** Set on `user_mediated_import` connectors; the file the importer reads. */
+  importFormat?: ImportFormat;
   mode: ConnectorMode;
   /** Ordered to match the scraper's expected credentials-object key order. */
   loginFields: LoginFieldDescriptor[];

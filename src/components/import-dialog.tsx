@@ -67,10 +67,23 @@ const REPORT: ImportShape = {
   busyDetail: "Reading the report and checking its figures against each other.",
 };
 
+const PORTFOLIO: ImportShape = {
+  title: "Import portfolio",
+  description:
+    "The agency's portfolio export, as the Excel file you downloaded. It is read in memory and never stored.",
+  needsValuationCurrency: false,
+  accept: ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  fileLabel: "Portfolio Excel file",
+  submitLabel: "Import portfolio",
+  busyDetail: "Reading the export and creating an account for each balance.",
+};
+
 function shapeFor(connection: ImportTarget | undefined): ImportShape {
-  return getConnectorDefinition(connection?.connectorId ?? "")?.kind === "long_term_savings"
-    ? REPORT
-    : STATEMENT;
+  const definition = getConnectorDefinition(connection?.connectorId ?? "");
+  // A multi-account xlsx export (Agam Liderim) accepts a spreadsheet; a
+  // single-provider report accepts its PDF; a broker import accepts a CSV.
+  if (definition?.importFormat === "xlsx") return PORTFOLIO;
+  return definition?.kind === "long_term_savings" ? REPORT : STATEMENT;
 }
 
 function connectionLabel(connection: ImportTarget): string {

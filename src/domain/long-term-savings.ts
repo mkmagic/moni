@@ -17,6 +17,7 @@ import Decimal from "decimal.js";
 import { asc, desc, eq, inArray } from "drizzle-orm";
 import { withUser } from "@/db/client";
 import {
+  accountBalanceSnapshots,
   accounts,
   connections,
   longTermSavingsDetails,
@@ -154,6 +155,16 @@ export interface LongTermSavingsAccountView {
   product: LongTermSavingsProductName;
   liquidity: LongTermSavingsLiquidity;
   liquidFrom: string | null;
+  /**
+   * The account's latest balance from `account_balance_snapshots`, independent
+   * of whether a full report was imported. It is what a balance-only account —
+   * one populated by the Agam Liderim aggregator, which carries balances but no
+   * statement detail — shows, and it matches the newest report's closing
+   * balance for accounts that do have reports. Null only before any balance.
+   */
+  currentBalance: Money | null;
+  /** The date of {@link currentBalance}. */
+  balanceAsOf: string | null;
   /** Newest first. Empty until the first report has been imported. */
   reports: LongTermSavingsReportView[];
   /**
@@ -303,6 +314,14 @@ export async function listLongTermSavingsSummaries(
       .orderBy(asc(longTermSavingsSnapshots.asOf));
     // Ascending, so the last write per account wins — the newest report.
     const latest = new Map(snapshots.map((row) => [row.accountId, row]));
+    // A balance-only account (Agam Liderim) has no report, so its freshness
+    // comes from its newest balance snapshot instead. Ascending again, so the
+    // last write per account wins.
+    const balanceDates = await tx
+      .select({ accountId: accountBalanceSnapshots.accountId, date: accountBalanceSnapshots.date })
+      .from(accountBalanceSnapshots)
+      .orderBy(asc(accountBalanceSnapshots.date));
+    const latestBalanceDate = new Map(balanceDates.map((row) => [row.accountId, row.date]));
     return new Map(
       details.map((detail) => {
         const newest = latest.get(detail.accountId);
@@ -313,7 +332,7 @@ export async function listLongTermSavingsSummaries(
             product: detail.product,
             liquidity: detail.liquidity,
             liquidFrom: detail.liquidFrom,
-            asOf: newest?.asOf ?? null,
+            asOf: newest?.asOf ?? latestBalanceDate.get(detail.accountId) ?? null,
             quarter: newest?.quarter ?? null,
             fiscalYear: newest?.fiscalYear ?? null,
             retirementAge: newest?.retirementAge ?? null,
@@ -336,12 +355,23 @@ export async function listLongTermSavingsAccounts(
       .orderBy(asc(accounts.createdAt));
     if (rows.length === 0) return [];
 
-    const [snapshots, connectionRows] = await Promise.all([
+    const accountIds = rows.map(({ account }) => account.id);
+    const [snapshots, connectionRows, balanceRows] = await Promise.all([
       tx.select().from(longTermSavingsSnapshots).orderBy(desc(longTermSavingsSnapshots.asOf)),
       tx.select({ id: connections.id, connectorId: connections.connectorId }).from(connections),
+      tx
+        .select()
+        .from(accountBalanceSnapshots)
+        .where(inArray(accountBalanceSnapshots.accountId, accountIds))
+        .orderBy(desc(accountBalanceSnapshots.date)),
     ]);
     // The connector is what names the provider ("Harel") at the display edge.
     const connectorByConnection = new Map(connectionRows.map((row) => [row.id, row.connectorId]));
+    // Descending, so the FIRST balance row seen per account is its newest — the
+    // figure a balance-only account displays and the freshness on any account.
+    const newestBalance = new Map<string, (typeof balanceRows)[number]>();
+    for (const balance of balanceRows)
+      if (!newestBalance.has(balance.accountId)) newestBalance.set(balance.accountId, balance);
     // Descending, so the FIRST row seen per account is its newest report.
     const newest = new Map<string, (typeof snapshots)[number]>();
     for (const snapshot of snapshots)
@@ -388,6 +418,21 @@ export async function listLongTermSavingsAccounts(
       });
       const reports = deriveReports(dataKey, held);
       const heldIds = new Set(held.map((row) => row.id));
+      const balance = newestBalance.get(account.id);
+      const currentBalance: Money | null =
+        balance && balance.nativeBalanceCt
+          ? {
+              amount:
+                decText(
+                  dataKey,
+                  balance.nativeBalanceCt,
+                  balance.id,
+                  "native_balance_ct",
+                  balance.version,
+                ) ?? "0",
+              currency: balance.currency ?? account.currency,
+            }
+          : null;
       return {
         accountId: account.id,
         name: decText(dataKey, account.nameCt, account.id, "name_ct", account.version) ?? "",
@@ -397,6 +442,8 @@ export async function listLongTermSavingsAccounts(
         product: detail.product,
         liquidity: detail.liquidity,
         liquidFrom: detail.liquidFrom,
+        currentBalance,
+        balanceAsOf: balance?.date ?? null,
         reports,
         deposits: depositRows
           .filter((row) => heldIds.has(row.snapshotId))

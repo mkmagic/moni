@@ -89,13 +89,32 @@ describe("CONNECTOR_REGISTRY matches israeli-bank-scrapers' SCRAPERS", () => {
         mode: "user_mediated_import",
         loginFields: [],
       }),
+      // The agency aggregator: an Excel export covering many accounts across
+      // providers, so it carries no connector-level product and reads an xlsx
+      // rather than a single provider's PDF report.
+      // Its absence of a product (an aggregator over many products) is asserted
+      // by the "carries a product …" test below; objectContaining cannot assert
+      // a key's absence.
+      expect.objectContaining({
+        id: "agam_liderim",
+        institutionLabel: "Agam Liderim",
+        kind: "long_term_savings",
+        mode: "user_mediated_import",
+        importFormat: "xlsx",
+        loginFields: [],
+      }),
     ]);
   });
 
-  it("carries a product on every long-term-savings connector and on no other", () => {
+  it("carries a product on every single-document long-term-savings connector and on no other", () => {
     for (const definition of Object.values(CONNECTOR_REGISTRY)) {
+      // A single-statement LTS import (a Harel PDF) fixes its product at the
+      // connector; the multi-account aggregator (agam_liderim, xlsx) decides it
+      // per account, so it — like every non-LTS connector — carries none.
+      const singleDocumentSavings =
+        definition.kind === "long_term_savings" && definition.importFormat !== "xlsx";
       expect(definition.product !== undefined, `${definition.id} (${definition.kind})`).toBe(
-        definition.kind === "long_term_savings",
+        singleDocumentSavings,
       );
     }
   });

@@ -153,6 +153,9 @@ function EmptyState({ canImport, onImport }: { canImport: boolean; onImport: () 
 function AccountPanel({ account }: { account: LongTermSavingsAccountView }) {
   const [open, setOpen] = useState<"reports" | "deposits" | "tracks" | null>(null);
   const snapshot = account.latest;
+  // A report's closing balance when one was imported; otherwise the balance a
+  // source like Agam Liderim provides without any statement detail.
+  const headlineBalance = snapshot?.closingBalance ?? account.currentBalance;
   const name = longTermSavingsAccountName(account.name, account.connectorId, account.product);
   const liquidity = liquidityBadge({
     liquidity: account.liquidity,
@@ -175,12 +178,34 @@ function AccountPanel({ account }: { account: LongTermSavingsAccountView }) {
             </span>
           )}
         </div>
-        {snapshot && (
-          <Money value={snapshot.closingBalance} className="text-2xl font-bold text-positive" />
+        {headlineBalance && (
+          <Money value={headlineBalance} className="text-2xl font-bold text-positive" />
         )}
       </div>
 
-      {!snapshot ? (
+      {!snapshot && account.currentBalance ? (
+        // A balance-only account: the aggregator gives a balance and a
+        // liquidity, but no report — so show those and say plainly that the
+        // fee and contribution detail a provider report would carry is absent.
+        <>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            {account.balanceAsOf && (
+              <span className="tabular-nums">
+                {asOfLabel({ asOf: account.balanceAsOf, quarter: null, fiscalYear: null })}
+              </span>
+            )}
+            <span className="inline-flex items-center gap-1">
+              <LiquidityIcon className="h-3 w-3" />
+              {liquidity.text}
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {
+              "Fees and contribution history aren’t part of this export. Import a provider report for this account to fill them in."
+            }
+          </p>
+        </>
+      ) : !snapshot ? (
         <p className="text-sm text-muted-foreground">No report imported for this account yet.</p>
       ) : (
         <>

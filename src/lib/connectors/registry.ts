@@ -111,6 +111,7 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
     institutionLabel: "Charles Schwab",
     kind: "investment",
     mode: "user_mediated_import",
+    importFormat: "csv",
     loginFields: [],
   },
   snaptrade: {
@@ -134,6 +135,7 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
     kind: "long_term_savings",
     product: "pension",
     mode: "user_mediated_import",
+    importFormat: "pdf",
     loginFields: [],
   },
   // One entry, not one per period: the quarterly and annual קרן השתלמות
@@ -147,6 +149,23 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
     kind: "long_term_savings",
     product: "hishtalmut",
     mode: "user_mediated_import",
+    importFormat: "pdf",
+    loginFields: [],
+  },
+  // The agency aggregator, not a single provider's report: one Excel export
+  // lists every long-term-savings account the agency holds for the member —
+  // pension, גמל and השתלמות at different providers, each with its own balance.
+  // So it reaches many accounts like SnapTrade does, carries no connector-level
+  // `product` (that is decided per account at promotion), and each resulting
+  // account reports its own provider as its institution. `institutionLabel`
+  // here is the agency, which is what the picker groups the connector under.
+  agam_liderim: {
+    id: "agam_liderim",
+    label: "Portfolio export (Excel)",
+    institutionLabel: "Agam Liderim",
+    kind: "long_term_savings",
+    mode: "user_mediated_import",
+    importFormat: "xlsx",
     loginFields: [],
   },
 };

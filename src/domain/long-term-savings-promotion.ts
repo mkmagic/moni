@@ -122,7 +122,7 @@ const CURRENCY = "ILS";
  * decision someone makes, not something it inherits from whichever parser
  * happened to land first.
  */
-const LIQUIDITY_BY_PRODUCT: Record<
+export const LIQUIDITY_BY_PRODUCT: Record<
   LongTermSavingsProduct,
   (typeof longTermSavingsLiquidityEnum.enumValues)[number]
 > = {
