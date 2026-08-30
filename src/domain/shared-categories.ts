@@ -187,6 +187,11 @@ export async function mappedLocalCategoryIds(tx: UserTransaction): Promise<Set<s
   return new Set(rows.map((r) => r.localCategoryId));
 }
 
+/** As {@link mappedLocalCategoryIds}, opening its own user-scoped transaction. */
+export async function myMappedLocalCategoryIds(userId: string): Promise<Set<string>> {
+  return withUser(userId, (tx) => mappedLocalCategoryIds(tx));
+}
+
 /**
  * Sets the household ceiling for a shared category from `effectiveFrom` forward
  * — effective-dated like a per-user ceiling, but encrypted under the group key.

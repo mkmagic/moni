@@ -29,7 +29,7 @@ import {
 import { wipe } from "@/lib/crypto";
 import { decText } from "./fields";
 import { currentMonth, monthStart } from "./budget";
-import { loadGroupKey, listHouseholdMemberIds } from "./household";
+import { loadGroupKey, listHouseholdMemberIds, listMemberships } from "./household";
 import { effectiveCeiling } from "./shared-categories";
 import { myCategorySpend, publishSharedTotalsInTx } from "./household-publish";
 
@@ -230,6 +230,38 @@ function liveFor(
   let total = new Decimal(0);
   if (locals) for (const id of locals) total = total.plus(mySpend.get(id) ?? new Decimal(0));
   return total;
+}
+
+export interface HouseholdOverview {
+  householdId: string;
+  name: string;
+  budget: HouseholdBudgetView;
+  settlement: SettlementView;
+}
+
+/**
+ * The combined budget + settlement for EVERY household the caller belongs to,
+ * for a month — the aggregator the household-only MCP tools read. Empty when
+ * the caller is in no household.
+ */
+export async function getHouseholdOverview(
+  userId: string,
+  dataKey: Buffer,
+  month: string = currentMonth(),
+): Promise<HouseholdOverview[]> {
+  const memberships = await listMemberships(userId);
+  const seen = new Set<string>();
+  const out: HouseholdOverview[] = [];
+  for (const m of memberships) {
+    if (seen.has(m.householdId)) continue;
+    seen.add(m.householdId);
+    const budget = await getHouseholdBudget(userId, dataKey, m.householdId, month);
+    const settlement = await getSettlement(userId, dataKey, m.householdId, month);
+    if (budget && settlement) {
+      out.push({ householdId: m.householdId, name: m.householdName, budget, settlement });
+    }
+  }
+  return out;
 }
 
 // --- Settlement -------------------------------------------------------------

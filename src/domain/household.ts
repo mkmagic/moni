@@ -19,7 +19,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import { withUser, type UserTransaction } from "@/db/client";
-import { households, householdMembers, householdInvitations } from "@/db/schema";
+import { households, householdMembers, householdInvitations, sharedCategories } from "@/db/schema";
 import { wrapWithKek, unwrapWithKek } from "@/lib/auth/password";
 import { deriveKekFromUnlockSecret, UNLOCK_SECRET_LENGTH } from "@/lib/auth/unlock-secret";
 import { encryptField, decryptField, wipe, type AadContext } from "@/lib/crypto";
@@ -314,6 +314,43 @@ export async function listMemberships(userId: string): Promise<HouseholdMembersh
  */
 export async function listHouseholdMembers(userId: string, householdId: string): Promise<string[]> {
   return withUser(userId, (tx) => listHouseholdMemberIds(tx, householdId));
+}
+
+export interface HouseholdSummary {
+  householdId: string;
+  name: string;
+  memberCount: number;
+  /** Plaintext shared-category names — the shared budget lines (untrusted). */
+  sharedCategoryNames: string[];
+}
+
+/**
+ * A non-secret summary of every household the caller belongs to — for `whoami`
+ * and the like. Needs no data key: household/shared-category names and the
+ * member roster are all group-readable structural data.
+ */
+export async function householdSummaries(userId: string): Promise<HouseholdSummary[]> {
+  return withUser(userId, async (tx) => {
+    const mine = await tx
+      .select({ householdId: householdMembers.householdId, name: households.name })
+      .from(householdMembers)
+      .innerJoin(households, eq(households.id, householdMembers.householdId));
+    const out: HouseholdSummary[] = [];
+    for (const h of mine) {
+      const members = await listHouseholdMemberIds(tx, h.householdId);
+      const scs = await tx
+        .select({ name: sharedCategories.name })
+        .from(sharedCategories)
+        .where(eq(sharedCategories.householdId, h.householdId));
+      out.push({
+        householdId: h.householdId,
+        name: h.name,
+        memberCount: members.length,
+        sharedCategoryNames: scs.map((s) => s.name),
+      });
+    }
+    return out;
+  });
 }
 
 /** As {@link listHouseholdMembers}, inside an existing user-scoped transaction. */
