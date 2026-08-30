@@ -274,6 +274,20 @@
       "when": 1787413203036,
       "tag": "0038_ambiguous_charles_xavier",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1788115965802,
+      "tag": "0039_household_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1788115965803,
+      "tag": "0040_household_rls_and_roles",
+      "breakpoints": true
     }
   ]
 }

@@ -158,6 +158,50 @@ export async function cleanupOwners(ownerIds: string[]): Promise<void> {
   }
 }
 
+/**
+ * The group-owned household tables (issue #115), child-before-parent so a bulk
+ * delete never trips a foreign key. These are keyed by `household_id`, not
+ * `owner_id`, so `cleanupOwners` cannot reach them — and because `households`,
+ * `household_members`, etc. reference `users`, they MUST be deleted before the
+ * users that own/created them. A household test calls `cleanupHouseholds()`
+ * before `cleanupOwners()`.
+ */
+export const HOUSEHOLD_TABLES_DELETE_ORDER = [
+  "published_category_totals",
+  "shared_category_maps",
+  "shared_category_splits",
+  "household_budget_ceilings",
+  "shared_categories",
+  "household_invitations",
+  "household_members",
+  "households",
+] as const;
+
+/**
+ * Deletes every row of the given households (and their satellites), via the
+ * elevated (RLS-bypassing) pool, in FK-safe order. Pass the household ids a
+ * test created; run it in `afterAll`/`afterEach` before `cleanupOwners`.
+ */
+export async function cleanupHouseholds(householdIds: string[]): Promise<void> {
+  if (householdIds.length === 0) return;
+  const client = await elevatedPool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const table of HOUSEHOLD_TABLES_DELETE_ORDER) {
+      const column = table === "households" ? "id" : "household_id";
+      await client.query(`DELETE FROM "${table}" WHERE ${column} = ANY($1::uuid[])`, [
+        householdIds,
+      ]);
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 /** Deletes fx_rates fixture rows by id (fx_rates has no owner_id — it's
  * global reference data, data-model.md §5). */
 export async function cleanupFxRates(ids: string[]): Promise<void> {
