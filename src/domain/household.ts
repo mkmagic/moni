@@ -266,10 +266,11 @@ export async function acceptInvite(
           throw err;
         }
         // Now that the membership row exists in this transaction, the member
-        // policy admits consuming the invitation.
+        // policy admits consuming the invitation. `accepted_by` records the
+        // joiner — the group-readable half of the member roster.
         await tx
           .update(householdInvitations)
-          .set({ consumedAt: new Date() })
+          .set({ consumedAt: new Date(), acceptedBy: userId })
           .where(eq(householdInvitations.id, inv.id));
         return { householdId: inv.householdId };
       } finally {
@@ -302,4 +303,36 @@ export async function listMemberships(userId: string): Promise<HouseholdMembersh
       .innerJoin(households, eq(households.id, householdMembers.householdId));
     return rows;
   });
+}
+
+/**
+ * The member roster for a household the caller belongs to — the creator plus
+ * everyone who accepted an invitation. Assembled from the group-readable
+ * `households.created_by` and `household_invitations.accepted_by`, NOT from a
+ * cross-member read of the own-rows-only `household_members` leaf. Returns
+ * distinct user ids (empty if the caller is not a member — RLS hides the rows).
+ */
+export async function listHouseholdMembers(userId: string, householdId: string): Promise<string[]> {
+  return withUser(userId, (tx) => listHouseholdMemberIds(tx, householdId));
+}
+
+/** As {@link listHouseholdMembers}, inside an existing user-scoped transaction. */
+export async function listHouseholdMemberIds(
+  tx: UserTransaction,
+  householdId: string,
+): Promise<string[]> {
+  const [household] = await tx
+    .select({ createdBy: households.createdBy })
+    .from(households)
+    .where(eq(households.id, householdId))
+    .limit(1);
+  // RLS hides the household row from a non-member, so no creator = not a member.
+  if (!household) return [];
+  const accepted = await tx
+    .select({ acceptedBy: householdInvitations.acceptedBy })
+    .from(householdInvitations)
+    .where(eq(householdInvitations.householdId, householdId));
+  const ids = new Set<string>([household.createdBy]);
+  for (const row of accepted) if (row.acceptedBy) ids.add(row.acceptedBy);
+  return [...ids];
 }

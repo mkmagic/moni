@@ -131,6 +131,11 @@ export const householdInvitations = pgTable(
     tokenHash: bytea("token_hash").notNull(),
     /** Group key wrapped under a KEK derived from the invite secret. */
     wrappedGroupKey: bytea("wrapped_group_key").notNull(),
+    /** The user who redeemed this invitation, set on accept. Together with
+     * `households.created_by` this is the group-readable member ROSTER — the
+     * way a member enumerates co-members without a cross-member read of the
+     * own-rows-only `household_members` leaf. */
+    acceptedBy: uuid("accepted_by").references(() => users.id),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     consumedAt: timestamp("consumed_at", { withTimezone: true }),
     version: integer("version").notNull().default(1),

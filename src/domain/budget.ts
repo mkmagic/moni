@@ -33,6 +33,7 @@ import type { Session } from "@/lib/auth/session-store";
 import { decText, encText } from "./fields";
 import { countsAsFlow, loadTransferCategoryIds } from "./flows";
 import { israelDate } from "./investment-valuation";
+import { mappedLocalCategoryIds } from "./shared-categories";
 import { RESIDUAL_KEY, RESIDUAL_NAME } from "@/lib/budget/residual";
 
 export { RESIDUAL_KEY, RESIDUAL_NAME };
@@ -52,6 +53,18 @@ export class BudgetCategoryNotBudgetableError extends Error {
   constructor(reason: string) {
     super(reason);
     this.name = "BudgetCategoryNotBudgetableError";
+  }
+}
+
+/** A local category mapped to a shared household line takes the HOUSEHOLD
+ * ceiling, never a personal one (issue #115: personal ceiling OR shared
+ * ceiling, never both). Unmap it to budget it personally again. */
+export class BudgetCategorySharedError extends Error {
+  constructor(categoryName: string) {
+    super(
+      `"${categoryName}" is shared with your household — its budget is the household ceiling, not a personal one`,
+    );
+    this.name = "BudgetCategorySharedError";
   }
 }
 
@@ -508,6 +521,17 @@ export async function getBudgetMonth(session: Session, month: string): Promise<B
     // given entry is filed under, and the residual is by definition the
     // ceiling for everything this set does *not* reach.
     const budgeted = budgetedIdsIn(ceilingRows, month);
+
+    // A local category shared with a household has its budget at the household
+    // level (issue #115). Suppress — never delete — any personal ceiling on it:
+    // drop it from the in-force set so the personal screen shows no rival
+    // ceiling, and its spend flows into "everything else". Unmapping restores
+    // the ceiling on the next read, since the row was left untouched.
+    const shared = await mappedLocalCategoryIds(tx);
+    for (const id of shared) {
+      inForce.delete(id);
+      budgeted.delete(id);
+    }
 
     // Replay only as far back as a rollover ceiling actually reaches; without
     // one, this month alone is all the aggregation needs to read.
@@ -1158,6 +1182,23 @@ function assertBudgetable(
 }
 
 /**
+ * Refuses a personal ceiling on a local category that is mapped to a shared
+ * household line — that branch's budget is the household ceiling (issue #115).
+ * A no-op for users in no household (the mapped set is empty).
+ */
+async function assertNotShared(
+  tx: Tx,
+  cats: Map<string, CategoryRow>,
+  categoryId: string | null,
+): Promise<void> {
+  if (categoryId === null) return;
+  const mapped = await mappedLocalCategoryIds(tx);
+  if (mapped.has(categoryId)) {
+    throw new BudgetCategorySharedError(cats.get(categoryId)?.name ?? "This category");
+  }
+}
+
+/**
  * Sets a category's ceiling from `effectiveFrom` forward. Editing the same
  * month again replaces that row; editing a later month adds one and leaves
  * the earlier month's number intact, which is what makes a past month
@@ -1169,6 +1210,7 @@ export async function setCeiling(session: Session, input: SetCeilingInput): Prom
     const cats = await loadCategories(tx);
     const existing = await tx.select().from(budgetCeilings);
     assertBudgetable(cats, budgetedIdsOf(existing), input.categoryId);
+    await assertNotShared(tx, cats, input.categoryId);
 
     const effectiveFrom = monthStart(input.effectiveFrom);
     const replaced = existing.find(
@@ -1318,6 +1360,7 @@ export async function createCeilings(session: Session, inputs: SetCeilingInput[]
 
     for (const input of inputs) {
       assertBudgetable(cats, budgetedIds, input.categoryId);
+      await assertNotShared(tx, cats, input.categoryId);
     }
 
     const values = inputs.map((input) => {

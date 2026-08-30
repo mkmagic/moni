@@ -82,6 +82,7 @@ const MIGRATION_FILES = [
   "0038_ambiguous_charles_xavier.sql",
   "0039_household_tables.sql",
   "0040_household_rls_and_roles.sql",
+  "0041_household_invitation_accepted_by.sql",
 ];
 
 /** Bookkeeping for which of MIGRATION_FILES this database has already seen.

@@ -1,6 +1,6 @@
 {
-  "id": "07799137-24cd-4d77-949a-1d9f29603680",
-  "prevId": "1eaab85e-3b74-490e-bb0c-e565a941fb52",
+  "id": "5c23a848-758a-4c67-b5a8-722517b62ee5",
+  "prevId": "07799137-24cd-4d77-949a-1d9f29603680",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2016,6 +2016,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "accepted_by": {
+          "name": "accepted_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "expires_at": {
           "name": "expires_at",
           "type": "timestamp with time zone",
@@ -2087,6 +2093,19 @@
           "tableTo": "users",
           "columnsFrom": [
             "invited_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "household_invitations_accepted_by_users_id_fk": {
+          "name": "household_invitations_accepted_by_users_id_fk",
+          "tableFrom": "household_invitations",
+          "tableTo": "users",
+          "columnsFrom": [
+            "accepted_by"
           ],
           "columnsTo": [
             "id"

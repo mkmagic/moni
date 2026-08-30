@@ -288,6 +288,13 @@
       "when": 1788115965803,
       "tag": "0040_household_rls_and_roles",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1788116648011,
+      "tag": "0041_household_invitation_accepted_by",
+      "breakpoints": true
     }
   ]
 }
