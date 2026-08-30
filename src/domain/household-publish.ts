@@ -120,7 +120,7 @@ export async function publishSharedTotalsInTx(
  * (expenses positive, income nets down) — the same figure the member's own
  * budget "spent" shows. RLS scopes this to the caller's ledger.
  */
-async function myCategorySpend(
+export async function myCategorySpend(
   tx: UserTransaction,
   dataKey: Buffer,
   month: string,
