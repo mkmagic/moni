@@ -57,9 +57,15 @@ import { categories } from "./classification";
 export const households = pgTable("households", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
+  // ON DELETE CASCADE across the household subtree: deleting a user dissolves
+  // the households they created and drops their memberships/contributions
+  // everywhere else (issue #115 §7.6 — account deletion is the pragmatic
+  // "leave/breakup" until the graceful lifecycle is built). Cascades run as the
+  // system and so cross the member-private RLS boundary the deleting user
+  // cannot reach directly.
   createdBy: uuid("created_by")
     .notNull()
-    .references(() => users.id),
+    .references(() => users.id, { onDelete: "cascade" }),
   version: integer("version").notNull().default(1),
   ...timestamps,
 });
@@ -81,10 +87,10 @@ export const householdMembers = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     householdId: uuid("household_id")
       .notNull()
-      .references(() => households.id),
+      .references(() => households.id, { onDelete: "cascade" }),
     ownerId: uuid("owner_id")
       .notNull()
-      .references(() => users.id),
+      .references(() => users.id, { onDelete: "cascade" }),
     /** The 32-byte household group key, wrapped under this member's DK. Opaque
      * ciphertext; useless without the member's unlocked DK. */
     wrappedGroupKey: bytea("wrapped_group_key").notNull(),
@@ -120,10 +126,10 @@ export const householdInvitations = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     householdId: uuid("household_id")
       .notNull()
-      .references(() => households.id),
+      .references(() => households.id, { onDelete: "cascade" }),
     invitedBy: uuid("invited_by")
       .notNull()
-      .references(() => users.id),
+      .references(() => users.id, { onDelete: "cascade" }),
     /** Optional non-secret label for whom the invite is intended (identity-tier,
      * like `users.email`; never financial). */
     inviteeEmail: text("invitee_email"),
@@ -135,7 +141,7 @@ export const householdInvitations = pgTable(
      * `households.created_by` this is the group-readable member ROSTER — the
      * way a member enumerates co-members without a cross-member read of the
      * own-rows-only `household_members` leaf. */
-    acceptedBy: uuid("accepted_by").references(() => users.id),
+    acceptedBy: uuid("accepted_by").references(() => users.id, { onDelete: "cascade" }),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     consumedAt: timestamp("consumed_at", { withTimezone: true }),
     version: integer("version").notNull().default(1),
@@ -164,12 +170,12 @@ export const sharedCategories = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     householdId: uuid("household_id")
       .notNull()
-      .references(() => households.id),
+      .references(() => households.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     isRecurring: boolean("is_recurring").notNull().default(false),
     createdBy: uuid("created_by")
       .notNull()
-      .references(() => users.id),
+      .references(() => users.id, { onDelete: "cascade" }),
     version: integer("version").notNull().default(1),
     ...timestamps,
   },
@@ -192,7 +198,7 @@ export const sharedCategorySplits = pgTable(
     sharedCategoryId: uuid("shared_category_id").notNull(),
     memberId: uuid("member_id")
       .notNull()
-      .references(() => users.id),
+      .references(() => users.id, { onDelete: "cascade" }),
     /** Exact-decimal split weight in [0, 1]; Postgres NUMERIC → string → decimal.js. */
     weight: numeric("weight").notNull(),
     ...timestamps,
@@ -206,7 +212,7 @@ export const sharedCategorySplits = pgTable(
     foreignKey({
       columns: [table.householdId, table.sharedCategoryId],
       foreignColumns: [sharedCategories.householdId, sharedCategories.id],
-    }),
+    }).onDelete("cascade"),
   ],
 );
 
@@ -239,11 +245,11 @@ export const sharedCategoryMaps = pgTable(
     foreignKey({
       columns: [table.householdId, table.sharedCategoryId],
       foreignColumns: [sharedCategories.householdId, sharedCategories.id],
-    }),
+    }).onDelete("cascade"),
     foreignKey({
       columns: [table.memberId, table.localCategoryId],
       foreignColumns: [categories.ownerId, categories.id],
-    }),
+    }).onDelete("cascade"),
   ],
 );
 
@@ -280,7 +286,7 @@ export const householdBudgetCeilings = pgTable(
     foreignKey({
       columns: [table.householdId, table.sharedCategoryId],
       foreignColumns: [sharedCategories.householdId, sharedCategories.id],
-    }),
+    }).onDelete("cascade"),
   ],
 );
 
@@ -305,7 +311,7 @@ export const publishedCategoryTotals = pgTable(
     sharedCategoryId: uuid("shared_category_id").notNull(),
     memberId: uuid("member_id")
       .notNull()
-      .references(() => users.id),
+      .references(() => users.id, { onDelete: "cascade" }),
     /** First day of the budget month this total covers, "YYYY-MM-01". */
     month: date("month").notNull(),
     /** Tier-1: the member's exact-decimal monthly total, encrypted under the
@@ -325,6 +331,6 @@ export const publishedCategoryTotals = pgTable(
     foreignKey({
       columns: [table.householdId, table.sharedCategoryId],
       foreignColumns: [sharedCategories.householdId, sharedCategories.id],
-    }),
+    }).onDelete("cascade"),
   ],
 );

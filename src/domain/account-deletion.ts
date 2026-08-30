@@ -71,6 +71,7 @@ import {
   transfers,
   users,
   userUnlockMethods,
+  householdMembers,
 } from "@/db/schema";
 import { endAllSessionsForUser, verifyPassword } from "@/domain/auth";
 
@@ -162,6 +163,18 @@ export async function deleteAccount(
     await tx.delete(mcpOauthAuthCodes).where(eq(mcpOauthAuthCodes.ownerId, userId));
     await tx.delete(mcpOauthGrants).where(eq(mcpOauthGrants.ownerId, userId));
     await tx.delete(agentTokens).where(eq(agentTokens.ownerId, userId));
+
+    // Household sharing (issue #115). This member's own membership row carries
+    // a group-key wrap that must not outlive the account, so it is deleted
+    // explicitly here (the same coverage discipline as every owner-scoped table
+    // above). The REST of the household subtree — households this user created,
+    // their splits/maps/published totals, and co-members' rows this session's
+    // RLS cannot reach — is torn down by ON DELETE CASCADE when the `users` row
+    // below is removed (drizzle/0042). That cascade is the pragmatic "leave /
+    // breakup" until the graceful lifecycle (§7.6) is built: deleting a member
+    // dissolves their shared contributions; deleting a household's creator
+    // dissolves the whole household. Personal ledgers are untouched.
+    await tx.delete(householdMembers).where(eq(householdMembers.ownerId, userId));
 
     // Key custody, then the identity row itself.
     await tx.delete(userUnlockMethods).where(eq(userUnlockMethods.ownerId, userId));

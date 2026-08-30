@@ -32,6 +32,7 @@ Moni is **self-hosted by one technical owner** and **multi-user** (family). Secu
 10. **All DB access goes through the single domain/service layer** — no second path. Every query is user-scoped. No "admin reads everyone" path in v1.0.
 11. **Tenancy is part of the MCP/agent call context**, never left to individual tools to remember. Agents are read-only in v1.0 and bound to exactly one user.
 12. **Maintain a cross-tenant test suite** that asserts user A cannot reach user B's rows via API or MCP.
+12b. **Household sharing is a group-owned, opt-in disclosure — never a hole in isolation** (issue #115, `../design/data-model.md` §7). Shared rows are a distinct RLS class keyed on membership, not `owner_id`; the personal ledger, per-user DK, and per-user policies are untouched. The ONLY thing that crosses is a member's deliberately-published per-category monthly total, encrypted under a household **group key** wrapped per member under their DK (never to the DB). A member reads the shared room only with their own DK unlocked; a non-member sees nothing (fail-closed, same as the per-user backstop). The disclosure surface is exactly one number per shared category per month — never raw rows, descriptions, merchants, or which local categories a member folded in.
 
 ### Data at rest
 13. **Encrypt the sensitive Tier-1 fields at the application/worker tier**: amounts, descriptions/counterparties, account numbers, holdings values/quantities, free-text notes. Encrypt with a **key the DB never sees**.
