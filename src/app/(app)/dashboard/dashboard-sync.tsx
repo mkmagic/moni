@@ -104,7 +104,7 @@ export function DashboardSync({
           <h1 className="text-2xl font-semibold text-foreground">{title}</h1>
           <p className="text-sm text-muted-foreground">{greeting}</p>
         </div>
-        <div className="flex flex-col items-end gap-1.5">
+        <div data-tour="dash-sync" className="flex flex-col items-end gap-1.5">
           <div className="flex items-center gap-2">
             {/* Only offered when there is something to import — a dialog whose
                 connection picker would be empty is a broken button. */}

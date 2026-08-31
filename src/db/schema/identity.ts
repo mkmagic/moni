@@ -45,6 +45,12 @@ export const users = pgTable("users", {
   agentAccessEnabled: boolean("agent_access_enabled").notNull().default(false),
   /** Previous successful login — the gap that `autoSyncOnLogin` measures. */
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+  /** When the user first finished or dismissed the guided product tour. NULL
+   * means they've never seen it, which is the only signal the dashboard's
+   * first-run prompt reads; replaying the tour from Settings never clears it.
+   * Identity/preference plaintext like the columns above — carries no financial
+   * information. */
+  tourSeenAt: timestamp("tour_seen_at", { withTimezone: true }),
   ...timestamps,
 });
 

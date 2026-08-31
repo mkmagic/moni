@@ -53,7 +53,7 @@ export default async function AiSettingsPage() {
     : [];
 
   return (
-    <div className="flex max-w-xl flex-col gap-8">
+    <div data-tour="settings-ai" className="flex max-w-xl flex-col gap-8">
       <SmartCategorizePreference initial={profile.smartCategorize} />
 
       <div className="flex flex-col gap-4">
