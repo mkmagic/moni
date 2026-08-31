@@ -97,6 +97,7 @@ export default async function HouseholdPage({ searchParams }: HouseholdPageProps
       label: SHORT_MONTH.format(new Date(`${monthStart(t.month)}T00:00:00Z`)),
       combined: t.combined,
       ceiling: t.ceiling,
+      withinBudget: t.withinBudget,
     }));
 
     const configById = new Map<string, SharedCategoryConfig>(

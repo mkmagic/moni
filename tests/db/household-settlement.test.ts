@@ -181,11 +181,21 @@ describe("monthly totals (household bar chart data)", () => {
     expect(totals[0].month).toBe(MONTH);
     expect(totals[0].combined).toBe("800"); // A live 300 + B published 500
     expect(totals[0].ceiling).toBe("1000");
+    expect(totals[0].withinBudget).toBe(true); // 800 <= 1000
   });
 
-  it("returns an empty combined figure for a month with no spend", async () => {
+  it("returns an empty combined figure and no verdict for a month with no ceiling", async () => {
     const totals = await getHouseholdMonthlyTotals(userA, dkA, householdId, ["2020-01"]);
     expect(totals[0].combined).toBe("0");
+    expect(totals[0].withinBudget).toBeNull();
+  });
+
+  it("marks a month over budget when combined exceeds the ceiling", async () => {
+    // Drop the ceiling below the ₪800 combined for this month only.
+    await setHouseholdCeiling(userA, dkA, householdId, sharedCategoryId, "500", MONTH, false);
+    const totals = await getHouseholdMonthlyTotals(userA, dkA, householdId, [MONTH]);
+    expect(totals[0].ceiling).toBe("500");
+    expect(totals[0].withinBudget).toBe(false); // 800 > 500
   });
 });
 

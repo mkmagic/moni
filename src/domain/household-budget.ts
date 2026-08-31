@@ -270,6 +270,9 @@ export interface HouseholdMonthlyTotal {
   combined: string;
   /** Sum of the household ceilings in force that month, or null if none set. */
   ceiling: string | null;
+  /** Was the household within its total ceiling that month? Null when no
+   * ceiling is set (nothing to judge against). Compared here in decimal.js. */
+  withinBudget: boolean | null;
 }
 
 /**
@@ -292,7 +295,7 @@ export async function getHouseholdMonthlyTotals(
       for (const month of months) {
         const built = await buildCombined(tx, userId, dataKey, groupKey, householdId, month);
         if (!built) {
-          out.push({ month, combined: "0", ceiling: null });
+          out.push({ month, combined: "0", ceiling: null, withinBudget: null });
           continue;
         }
         let combined = new Decimal(0);
@@ -309,6 +312,7 @@ export async function getHouseholdMonthlyTotals(
           month,
           combined: combined.toString(),
           ceiling: anyCeiling ? ceiling.toString() : null,
+          withinBudget: anyCeiling ? combined.lessThanOrEqualTo(ceiling) : null,
         });
       }
       return out;

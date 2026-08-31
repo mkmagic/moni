@@ -149,10 +149,12 @@ async function main() {
   // A few months of ledger entries so the monthly chart is populated. Amounts
   // vary per month; the latest month matches the figures shown in earlier
   // screenshots (A groceries 1200 / dining 500; B groceries 1500 / dining 450).
-  const groceriesA = [900, 1050, 800, 1200];
-  const groceriesB = [1300, 1100, 1400, 1500];
-  const diningA = [420, 350, 480, 500];
-  const diningB = [300, 500, 380, 450];
+  // Total ceiling is 3000 + 800 = 3800/month; Jul is deliberately over it so the
+  // monthly chart shows a red (over-budget) bar next to the green ones.
+  const groceriesA = [900, 1050, 1600, 1200];
+  const groceriesB = [1300, 1100, 1800, 1500];
+  const diningA = [420, 350, 300, 500];
+  const diningB = [300, 500, 350, 450];
   for (const [i, m] of MONTHS.entries()) {
     await seedEntry(a.userId, a.dataKey, acctA, aGroceries, `-${groceriesA[i]}`, m, "07");
     await seedEntry(a.userId, a.dataKey, acctA, aDining, `-${diningA[i]}`, m, "12");
