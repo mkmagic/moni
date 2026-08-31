@@ -264,6 +264,60 @@ export async function getHouseholdOverview(
   return out;
 }
 
+export interface HouseholdMonthlyTotal {
+  month: string;
+  /** Combined household spend across all shared categories that month. */
+  combined: string;
+  /** Sum of the household ceilings in force that month, or null if none set. */
+  ceiling: string | null;
+}
+
+/**
+ * Combined household spend per month, for a small trailing window — the data
+ * behind the household monthly bar chart. A pure read: loads the group key once
+ * and sums each month's combined figures without republishing (unlike
+ * getHouseholdBudget). Empty when the caller is in no household.
+ */
+export async function getHouseholdMonthlyTotals(
+  userId: string,
+  dataKey: Buffer,
+  householdId: string,
+  months: string[],
+): Promise<HouseholdMonthlyTotal[]> {
+  return withUser(userId, async (tx) => {
+    const groupKey = await loadGroupKey(tx, householdId, dataKey);
+    if (!groupKey) return [];
+    try {
+      const out: HouseholdMonthlyTotal[] = [];
+      for (const month of months) {
+        const built = await buildCombined(tx, userId, dataKey, groupKey, householdId, month);
+        if (!built) {
+          out.push({ month, combined: "0", ceiling: null });
+          continue;
+        }
+        let combined = new Decimal(0);
+        let ceiling = new Decimal(0);
+        let anyCeiling = false;
+        for (const c of built.categories) {
+          combined = combined.plus(c.combined);
+          if (c.ceiling !== null) {
+            ceiling = ceiling.plus(c.ceiling);
+            anyCeiling = true;
+          }
+        }
+        out.push({
+          month,
+          combined: combined.toString(),
+          ceiling: anyCeiling ? ceiling.toString() : null,
+        });
+      }
+      return out;
+    } finally {
+      wipe(groupKey);
+    }
+  });
+}
+
 // --- Settlement -------------------------------------------------------------
 
 export interface SettlementMember {

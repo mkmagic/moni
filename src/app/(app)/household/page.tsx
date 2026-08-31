@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { requireSession } from "@/domain/auth";
 import { requireOnboarded } from "@/domain/onboarding";
-import { currentMonth, monthStart, shiftMonth } from "@/domain/budget";
+import { currentMonth, monthRange, monthStart, shiftMonth } from "@/domain/budget";
 import { listCategories } from "@/domain/categorization";
-import { getHouseholdOverview } from "@/domain/household-budget";
+import { getHouseholdMonthlyTotals, getHouseholdOverview } from "@/domain/household-budget";
 import { listSharedCategories } from "@/domain/shared-categories";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -18,6 +18,9 @@ const MONTH_LABEL = new Intl.DateTimeFormat("en-GB", { month: "long", year: "num
 // locale, and handed across as strings — a client component that formatted a
 // date would hydrate differently than it rendered (.agents/skills/ui-developer).
 const AS_OF = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium" });
+const SHORT_MONTH = new Intl.DateTimeFormat("en-GB", { month: "short" });
+/** Months shown in the monthly bar chart (this month + the five before it). */
+const CHART_WINDOW = 6;
 
 interface HouseholdPageProps {
   searchParams: Promise<{ month?: string }>;
@@ -82,6 +85,20 @@ export default async function HouseholdPage({ searchParams }: HouseholdPageProps
       ov.householdId,
       month,
     );
+    // Trailing-window combined spend for the monthly bar chart.
+    const chartMonths = monthRange(shiftMonth(month, -(CHART_WINDOW - 1)), month);
+    const monthlyTotals = await getHouseholdMonthlyTotals(
+      session.userId,
+      session.dataKey,
+      ov.householdId,
+      chartMonths,
+    );
+    const monthly = monthlyTotals.map((t) => ({
+      label: SHORT_MONTH.format(new Date(`${monthStart(t.month)}T00:00:00Z`)),
+      combined: t.combined,
+      ceiling: t.ceiling,
+    }));
+
     const configById = new Map<string, SharedCategoryConfig>(
       config.map((c) => [
         c.id,
@@ -146,6 +163,7 @@ export default async function HouseholdPage({ searchParams }: HouseholdPageProps
         transfers: ov.settlement.transfers.map((t) => ({
           fromLabel: labelOf(t.from),
           toLabel: labelOf(t.to),
+          fromIsSelf: t.from === selfId,
           amount: money(t.amount),
         })),
         perCategory: ov.settlement.perCategory.map((p) => ({
@@ -159,6 +177,7 @@ export default async function HouseholdPage({ searchParams }: HouseholdPageProps
           })),
         })),
       },
+      monthly,
     });
   }
 

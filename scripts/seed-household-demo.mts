@@ -17,7 +17,7 @@ import { encText } from "@/domain/fields";
 import { createUser } from "@/domain/registration";
 import { createConnection } from "@/domain/connections";
 import { createCategory } from "@/domain/categorization";
-import { currentMonth } from "@/domain/budget";
+import { currentMonth, monthRange, shiftMonth } from "@/domain/budget";
 import { acceptInvite, createHousehold, inviteMember } from "@/domain/household";
 import {
   createSharedCategory,
@@ -29,6 +29,8 @@ import { publishSharedTotals } from "@/domain/household-publish";
 
 const PASSWORD = "moni-demo";
 const MONTH = currentMonth();
+// A few months of history so the monthly bar chart has something to show.
+const MONTHS = monthRange(shiftMonth(MONTH, -3), MONTH);
 const token = process.env.MONI_SIGNUP_TOKEN;
 if (!token) throw new Error("MONI_SIGNUP_TOKEN is required");
 
@@ -59,6 +61,7 @@ async function seedEntry(
   accountId: string,
   categoryId: string | null,
   amount: string,
+  month: string,
   day: string,
 ) {
   const id = randomUUID();
@@ -68,7 +71,7 @@ async function seedEntry(
       ownerId: userId,
       accountId,
       entryType: "transaction",
-      date: `${MONTH}-${day}`,
+      date: `${month}-${day}`,
       descriptionCt: encText(dataKey, "Purchase", id, "description_ct", 1),
       categoryId,
       status: "posted",
@@ -131,7 +134,7 @@ async function main() {
     { memberId: a.userId, weight: "0.6" },
     { memberId: b.userId, weight: "0.4" },
   ]);
-  await setHouseholdCeiling(a.userId, a.dataKey, householdId, groceries, "3000", MONTH, false);
+  await setHouseholdCeiling(a.userId, a.dataKey, householdId, groceries, "3000", MONTHS[0], false);
 
   // Shared line 2: Dining out, 50/50, ceiling 800. A 500, B 450 (over budget).
   const dining = (await createSharedCategory(a.userId, householdId, "Dining out")).sharedCategoryId;
@@ -141,20 +144,26 @@ async function main() {
     { memberId: a.userId, weight: "0.5" },
     { memberId: b.userId, weight: "0.5" },
   ]);
-  await setHouseholdCeiling(a.userId, a.dataKey, householdId, dining, "800", MONTH, false);
+  await setHouseholdCeiling(a.userId, a.dataKey, householdId, dining, "800", MONTHS[0], false);
 
-  // Ledger entries in the current month.
-  await seedEntry(a.userId, a.dataKey, acctA, aGroceries, "-700", "04");
-  await seedEntry(a.userId, a.dataKey, acctA, aGroceries, "-500", "18");
-  await seedEntry(a.userId, a.dataKey, acctA, aDining, "-500", "12");
-  await seedEntry(a.userId, a.dataKey, acctA, aSolo, "-260", "20"); // personal
-  await seedEntry(b.userId, b.dataKey, acctB, bGroceries, "-900", "05");
-  await seedEntry(b.userId, b.dataKey, acctB, bGroceries, "-600", "22");
-  await seedEntry(b.userId, b.dataKey, acctB, bDining, "-450", "15");
+  // A few months of ledger entries so the monthly chart is populated. Amounts
+  // vary per month; the latest month matches the figures shown in earlier
+  // screenshots (A groceries 1200 / dining 500; B groceries 1500 / dining 450).
+  const groceriesA = [900, 1050, 800, 1200];
+  const groceriesB = [1300, 1100, 1400, 1500];
+  const diningA = [420, 350, 480, 500];
+  const diningB = [300, 500, 380, 450];
+  for (const [i, m] of MONTHS.entries()) {
+    await seedEntry(a.userId, a.dataKey, acctA, aGroceries, `-${groceriesA[i]}`, m, "07");
+    await seedEntry(a.userId, a.dataKey, acctA, aDining, `-${diningA[i]}`, m, "12");
+    await seedEntry(b.userId, b.dataKey, acctB, bGroceries, `-${groceriesB[i]}`, m, "05");
+    await seedEntry(b.userId, b.dataKey, acctB, bDining, `-${diningB[i]}`, m, "15");
+  }
+  await seedEntry(a.userId, a.dataKey, acctA, aSolo, "-260", MONTH, "20"); // personal, not shared
 
-  // Publish both members so the combined view is complete (not provisional).
-  await publishSharedTotals(a.userId, a.dataKey, [MONTH]);
-  await publishSharedTotals(b.userId, b.dataKey, [MONTH]);
+  // Publish both members for every month so the combined view is complete.
+  await publishSharedTotals(a.userId, a.dataKey, MONTHS);
+  await publishSharedTotals(b.userId, b.dataKey, MONTHS);
 
   console.log(
     JSON.stringify(

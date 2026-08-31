@@ -12,6 +12,10 @@ import { Switch } from "@/components/ui/switch";
 import { Dialog } from "@/components/ui/dialog";
 import { Money } from "@/components/money";
 import { BudgetBar } from "@/components/budget-bar";
+import {
+  HouseholdMonthlyChart,
+  type HouseholdMonthlyPoint,
+} from "@/components/household-monthly-chart";
 import { cn } from "@/lib/utils";
 import type { Money as MoneyValue } from "@/lib/money";
 import type { CategoryView } from "@/domain/categorization";
@@ -57,7 +61,7 @@ export interface SettlementMemberView {
 export interface SettlementView {
   provisional: boolean;
   members: SettlementMemberView[];
-  transfers: { fromLabel: string; toLabel: string; amount: MoneyValue }[];
+  transfers: { fromLabel: string; toLabel: string; fromIsSelf: boolean; amount: MoneyValue }[];
   perCategory: {
     sharedCategoryId: string;
     name: string;
@@ -75,6 +79,8 @@ export interface HouseholdView {
   freshnessLabel: string | null;
   categories: SharedCategoryView[];
   settlement: SettlementView;
+  /** Trailing-window combined spend for the monthly bar chart. */
+  monthly: HouseholdMonthlyPoint[];
 }
 
 interface HouseholdScreenProps {
@@ -175,6 +181,20 @@ function HouseholdSection({
 
       <SettlementCard settlement={household.settlement} />
 
+      {household.monthly.length > 0 && (
+        <Card>
+          <CardHeader className="flex-col items-stretch gap-1">
+            <CardTitle className="text-foreground">Monthly household spending</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Combined spend on shared categories, over recent months.
+            </p>
+          </CardHeader>
+          <CardContent className="pb-6">
+            <HouseholdMonthlyChart months={household.monthly} currency={currency} />
+          </CardContent>
+        </Card>
+      )}
+
       {adding && (
         <AddSharedCategoryDialog
           householdId={household.householdId}
@@ -205,7 +225,9 @@ function SharedCategoryRow({
   return (
     <div className="flex items-start gap-4 border-b border-border py-3 last:border-b-0">
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-        <div className="flex items-baseline justify-between gap-3">
+        {/* Stack the name and the amount on narrow screens so a long category
+            name is never truncated by the amount crowding its column. */}
+        <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3">
           <span className="flex min-w-0 items-center gap-2 truncate text-sm text-foreground">
             <bdi>{category.name}</bdi>
             {category.isRecurring && (
@@ -305,7 +327,8 @@ function SettlementCard({ settlement }: { settlement: SettlementView }) {
               >
                 <span className="text-sm text-foreground">
                   <span className="font-medium">{t.fromLabel}</span>
-                  {" pays "}
+                  {/* Second person "You pay", third person "Partner pays". */}
+                  {t.fromIsSelf ? " pay " : " pays "}
                   <span className="font-medium">{t.toLabel}</span>
                 </span>
                 <Money value={t.amount} className="text-sm font-semibold" />
@@ -533,6 +556,16 @@ function ConfigureDialog({
     [category.myLocalCategoryIds],
   );
   const [mapped, setMapped] = useState<Set<string>>(initialMapped);
+  // Show the categories already on this line first, so what's currently mapped
+  // is visible without scrolling a long list. Ordered by the INITIAL mapping so
+  // items don't jump as the user toggles.
+  const orderedCategories = useMemo(
+    () =>
+      [...expenseCategories].sort(
+        (a, b) => (initialMapped.has(b.id) ? 1 : 0) - (initialMapped.has(a.id) ? 1 : 0),
+      ),
+    [expenseCategories, initialMapped],
+  );
   // A local category already folded into ANOTHER shared line can't cleanly feed
   // two — disable it here so its spend isn't double-counted across lines.
   const mappedElsewhere = useMemo(() => {
@@ -650,7 +683,7 @@ function ConfigureDialog({
             </span>
           </div>
           <div className="flex max-h-48 flex-col gap-1 overflow-y-auto rounded-[var(--radius)] border border-border p-2">
-            {expenseCategories.map((c) => {
+            {orderedCategories.map((c) => {
               const elsewhere = mappedElsewhere.has(c.id) && !mapped.has(c.id);
               return (
                 <label

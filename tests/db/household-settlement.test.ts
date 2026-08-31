@@ -19,7 +19,12 @@ import {
   setSplit,
 } from "@/domain/shared-categories";
 import { publishSharedTotals } from "@/domain/household-publish";
-import { conserveNets, getHouseholdBudget, getSettlement } from "@/domain/household-budget";
+import {
+  conserveNets,
+  getHouseholdBudget,
+  getHouseholdMonthlyTotals,
+  getSettlement,
+} from "@/domain/household-budget";
 import { cleanupHouseholds, cleanupOwners } from "./helpers";
 
 const SIGNUP_TOKEN = process.env.MONI_SIGNUP_TOKEN;
@@ -166,6 +171,21 @@ describe("settlement", () => {
     expect(a.net).toBe("-260.00"); // paid 300 - share 560
     expect(b.net).toBe("260.00");
     expect(s.transfers).toEqual([{ from: userA, to: userB, amount: "260.00" }]);
+  });
+});
+
+describe("monthly totals (household bar chart data)", () => {
+  it("returns the combined household spend and ceiling per month", async () => {
+    const totals = await getHouseholdMonthlyTotals(userA, dkA, householdId, [MONTH]);
+    expect(totals).toHaveLength(1);
+    expect(totals[0].month).toBe(MONTH);
+    expect(totals[0].combined).toBe("800"); // A live 300 + B published 500
+    expect(totals[0].ceiling).toBe("1000");
+  });
+
+  it("returns an empty combined figure for a month with no spend", async () => {
+    const totals = await getHouseholdMonthlyTotals(userA, dkA, householdId, ["2020-01"]);
+    expect(totals[0].combined).toBe("0");
   });
 });
 
