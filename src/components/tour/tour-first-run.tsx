@@ -4,12 +4,7 @@ import { useEffect, useState } from "react";
 import { Compass, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTour } from "./tour-provider";
-
-/** POSTs the seen flag; failure is non-fatal — the worst case is the prompt
- * greets them once more on the next visit, never a blocked screen. */
-function markSeen() {
-  void fetch("/api/profile/tour-seen", { method: "POST" }).catch(() => undefined);
-}
+import { markTourSeen } from "./mark-seen";
 
 /**
  * The one-time invitation to the guided tour, shown on the dashboard to a user
@@ -63,7 +58,7 @@ export function TourFirstRun({ seen }: { seen: boolean }) {
           type="button"
           variant="ghost"
           onClick={() => {
-            markSeen();
+            markTourSeen();
             setPhase("declined");
           }}
         >
@@ -72,7 +67,7 @@ export function TourFirstRun({ seen }: { seen: boolean }) {
         <Button
           type="button"
           onClick={() => {
-            markSeen();
+            // startTour marks the tour seen itself, so no separate call here.
             setPhase("gone");
             startTour();
           }}

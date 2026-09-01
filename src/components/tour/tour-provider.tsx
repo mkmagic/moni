@@ -1,9 +1,18 @@
 "use client";
 
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ReactNode } from "react";
 import { TOUR_STEPS } from "./steps";
 import { TourOverlay } from "./tour-overlay";
+import { markTourSeen } from "./mark-seen";
 
 interface TourContextValue {
   /** Begins the tour from its first stop, wherever the user currently is. */
@@ -31,14 +40,32 @@ export function useTour(): TourContextValue {
  */
 export function TourProvider({ children }: { children: ReactNode }) {
   const [index, setIndex] = useState<number | null>(null);
+  // What had focus before the tour opened, so it can be restored on close. Held
+  // here rather than in the overlay because the overlay remounts every step.
+  const openerRef = useRef<HTMLElement | null>(null);
 
-  const startTour = useCallback(() => setIndex(0), []);
+  const startTour = useCallback(() => {
+    // Any entry point counts as "seen", so the dashboard prompt won't reappear
+    // for someone who launched the tour from Settings › Help.
+    markTourSeen();
+    openerRef.current = document.activeElement as HTMLElement | null;
+    setIndex(0);
+  }, []);
   const close = useCallback(() => setIndex(null), []);
   const next = useCallback(
     () => setIndex((i) => (i === null ? null : i + 1 >= TOUR_STEPS.length ? null : i + 1)),
     [],
   );
   const prev = useCallback(() => setIndex((i) => (i === null || i === 0 ? i : i - 1)), []);
+
+  // Restore focus to the opener once the tour closes (via skip, Escape, or the
+  // final Done) — covers every exit path, since all of them land on index null.
+  useEffect(() => {
+    if (index !== null) return;
+    const opener = openerRef.current;
+    openerRef.current = null;
+    if (opener && document.contains(opener)) opener.focus();
+  }, [index]);
 
   const value = useMemo<TourContextValue>(
     () => ({ startTour, active: index !== null }),

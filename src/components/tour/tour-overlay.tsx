@@ -83,18 +83,24 @@ export function TourOverlay({
     if (!onRoute || !step.anchor) return;
     let frames = 0;
     let raf = 0;
+    let timer = 0;
     const tick = () => {
       const el = document.querySelector(step.anchor as string);
       if (el) {
         (el as HTMLElement).scrollIntoView({ block: "center", behavior: "smooth" });
-        // Let the smooth scroll settle before the first measure.
-        window.setTimeout(measure, 220);
+        // Let the smooth scroll settle before the first measure. Tracked so a
+        // fast step change or close clears it — otherwise it could fire after
+        // unmount and setRect on a gone component.
+        timer = window.setTimeout(measure, 220);
         return;
       }
       if (frames++ < 40) raf = window.requestAnimationFrame(tick);
     };
     tick();
-    return () => window.cancelAnimationFrame(raf);
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.clearTimeout(timer);
+    };
   }, [onRoute, step.anchor, step.id, measure]);
 
   // Keep the spotlight glued to its element as the page scrolls or resizes.
@@ -128,6 +134,35 @@ export function TourOverlay({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, onNext, onPrev, index]);
 
+  // Focus management for the modal card: move focus into it when a step shows
+  // (the overlay remounts per step, so this runs each stop) and trap Tab within
+  // it, since the dimmed background isn't inert. Restoring focus to whatever the
+  // user had before the tour is the provider's job — it outlives these remounts.
+  useEffect(() => {
+    const card = cardRef.current;
+    if (!card) return;
+    card.focus({ preventScroll: true });
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      const focusables = card.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || !card.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !card.contains(active))) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [step.id]);
+
   // The overlay only ever renders after a client interaction (startTour), never
   // during SSR/hydration, so a render-time document check is a safe portal gate.
   if (typeof document === "undefined") return null;
@@ -140,7 +175,7 @@ export function TourOverlay({
       className="fixed inset-0 z-[100]"
       role="dialog"
       aria-modal="true"
-      aria-label="Product tour"
+      aria-labelledby="tour-card-title"
     >
       {/* Dim + click blocker. With an anchor the darkness comes from the
           spotlight's huge box-shadow, so this layer stays transparent; without
@@ -163,7 +198,8 @@ export function TourOverlay({
 
       <div
         ref={cardRef}
-        className="absolute flex w-[min(320px,calc(100vw-24px))] flex-col gap-3 rounded-[var(--radius)] border border-border bg-card p-5 shadow-lg"
+        tabIndex={-1}
+        className="absolute flex w-[min(320px,calc(100vw-24px))] flex-col gap-3 rounded-[var(--radius)] border border-border bg-card p-5 shadow-lg focus:outline-none"
         style={{ top: cardPos.top, left: cardPos.left }}
       >
         <div className="flex items-start justify-between gap-4">
@@ -181,7 +217,9 @@ export function TourOverlay({
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <h2 className="text-base font-semibold text-foreground">{step.title}</h2>
+          <h2 id="tour-card-title" className="text-base font-semibold text-foreground">
+            {step.title}
+          </h2>
           <p className="text-sm leading-relaxed text-muted-foreground">{step.body}</p>
         </div>
 

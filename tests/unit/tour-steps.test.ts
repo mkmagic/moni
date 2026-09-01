@@ -1,4 +1,4 @@
-// The guided-tour itinerary (src/components/tour/steps.tsx). A stop that
+// The guided-tour itinerary (src/components/tour/steps.ts). A stop that
 // duplicates an id would collide on its React key and progress counter, and a
 // stop whose route or copy is empty is a bug the type system doesn't catch —
 // pure data, so it's checked directly. AGENTS.md §7 makes adding a stop per
@@ -13,10 +13,11 @@ describe("TOUR_STEPS", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("gives every stop a route and a title", () => {
+  it("gives every stop a route, a title, and body copy", () => {
     for (const step of TOUR_STEPS) {
       expect(step.route.startsWith("/")).toBe(true);
       expect(step.title.trim().length).toBeGreaterThan(0);
+      expect(step.body.trim().length).toBeGreaterThan(0);
     }
   });
 
