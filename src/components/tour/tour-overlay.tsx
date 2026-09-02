@@ -5,7 +5,6 @@ import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
 import { X, ArrowLeft, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import type { TourStep } from "./steps";
 
 /** Padding around the spotlit element, and the gap between it and the card. */
@@ -48,6 +47,11 @@ export function TourOverlay({
   const router = useRouter();
   const pathname = usePathname();
   const [rect, setRect] = useState<Rect | null>(null);
+  // Whether the card's position is resolved. An anchored step starts unplaced
+  // and the card stays hidden until we've measured the anchor (or given up and
+  // fall back to centering) — otherwise the card would flash centered on mount,
+  // then jump to the anchor once measured. An anchorless step is placed at once.
+  const [placed, setPlaced] = useState(!step.anchor);
   const cardRef = useRef<HTMLDivElement>(null);
   const [cardSize, setCardSize] = useState({ width: CARD_WIDTH, height: 200 });
 
@@ -74,9 +78,11 @@ export function TourOverlay({
     // it as absent so the card centers instead of hugging the corner.
     if (r.width === 0 && r.height === 0) {
       setRect(null);
+      setPlaced(true);
       return;
     }
     setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+    setPlaced(true);
   }, [step.anchor]);
 
   useEffect(() => {
@@ -95,6 +101,8 @@ export function TourOverlay({
         return;
       }
       if (frames++ < 40) raf = window.requestAnimationFrame(tick);
+      // The anchor never appeared — stop hiding the card and center it.
+      else setPlaced(true);
     };
     tick();
     return () => {
@@ -179,8 +187,14 @@ export function TourOverlay({
     >
       {/* Dim + click blocker. With an anchor the darkness comes from the
           spotlight's huge box-shadow, so this layer stays transparent; without
-          one it carries the dim itself. */}
-      <div className={cn("absolute inset-0", rect ? "bg-transparent" : "bg-foreground/50")} />
+          one it carries the dim itself — a dark scrim matching the spotlight's,
+          so the two are indistinguishable and stepping between them never
+          brightens (the `foreground` token is near-white in this dark theme, so
+          it can't be the scrim color). */}
+      <div
+        className="absolute inset-0"
+        style={rect ? undefined : { backgroundColor: "oklch(0.15 0 0 / 0.55)" }}
+      />
 
       {rect && (
         <div
@@ -199,8 +213,8 @@ export function TourOverlay({
       <div
         ref={cardRef}
         tabIndex={-1}
-        className="absolute flex w-[min(320px,calc(100vw-24px))] flex-col gap-3 rounded-[var(--radius)] border border-border bg-card p-5 shadow-lg focus:outline-none"
-        style={{ top: cardPos.top, left: cardPos.left }}
+        className="absolute flex w-[min(320px,calc(100vw-24px))] flex-col gap-3 rounded-[var(--radius)] border border-border bg-card p-5 shadow-lg transition-opacity duration-150 focus:outline-none"
+        style={{ top: cardPos.top, left: cardPos.left, opacity: placed ? 1 : 0 }}
       >
         <div className="flex items-start justify-between gap-4">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
