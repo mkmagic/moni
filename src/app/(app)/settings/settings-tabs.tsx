@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { User, Plug, Sparkles, Users } from "lucide-react";
+import { User, Plug, Sparkles, Users, LifeBuoy } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const TABS = [
@@ -10,6 +10,7 @@ const TABS = [
   { href: "/settings/connections", label: "Connections", icon: Plug },
   { href: "/settings/household", label: "Household", icon: Users },
   { href: "/settings/ai", label: "AI & MCP", icon: Sparkles },
+  { href: "/settings/help", label: "Help", icon: LifeBuoy },
 ] as const;
 
 /** Route-based tabs rather than client state: each tab stays a server

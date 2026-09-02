@@ -87,6 +87,7 @@ function NavLink({
   icon: Icon,
   pathname,
   onNavigate,
+  anchored = false,
 }: {
   href: string;
   label: string;
@@ -94,12 +95,17 @@ function NavLink({
   pathname: string;
   /** Closes the mobile drawer once a destination is chosen. */
   onNavigate?: () => void;
+  /** Tags this link as a guided-tour anchor. Only the always-visible desktop
+   * rail sets it, so the tour never targets the off-screen mobile drawer copy
+   * (src/components/tour/steps.tsx). */
+  anchored?: boolean;
 }) {
   const active = pathname === href || pathname.startsWith(`${href}/`);
   return (
     <Link
       href={href}
       onClick={onNavigate}
+      data-tour={anchored ? `nav-${href}` : undefined}
       className={cn(
         "relative flex items-center gap-3 rounded-[var(--radius)] px-3 py-2 text-sm transition",
         active
@@ -124,12 +130,15 @@ function RailNav({
   inHousehold,
   onLogout,
   onNavigate,
+  anchored = false,
 }: {
   pathname: string;
   baseCurrency: string;
   inHousehold: boolean;
   onLogout: () => void;
   onNavigate?: () => void;
+  /** True only for the desktop rail, so tour anchors land on the visible copy. */
+  anchored?: boolean;
 }) {
   // Household slots in right after Budget so the shared and personal budgets
   // sit together; it is dropped entirely when the user is in no household.
@@ -140,7 +149,13 @@ function RailNav({
     <>
       <nav className="flex flex-1 flex-col gap-1 px-3">
         {items.map((item) => (
-          <NavLink key={item.href} {...item} pathname={pathname} onNavigate={onNavigate} />
+          <NavLink
+            key={item.href}
+            {...item}
+            pathname={pathname}
+            onNavigate={onNavigate}
+            anchored={anchored}
+          />
         ))}
       </nav>
 
@@ -258,6 +273,7 @@ export function Sidebar({ baseCurrency, inHousehold }: SidebarProps) {
           baseCurrency={baseCurrency}
           inHousehold={inHousehold}
           onLogout={onLogout}
+          anchored
         />
       </aside>
 

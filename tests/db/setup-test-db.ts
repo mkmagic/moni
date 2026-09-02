@@ -80,10 +80,11 @@ const MIGRATION_FILES = [
   "0036_mcp_oauth_auth_codes_rls_and_roles.sql",
   "0037_mean_runaways.sql",
   "0038_ambiguous_charles_xavier.sql",
-  "0039_household_tables.sql",
-  "0040_household_rls_and_roles.sql",
-  "0041_household_invitation_accepted_by.sql",
-  "0042_household_cascade_deletes.sql",
+  "0039_remarkable_stellaris.sql",
+  "0040_household_tables.sql",
+  "0041_household_rls_and_roles.sql",
+  "0042_household_invitation_accepted_by.sql",
+  "0043_household_cascade_deletes.sql",
 ];
 
 /** Bookkeeping for which of MIGRATION_FILES this database has already seen.

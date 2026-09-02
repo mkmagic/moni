@@ -13,6 +13,7 @@ import { getProfile } from "@/domain/profile";
 import { requireOnboarded } from "@/domain/onboarding";
 import { listConnections } from "@/domain/connections";
 import { DashboardSync } from "./dashboard-sync";
+import { TourFirstRun } from "@/components/tour/tour-first-run";
 import { NetWorthAmount } from "./net-worth-amount";
 import { Card } from "@/components/ui/card";
 import { Sparkline } from "@/components/sparkline";
@@ -230,7 +231,10 @@ export default async function DashboardPage() {
   // --- Net worth hero + the month's figures, grouped -------------------------
   const health = (
     <div className="grid gap-4 md:grid-cols-2">
-      <Card className="flex flex-col justify-between gap-6 px-6 pb-6 pt-7">
+      <Card
+        data-tour="dash-net-worth"
+        className="flex flex-col justify-between gap-6 px-6 pb-6 pt-7"
+      >
         <div className="flex flex-col gap-2">
           <div className="flex items-start justify-between gap-3">
             <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -293,6 +297,7 @@ export default async function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <TourFirstRun seen={Boolean(profile?.tourSeenAt)} />
       <DashboardSync
         connectionIds={connections.filter((c) => c.mode === "credentialed_fetch").map((c) => c.id)}
         importConnections={connections.filter((c) => c.mode === "user_mediated_import")}

@@ -1,6 +1,6 @@
 {
-  "id": "300e4be0-ddc6-4cdc-bb62-eacf837abd70",
-  "prevId": "5c23a848-758a-4c67-b5a8-722517b62ee5",
+  "id": "5c23a848-758a-4c67-b5a8-722517b62ee5",
+  "prevId": "07799137-24cd-4d77-949a-1d9f29603680",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1955,7 +1955,7 @@
             "household_id",
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
@@ -2084,7 +2084,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         },
         "household_invitations_invited_by_users_id_fk": {
@@ -2097,7 +2097,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         },
         "household_invitations_accepted_by_users_id_fk": {
@@ -2110,7 +2110,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
@@ -2199,7 +2199,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         },
         "household_members_owner_id_users_id_fk": {
@@ -2212,7 +2212,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
@@ -2296,7 +2296,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
@@ -2388,7 +2388,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         },
         "published_category_totals_household_id_shared_category_id_shared_categories_household_id_id_fk": {
@@ -2403,7 +2403,7 @@
             "household_id",
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
@@ -2494,7 +2494,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         },
         "shared_categories_created_by_users_id_fk": {
@@ -2507,7 +2507,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
@@ -2590,7 +2590,7 @@
             "household_id",
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         },
         "shared_category_maps_member_id_local_category_id_categories_owner_id_id_fk": {
@@ -2605,7 +2605,7 @@
             "owner_id",
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
@@ -2688,7 +2688,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         },
         "shared_category_splits_household_id_shared_category_id_shared_categories_household_id_id_fk": {
@@ -2703,7 +2703,7 @@
             "household_id",
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },

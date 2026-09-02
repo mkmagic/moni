@@ -1,6 +1,6 @@
 {
-  "id": "07799137-24cd-4d77-949a-1d9f29603680",
-  "prevId": "1eaab85e-3b74-490e-bb0c-e565a941fb52",
+  "id": "300e4be0-ddc6-4cdc-bb62-eacf837abd70",
+  "prevId": "5c23a848-758a-4c67-b5a8-722517b62ee5",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1955,7 +1955,7 @@
             "household_id",
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -2015,6 +2015,12 @@
           "type": "bytea",
           "primaryKey": false,
           "notNull": true
+        },
+        "accepted_by": {
+          "name": "accepted_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         },
         "expires_at": {
           "name": "expires_at",
@@ -2078,7 +2084,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         },
         "household_invitations_invited_by_users_id_fk": {
@@ -2091,7 +2097,20 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "household_invitations_accepted_by_users_id_fk": {
+          "name": "household_invitations_accepted_by_users_id_fk",
+          "tableFrom": "household_invitations",
+          "tableTo": "users",
+          "columnsFrom": [
+            "accepted_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -2180,7 +2199,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         },
         "household_members_owner_id_users_id_fk": {
@@ -2193,7 +2212,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -2277,7 +2296,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -2369,7 +2388,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         },
         "published_category_totals_household_id_shared_category_id_shared_categories_household_id_id_fk": {
@@ -2384,7 +2403,7 @@
             "household_id",
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -2475,7 +2494,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         },
         "shared_categories_created_by_users_id_fk": {
@@ -2488,7 +2507,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -2571,7 +2590,7 @@
             "household_id",
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         },
         "shared_category_maps_member_id_local_category_id_categories_owner_id_id_fk": {
@@ -2586,7 +2605,7 @@
             "owner_id",
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -2669,7 +2688,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         },
         "shared_category_splits_household_id_shared_category_id_shared_categories_household_id_id_fk": {
@@ -2684,7 +2703,7 @@
             "household_id",
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },

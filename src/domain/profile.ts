@@ -3,7 +3,7 @@
 // preference carry no financial information, so they are not Tier-1 encrypted
 // fields (see the column comments in src/db/schema/identity.ts). Key custody
 // lives on `user_unlock_methods` and is never touched from here.
-import { eq } from "drizzle-orm";
+import { eq, isNull, and } from "drizzle-orm";
 import { withUser } from "@/db/client";
 import { users } from "@/db/schema";
 
@@ -14,6 +14,8 @@ export interface UserProfile {
   autoSyncOnLogin: boolean;
   smartCategorize: boolean;
   agentAccessEnabled: boolean;
+  /** When the guided tour was first finished or dismissed; NULL until then. */
+  tourSeenAt: Date | null;
 }
 
 export interface ProfileUpdate {
@@ -37,11 +39,28 @@ export async function getProfile(userId: string): Promise<UserProfile | null> {
         autoSyncOnLogin: users.autoSyncOnLogin,
         smartCategorize: users.smartCategorize,
         agentAccessEnabled: users.agentAccessEnabled,
+        tourSeenAt: users.tourSeenAt,
       })
       .from(users)
       .where(eq(users.id, userId))
       .limit(1);
     return rows[0] ?? null;
+  });
+}
+
+/**
+ * Records that the caller has seen the guided tour, the first time they finish
+ * or dismiss it. The `isNull` guard keeps the ORIGINAL timestamp: a later
+ * replay from Settings must never move it, since it is only ever read as the
+ * boolean "has this user met the first-run prompt". RLS scopes the write to
+ * their own row.
+ */
+export async function markTourSeen(userId: string): Promise<void> {
+  await withUser(userId, async (tx) => {
+    await tx
+      .update(users)
+      .set({ tourSeenAt: new Date() })
+      .where(and(eq(users.id, userId), isNull(users.tourSeenAt)));
   });
 }
 
