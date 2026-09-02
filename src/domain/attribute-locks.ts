@@ -11,8 +11,10 @@
 // later rule and model pass must skip THAT FIELD and let the rest of the
 // payload through. Only the user can clear the lock.
 
-/** Fields that can be locked. Only `category_id` is lockable in v1.0. */
-export type LockableField = "category_id";
+/** Fields that can be locked. `date` joins `category_id` because a user can
+ * correct a transaction's date by hand, and a later scrape must not revert it
+ * (the pending -> posted re-date in sync-promotion.ts). */
+export type LockableField = "category_id" | "date";
 
 export type LockedAttributes = Partial<Record<LockableField, true>>;
 
@@ -24,7 +26,9 @@ export type LockedAttributes = Partial<Record<LockableField, true>>;
 export function parseLockedAttributes(raw: unknown): LockedAttributes {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return {};
   const out: LockedAttributes = {};
-  if ((raw as Record<string, unknown>).category_id === true) out.category_id = true;
+  const map = raw as Record<string, unknown>;
+  if (map.category_id === true) out.category_id = true;
+  if (map.date === true) out.date = true;
   return out;
 }
 

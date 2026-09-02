@@ -6,10 +6,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSessionFromRequest } from "@/domain/auth";
 import { CategoryNotFoundError, setEntryCategory } from "@/domain/categorization";
+import { EntryNotFoundError, InvalidDateError, setEntryDate } from "@/domain/transactions";
 
-// Zod at the trust boundary (docs/design/conventions.md — Validation).
+// Zod at the trust boundary (docs/design/conventions.md — Validation). The
+// dialog sends one edit at a time: either a category change or a date
+// correction. Both fields are optional so each edit stands alone.
 const PatchSchema = z.object({
-  categoryId: z.uuid().nullable(),
+  categoryId: z.uuid().nullable().optional(),
   /** Also write a rule so future transactions matching this condition get the
    * same category. The operator vocabulary is the description third of the
    * rule form's — amount operators have no meaning for a payee string. */
@@ -18,6 +21,12 @@ const PatchSchema = z.object({
       operator: z.enum(["contains", "starts_with", "equals"]),
       value: z.string().min(1).max(200),
     })
+    .optional(),
+  /** A hand-corrected calendar day (YYYY-MM-DD). Locks the date against the
+   * next scrape's re-date (attribute-locks.ts). */
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
 });
 
@@ -42,14 +51,22 @@ export async function PATCH(
   }
 
   try {
-    await setEntryCategory(session, id, parsed.data.categoryId, {
-      createRule: parsed.data.createRule,
-    });
+    if (parsed.data.date !== undefined) {
+      await setEntryDate(session, id, parsed.data.date);
+    }
+    if (parsed.data.categoryId !== undefined) {
+      await setEntryCategory(session, id, parsed.data.categoryId, {
+        createRule: parsed.data.createRule,
+      });
+    }
   } catch (err) {
     // RLS already scoped the lookup to this user, so "not found" covers both
     // a missing row and another user's row — deliberately the same answer.
-    if (err instanceof CategoryNotFoundError) {
+    if (err instanceof CategoryNotFoundError || err instanceof EntryNotFoundError) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
+    }
+    if (err instanceof InvalidDateError) {
+      return NextResponse.json({ error: "invalid request" }, { status: 400 });
     }
     throw err;
   }
