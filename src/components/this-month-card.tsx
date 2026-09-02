@@ -68,7 +68,7 @@ export function ThisMonthCard({
   const TrendIcon = spendingDown ? TrendingDown : TrendingUp;
 
   return (
-    <Card className="overflow-hidden">
+    <Card data-tour="dash-this-month" className="overflow-hidden">
       <div className={cn(LABEL, "px-5 pb-3 pt-5")}>This month · {monthLabel}</div>
 
       <div className="grid grid-cols-2 border-t border-border">

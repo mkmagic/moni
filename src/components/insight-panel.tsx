@@ -52,7 +52,7 @@ const TONE_CHIP: Record<InsightTone, string> = {
  */
 export function InsightPanel({ heading, calm = false, items, lastSync }: InsightPanelProps) {
   return (
-    <Card className="flex flex-col gap-3 px-5 py-4">
+    <Card data-tour="dash-insights" className="flex flex-col gap-3 px-5 py-4">
       <p
         className={cn(
           "text-xs font-medium uppercase tracking-wide",

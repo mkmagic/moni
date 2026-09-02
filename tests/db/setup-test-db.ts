@@ -80,6 +80,7 @@ const MIGRATION_FILES = [
   "0036_mcp_oauth_auth_codes_rls_and_roles.sql",
   "0037_mean_runaways.sql",
   "0038_ambiguous_charles_xavier.sql",
+  "0039_remarkable_stellaris.sql",
 ];
 
 /** Bookkeeping for which of MIGRATION_FILES this database has already seen.

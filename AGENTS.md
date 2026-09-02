@@ -78,6 +78,11 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - The same four gates run in CI (`.github/workflows/ci.yml`), plus `npm run build`. `npm test` needs a live Postgres for *every* test, `tests/unit/**` included — `vitest.setup.ts` bootstraps `moni_test` unconditionally.
 ### 6\. Keep the skills honest
 Skills are the project's memory. **If a skill turns out to be out-of-date or misleading more than once in a session, don't just work around it — tell the owner exactly what you'd change and cite the evidence from this session that proved it wrong.** A skill that quietly misleads costs every future session, and you are the only one positioned to notice.
+### 7\. Every major feature joins the guided tour
+**A feature a newcomer can't find might as well not ship.** Moni has a replayable, spotlight-style product tour (`src/components/tour/`). Its itinerary is the single array `src/components/tour/steps.ts` — **`TOUR_STEPS`**.
+- **Mandatory:** when you add a major feature — a new sidebar destination, a new dashboard component, or a settings surface a user must discover (AI config, household/sharing, etc.) — add a `TourStep` for it in the same change. A step is `{ id, route, anchor, title, body }`; give the real element a `data-tour="…"` attribute and point `anchor` at it (`[data-tour="…"]`). One or two sentences, beginner-friendly, no jargon.
+- Keep `TOUR_STEPS` in the order a newcomer should meet the app (dashboard pieces, then sidebar order, then settings). A stop whose anchor is missing on its route degrades to a centered card, so an empty-state page won't break the tour — but a real feature with no stop is the thing this rule forbids.
+- The tour is v1.0 read-only-safe and model-agnostic like everything else: it must not depend on a model backend or an AI write path.
 
 ----
 
