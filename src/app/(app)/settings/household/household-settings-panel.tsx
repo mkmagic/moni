@@ -41,7 +41,7 @@ export function HouseholdSettingsPanel({ households }: { households: HouseholdRo
       )}
 
       <Card>
-        <div className="flex flex-col gap-1 px-6 pb-2 pt-6">
+        <div data-tour="settings-household" className="flex flex-col gap-1 px-6 pb-2 pt-6">
           <span className="flex items-center gap-2 text-sm font-medium text-foreground">
             <Users className="h-4 w-4 text-muted-foreground" />
             Household sharing

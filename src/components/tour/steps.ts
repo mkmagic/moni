@@ -103,9 +103,19 @@ export const TOUR_STEPS: TourStep[] = [
     body: "Turn on Smart Categorize and manage agent (MCP) access here. AI is always opt-in and, in this version, strictly read-only.",
   },
   {
+    // Household sharing is off until you create or join one, so the /household
+    // destination is hidden by default — point the tour at the setup surface in
+    // Settings, which is always present, rather than the empty live view.
+    id: "household",
+    route: "/settings/household",
+    anchor: '[data-tour="settings-household"]',
+    title: "Share with your household",
+    body: "Budgeting with a partner or family? Set one up here to share a live budget and see who owes whom — each person still keeps their own private ledger.",
+  },
+  {
     id: "done",
     route: "/dashboard",
     title: "You're all set",
-    body: "That's the tour. Household sharing is on the way. You can replay this anytime from Settings › Help.",
+    body: "That's the tour. You can replay it anytime from Settings › Help.",
   },
 ];
