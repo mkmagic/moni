@@ -1,0 +1,2 @@
+ALTER TABLE "household_invitations" ADD COLUMN "accepted_by" uuid;--> statement-breakpoint
+ALTER TABLE "household_invitations" ADD CONSTRAINT "household_invitations_accepted_by_users_id_fk" FOREIGN KEY ("accepted_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;

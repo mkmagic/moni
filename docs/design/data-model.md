@@ -282,8 +282,79 @@ them:
 5. **Installments & billing-cycle bucketing.** Metadata is denormalized per slice + an inferred `installment_group_id` (the scraper gives no stable group id). **Decided (issue #69):** an installment slice is dated by **its own charge date** (`processedDate`), and its `entries` amount is **that payment alone** (`chargedAmount`) — because the scrapers repeat the whole deal on every slice, putting the purchase date and the deal sum on all twelve. The deal sum survives in `installment_total_amount_ct` (with `installment_total_currency`, which is not always the entry's `entered_currency` — a foreign purchase states the deal in one currency and charges each payment in another), and the purchase date in `installment_purchase_date`. The statement-close date drives nothing: re-bucketing around it would install a permanent gap between the date the ledger displays and the date every aggregate believes. `import_key` still keys on the *stable* purchase date and deal sum, never `processedDate`, plus the slice number — without which Isracard's shared identifier collapses all twelve payments onto one entry.
 6. **Reporting leg derived, not stored** (§4.3) — `money-and-currency.md` §2/§7 has been reconciled to match. Stability is preserved because the *rate* is locked at the transaction date.
 7. **Pending FX** — `fx_status = 'pending'` + null `fx_rate` until backfilled; on-the-fly aggregation must surface or exclude pending rows, never under-count.
-8. **Strict per-user isolation vs. household sharing.** `owner_id = user_id` everywhere, plus the composite tenant-FK backstop. Moni diverges from Maybe's family-shared model: there is **no** shared/household view in v1.0. A future shared or read-only-grant feature is a new sharing layer on top, not a rewrite of `owner_id`.
+8. **Strict per-user isolation vs. household sharing.** `owner_id = user_id` everywhere, plus the composite tenant-FK backstop. Moni diverges from Maybe's family-shared model: the personal ledger is never shared. The **household sharing layer** (§7, issue #115) is that "new sharing layer on top" — a distinct class of *group-owned* rows, not a rewrite of `owner_id`. Every ledger row stays single-`owner_id`, RLS'd, DK-encrypted; only a member's deliberately-published per-category monthly total crosses, encrypted under a household group key.
 9. **Class-table subtyping.** Base `entries` + `entry_transactions` (and `entry_trades` later) costs a join but buys typed subtype fields and real FKs; chosen over a discriminator + wide nullable/JSONB row.
 10. **Row-version rollback anchoring.** The AAD `version` blocks casual ciphertext rollback, but against an *active* DB-write attacker the *expected* version must be anchored outside the DB (per-user counter / signed head) — an open question inherited from `threat-model.md` §7.4/§13, not resolved here.
 11. **Transfer-detection false pairs.** Internal-transfer pairing is a background heuristic (`transfers` + `excluded`/`kind`); a mispair double-counts or hides a real flow, so pairing is reversible and surfaced to the user.
 12. **Retention.** Raw entries are kept forever — never compacted into monthly aggregates. Because every aggregate is derived (no persisted rollups, no stored reporting leg), the raw ledger is the *sole* source of truth; discarding it to save space (trivial at family scale) would forfeit re-categorization, attribute-lock audit, and dedup. Compaction is explicitly a non-goal.
+
+---
+
+## 7. Household sharing layer (issue #115)
+
+The "new sharing layer on top" reserved in §6 tension 8 — **strictly additive**,
+and the core invariant is untouched: **no jointly-owned ledger rows.** Every
+transaction stays in exactly one person's private, RLS-protected, DK-encrypted
+ledger. The only thing that crosses the isolation boundary is a member's
+deliberately-*published* per-category monthly total, encrypted under a household
+**group key** — the security-principle-#25 shape of an opt-in, scoped disclosure.
+
+### 7.1 A new RLS class: group-owned, not user-owned
+Household rows key tenancy on **membership**, not `owner_id`: the policy is "am I
+a member of this household?" (`household_id ∈ members(app.user_id)`) rather than
+`owner_id = app.user_id`. The per-user policies from drizzle/0001 are unchanged.
+
+Because a policy that subqueries its own table is rejected by Postgres as
+infinite recursion, `household_members` is the **non-recursive leaf** — its policy
+is the self-contained `owner_id = app.user_id` (a member sees only their own
+membership rows) — and every satellite table keys on a subquery over that leaf,
+which is exactly the membership test. Co-member facts come from the group-readable
+satellites and the globally-readable `users` anchor, never a cross-member read of
+the leaf. The **member roster** (`households.created_by` ∪
+`household_invitations.accepted_by`) is likewise group-readable without touching
+the leaf.
+
+### 7.2 The group key & onboarding
+A household owns one 32-byte group key, **wrapped once per member under that
+member's DK** (`household_members.wrapped_group_key`) — unwrapping needs the
+member's live session DK, consistent with the whole key model. Since the creator
+cannot wrap it for an invitee whose DK is RAM-only in their own session,
+onboarding uses a **one-time invite secret** (the `agent_tokens`/`webauthn-prf`
+32-byte-secret→KEK seam): the creator wraps the group key under a KEK derived from
+the secret and stores the wrap + the secret's SHA-256; the invitee redeems it in
+their own session — unwrap with the secret's KEK, re-wrap under their DK.
+
+### 7.3 Tables
+- **`households`** — the group-ownership root (name, `created_by`).
+- **`household_members`** — membership + the per-member DK-wrapped group key (the RLS leaf).
+- **`household_invitations`** — one-time invite (`token_hash`, KEK-wrapped group key, `accepted_by`).
+- **`shared_categories`** — a first-class shared budget line (plaintext name); NOT a reference to any member's per-user `categories` row.
+- **`shared_category_maps`** — a member's own local categories folded into a shared line. Member-private under RLS; a composite `(member_id, local_category_id)` FK makes mapping another member's category impossible at the database.
+- **`shared_category_splits`** — per-member split weight (plaintext exact-decimal ratio, group-readable, either member sets it).
+- **`household_budget_ceilings`** — the group-owned household ceiling, effective-dated like `budget_ceilings` but **encrypted under the group key**.
+- **`published_category_totals`** — one member's monthly total per shared category (Option A). READ by any member, WRITE only own rows. Encrypted under the group key; AAD = id ‖ column ‖ version.
+
+### 7.4 Option A — published running totals
+Each member recomputes their own monthly total per shared category (across their
+mapped local categories, the house money rules) and **overwrites** that single
+encrypted number. It is a recompute-and-overwrite, not an encrypted
+read-modify-write, and a member touches only their own rows — so it has no
+lost-update race, which is exactly why it escapes the no-persisted-rollups ban of
+§6.2. The `version` bump is only the AAD rollback binding. Republish fires
+synchronously on re-categorization and on the app-open (read-time) path.
+
+### 7.5 Combined view, budget & settlement
+Combined = **my live figure** (recomputed now) **+ each other member's
+last-published figure**; a member who has not reported is surfaced explicitly
+(never a silent ₪0) and makes the figure provisional; freshness = the oldest
+member's last publish. The same combined number read through the split weights is
+**settlement**: share = weight × combined, owe = share − paid, netted per pair and
+conserved to exactly zero (decimal.js; leftover-agora to the largest fractional
+remainder, tie-break by member id). A local category mapped to a shared line takes
+the household ceiling, never a personal one — a personal ceiling on it is refused,
+and a pre-existing one is suppressed (not deleted) while shared, restored on unmap.
+
+### 7.6 Deferred (direction fixed, not built)
+Breakup/leave = freeze + group-key rotation; per-transaction "just mine" opt-out;
+N-way min-cash-flow settlement; the reimbursement-transfer auto-classing that keeps
+a settlement payment out of totals; and any UI. All out of the first backend cut.

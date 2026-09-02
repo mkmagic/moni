@@ -46,6 +46,9 @@ import { getBudgetMonth, getBudgetHistory, currentMonth } from "@/domain/budget"
 import { getPortfolioOverview, listPortfolioHoldings } from "@/domain/investments";
 import { listLongTermSavingsAccounts } from "@/domain/long-term-savings";
 import { listCategoryTree, listRules } from "@/domain/categorization";
+import { householdSummaries } from "@/domain/household";
+import { getHouseholdOverview } from "@/domain/household-budget";
+import { myMappedLocalCategoryIds } from "@/domain/shared-categories";
 import type { AgentRequestContext } from "@/lib/mcp/agent-request";
 import {
   AgentAccessCapError,
@@ -101,6 +104,11 @@ const SERVER_INSTRUCTIONS = [
   "`long_term_savings` (pension / קרן השתלמות / gemel reports); and the structural `categories`",
   "(the category tree) and `rules` (the categorization rules). Investment and savings figures",
   "carry their own valuation freshness — surface it, never restate a stale figure as current.",
+  "",
+  "If the owner shares a HOUSEHOLD (see `whoami`), a shared category's per-user `spending`/",
+  "`budget` figure is only what THIS member spent; use `household_budget` for the combined",
+  "household figure and `household_settlement` for who-owes-whom. A shared figure is only as",
+  "current as the least-recently-synced member, and is provisional until everyone has reported.",
   "",
   "Every result carries a `provenance` block (identity, freshness, completeness) — tell the",
   "user how current and how complete a figure is; never present a stale or partial number as",
@@ -235,16 +243,32 @@ export async function buildAgentMcpServer(
     {
       description:
         "Returns the identity of the account this agent token belongs to " +
-        "(user id and base currency). Read-only.",
+        "(user id and base currency), plus any HOUSEHOLDS it belongs to and the " +
+        "shared budget lines in each. For combined household figures or who-owes-" +
+        "whom, use `household_budget` / `household_settlement`. Read-only.",
       inputSchema: {},
       annotations: READ_ONLY_ANNOTATIONS,
     },
     () =>
-      guardedTool(ctx, "whoami", {}, async () => ({
-        payload: { userId: ctx.userId, baseCurrency: data.baseCurrency },
-        provenance: { identity, freshness: { asOf: "now" }, completeness: { full: true } },
-        rowCount: 1,
-      })),
+      guardedTool(ctx, "whoami", {}, async () => {
+        // Household names + shared-category names are the OTHER member's text —
+        // untrusted (already framed by the result's untrusted-data notice).
+        const households = await householdSummaries(ctx.userId);
+        return {
+          payload: {
+            userId: ctx.userId,
+            baseCurrency: data.baseCurrency,
+            households: households.map((h) => ({
+              householdId: h.householdId,
+              name: h.name,
+              memberCount: h.memberCount,
+              sharedCategories: h.sharedCategoryNames,
+            })),
+          },
+          provenance: { identity, freshness: { asOf: "now" }, completeness: { full: true } },
+          rowCount: 1,
+        };
+      }),
   );
 
   server.registerTool(
@@ -307,8 +331,27 @@ export async function buildAgentMcpServer(
           from,
           to,
         });
+        // Flag category groups that are shared with a household: the returned
+        // figure is this member's OWN spend; the HOUSEHOLD figure + their share
+        // come from `household_budget` (per month). Only meaningful when grouped
+        // by category (a month group is not a single category).
+        const shared = group_by === "category" ? await myMappedLocalCategoryIds(ctx.userId) : null;
+        const groups = shared
+          ? aggregate.groups.map((g) => (shared.has(g.key) ? { ...g, shared: true } : g))
+          : aggregate.groups;
         return {
-          payload: aggregate,
+          payload: {
+            ...aggregate,
+            groups,
+            ...(shared && shared.size > 0
+              ? {
+                  sharedNote:
+                    "One or more categories are shared with a household; the figure " +
+                    "here is this member's own spend. Call household_budget for the " +
+                    "combined household figure and this member's share.",
+                }
+              : {}),
+          },
           provenance: {
             identity,
             freshness: { asOf: to ?? "now" },
@@ -644,6 +687,96 @@ export async function buildAgentMcpServer(
             completeness: { full: true },
           },
           rowCount: ruleViews.length,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "household_budget",
+    {
+      description:
+        "Shared HOUSEHOLD budget for a month: for each shared line, the COMBINED " +
+        "actual (this member's live spend + each other member's last-published " +
+        "figure) against the household ceiling, computed by Moni's money engine. " +
+        "`month` is YYYY-MM, defaults to the current month. A member who has not " +
+        "reported this period is flagged (never a silent 0), which makes the " +
+        "figure provisional. Empty if the owner is in no household. Read-only.",
+      inputSchema: { month: ISO_MONTH },
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    ({ month }) =>
+      guardedTool(ctx, "household_budget", { month }, async () => {
+        const overview = await getHouseholdOverview(
+          ctx.userId,
+          ctx.dataKey,
+          month ?? currentMonth(),
+        );
+        const provisional = overview.some((h) => h.budget.provisional);
+        let freshest: string | null = null;
+        for (const h of overview) {
+          const f = h.budget.freshnessAsOf;
+          if (f && (freshest === null || f < freshest)) freshest = f;
+        }
+        return {
+          payload: {
+            households: overview.map((h) => ({
+              householdId: h.householdId,
+              name: h.name,
+              month: h.budget.month,
+              provisional: h.budget.provisional,
+              categories: h.budget.categories,
+            })),
+          },
+          provenance: {
+            identity,
+            // Freshness is the oldest member's last publish — a shared figure is
+            // only as current as the least-recently-synced member.
+            freshness: { asOf: freshest ?? month ?? currentMonth() },
+            completeness: { provisional },
+          },
+          rowCount: overview.reduce((n, h) => n + h.budget.categories.length, 0),
+        };
+      }),
+  );
+
+  server.registerTool(
+    "household_settlement",
+    {
+      description:
+        "Who owes whom for a month, from the shared household budget: each " +
+        "shared line's combined actual read through the split ratio → each " +
+        "member's share, what they paid, and a single netted true-up per pair " +
+        "(all exact-decimal, conserved to zero). `month` is YYYY-MM, defaults to " +
+        "the current month. Provisional until every member has reported. Read-only.",
+      inputSchema: { month: ISO_MONTH },
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    ({ month }) =>
+      guardedTool(ctx, "household_settlement", { month }, async () => {
+        const overview = await getHouseholdOverview(
+          ctx.userId,
+          ctx.dataKey,
+          month ?? currentMonth(),
+        );
+        const provisional = overview.some((h) => h.settlement.provisional);
+        return {
+          payload: {
+            households: overview.map((h) => ({
+              householdId: h.householdId,
+              name: h.name,
+              month: h.settlement.month,
+              provisional: h.settlement.provisional,
+              members: h.settlement.members,
+              transfers: h.settlement.transfers,
+              perCategory: h.settlement.perCategory,
+            })),
+          },
+          provenance: {
+            identity,
+            freshness: { asOf: month ?? currentMonth() },
+            completeness: { provisional },
+          },
+          rowCount: overview.reduce((n, h) => n + h.settlement.transfers.length, 0),
         };
       }),
   );

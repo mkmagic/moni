@@ -72,6 +72,7 @@ import {
 } from "@/lib/categorization/similarity";
 import { decText, encText } from "./fields";
 import { isFieldLocked, withFieldLocked, withFieldUnlocked } from "./attribute-locks";
+import { publishSharedTotalsInTx } from "./household-publish";
 
 type Tx = Parameters<Parameters<typeof withUser>[1]>[0];
 
@@ -989,6 +990,11 @@ export async function setEntryCategory(
       .where(eq(entries.id, entryId));
 
     await logCategoryChange(tx, userId, dataKey, entryId, categoryId, "user");
+
+    // Moving a charge into or out of a category can move a mapped category's
+    // monthly total, so republish this member's shared totals for the affected
+    // month synchronously (issue #115). A no-op for a user in no household.
+    await publishSharedTotalsInTx(tx, userId, dataKey, [entry.date.slice(0, 7)]);
 
     if (categoryId === null) return;
 
