@@ -27,10 +27,9 @@ family members each get their own account and use the app without touching any i
 Complete isolation between users is a hard requirement, enforced at the database, not left to
 application code to remember.
 
-> **Status:** pre-1.0, under active development. **v1.0** ships a thin, correct spine: a family
-> connects their Israeli accounts, sees a categorized, multi-currency picture of income and
-> expenses, and asks an AI about it — safely, with correct money math. Budgeting, investments,
-> insurance and US brokers are designed but deferred past v1.0.
+> **Status:** under active development. A family can already connect their Israeli accounts,
+> see a categorized, multi-currency picture of income and expenses, set budgets, track
+> investments and long-term savings, and ask an AI about it — with correct money math.
 
 ## Running it at home
 
@@ -59,9 +58,16 @@ npm run db:migrate
 npm run dev
 ```
 
-A model backend is **optional**: Moni runs fully in rules-only mode with no AI provider
-configured. If you want AI features, you supply your own credentials — a hosted API key
-(Anthropic, Google Gemini) or a local model (e.g. Ollama) so transaction data never leaves the box.
+**You do not need an LLM to run Moni.** Categorization is deterministic-first: built-in and
+user-authored rules handle transactions with no model at all, and the app runs fully in this
+rules-only mode. An LLM only powers the optional extras — smart categorization of the unmatched
+tail, and the AI chat.
+
+If the owner wants those features, **the owner supplies a single API key when deploying**
+(`MONI_LLM_API_KEY`, with optional `MONI_LLM_BASE_URL` / `MONI_LLM_MODEL` — pointing at a hosted
+provider or a local model on the box). This is a host-level setting: **individual family members
+cannot supply their own AI credentials** — either the owner configures one backend for the whole
+instance, or there are no AI features.
 
 ## Security & authentication
 
@@ -89,8 +95,12 @@ server-side scraping makes that unavoidable. Moni does **not** claim the owner c
 - **Israeli banks & cards** — sourced through
   [**`israeli-bank-scrapers`**](https://github.com/eshaham/israeli-bank-scrapers), the open-source
   library Moni depends on for Israeli financial institutions. Full credit to that project.
-- **US banks & brokers** (Schwab, IBKR) and **insurance** — designed as future connectors behind a
-  generic data-source interface; not in v1.0.
+- **Brokerages** — Interactive Brokers via its **Flex Query** API, and **SnapTrade** for other
+  brokers.
+- **Long-term savings** — Israeli pension, קרן השתלמות and קופת גמל reports, parsed from provider
+  documents.
+
+All sources sit behind one generic connector interface, so new institutions plug in the same way.
 
 ## AI-native, read-only
 
@@ -98,13 +108,6 @@ Moni ships with a built-in [MCP](https://modelcontextprotocol.io) server so agen
 your data. In **v1.0 the AI is strictly read-only** — there is no write path of any kind. Every
 access, human or agent, goes through a single domain/service layer; there is no second way into the
 database. AI reads are opt-in per user and scoped to that user's own data.
-
-## Tech stack
-
-TypeScript end-to-end: **Next.js (App Router) + React**, **PostgreSQL + Drizzle ORM**,
-**Tailwind CSS + shadcn/ui + Recharts**, the official **`@modelcontextprotocol/sdk`** for MCP, and
-**Vitest** for tests. Money is stored as Postgres `NUMERIC` and computed with `decimal.js` — never
-a floating-point number.
 
 ## Development
 
