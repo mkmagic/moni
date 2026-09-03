@@ -255,6 +255,21 @@ export class InvalidDateError extends Error {
 /** The shape `entries.date` stores — a calendar day, no time or zone. */
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+/** True only for a real calendar day. The regex alone lets "2026-02-31"
+ * through, and `Date.parse` silently rolls it over to March 3 rather than
+ * rejecting it — so build the day back from its parts and require it to
+ * round-trip exactly. */
+function isValidCalendarDay(date: string): boolean {
+  if (!ISO_DATE.test(date)) return false;
+  const [year, month, day] = date.split("-").map(Number);
+  const built = new Date(Date.UTC(year, month - 1, day));
+  return (
+    built.getUTCFullYear() === year &&
+    built.getUTCMonth() === month - 1 &&
+    built.getUTCDate() === day
+  );
+}
+
 /**
  * Corrects one transaction's date by hand and LOCKS it: the pending -> posted
  * re-date in a later scrape then skips this entry, exactly as a hand-set
@@ -264,7 +279,7 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
  */
 export async function setEntryDate(session: Session, entryId: string, date: string): Promise<void> {
   const { userId, dataKey } = session;
-  if (!ISO_DATE.test(date) || Number.isNaN(Date.parse(date))) {
+  if (!isValidCalendarDay(date)) {
     throw new InvalidDateError(date);
   }
   await withUser(userId, async (tx) => {

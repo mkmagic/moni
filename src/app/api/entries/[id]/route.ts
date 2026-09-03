@@ -28,7 +28,18 @@ const PatchSchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
-});
+})
+  // Reject a request that asks for nothing — an empty body (or one carrying
+  // only `createRule`) would otherwise return `{ ok: true }` having changed
+  // nothing, a silent success at the trust boundary.
+  .refine((v) => v.categoryId !== undefined || v.date !== undefined, {
+    message: "no supported edit specified",
+  })
+  // `createRule` only means something alongside a category change — it writes
+  // the rule that assigns future transactions this category.
+  .refine((v) => v.createRule === undefined || v.categoryId !== undefined, {
+    message: "createRule requires a category change",
+  });
 
 export async function PATCH(
   req: NextRequest,
