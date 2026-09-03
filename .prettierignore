@@ -31,6 +31,9 @@ package-lock.json
 # checking it can only ever produce a failure nobody can act on.
 tsconfig.json
 
+# Verbatim license text — third-party, not ours to reformat (no parser anyway)
+LICENSE
+
 # Standard cruft
 node_modules/
 coverage/
