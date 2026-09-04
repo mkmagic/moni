@@ -29,10 +29,13 @@ export interface MonthPoint {
 
 /** A rounded direction + magnitude for a headline change. `pct` is a whole
  * percentage (a ratio, never money) computed and rounded in the domain so the
- * display edge does no arithmetic. */
+ * display edge does no arithmetic. `months` is the span the change covers —
+ * from the user's first tracked month to now — so the label reads "over N
+ * months" instead of a hard-coded six. */
 export interface Trend {
   direction: "up" | "down";
   pct: number;
+  months: number;
 }
 
 export interface Overview {
@@ -42,6 +45,11 @@ export interface Overview {
   assetsTotal: Money;
   monthlyIncome: Money;
   monthlyExpenses: Money; // positive magnitude
+  /**
+   * Monthly income/expense flows across the window, trimmed to start at the
+   * first month with any activity — the leading zero-filled months before the
+   * user's first transaction are dropped so the chart doesn't graph flat zeros.
+   */
   months: MonthPoint[];
   /**
    * Net-worth stock history, one point per month. Trimmed to start at the month
@@ -51,7 +59,10 @@ export interface Overview {
    */
   netWorthHistory: Array<{ month: string; amount: string; metadata: ValuationMetadata }>;
   netWorthMetadata: ValuationMetadata;
-  /** Net worth now vs six months ago. Null without a positive baseline. */
+  /**
+   * Net worth now vs the user's first tracked month. Null without a positive
+   * baseline or fewer than two tracked months (a lone month is no span).
+   */
   netWorthTrend: Trend | null;
 }
 
@@ -213,18 +224,28 @@ export async function getOverview(session: Session): Promise<Overview> {
       buckets.set(key, b);
     }
 
-    // Ordered month series across the window (fill gaps with zeros).
-    const months: MonthPoint[] = [];
+    // Ordered month series across the window (fill gaps with zeros). Activity is
+    // judged on the Decimal itself, never its "0" string — so the trim below
+    // doesn't hinge on how a zero happens to serialize.
+    const windowMonths: Array<{ point: MonthPoint; active: boolean }> = [];
     for (let i = 5; i >= 0; i--) {
       const key = monthKey(monthsBefore(today, i));
       const b = buckets.get(key) ?? { income: new Decimal(0), expenses: new Decimal(0) };
-      months.push({
-        month: key,
-        income: b.income.toString(),
-        expenses: b.expenses.toString(),
-        net: b.income.minus(b.expenses).toString(),
+      windowMonths.push({
+        point: {
+          month: key,
+          income: b.income.toString(),
+          expenses: b.expenses.toString(),
+          net: b.income.minus(b.expenses).toString(),
+        },
+        active: !b.income.isZero() || !b.expenses.isZero(),
       });
     }
+    // Trim the leading zero-filled months so the Income-vs-Expenses chart starts
+    // at the user's first month of activity, not a flat run of pre-history zeros.
+    // Interior gaps stay (a real dip to zero is the truth); only the head is cut.
+    const firstActive = windowMonths.findIndex((m) => m.active);
+    const months = firstActive === -1 ? [] : windowMonths.slice(firstActive).map((m) => m.point);
     const current = buckets.get(currentMonth) ?? {
       income: new Decimal(0),
       expenses: new Decimal(0),
@@ -292,7 +313,10 @@ export async function getOverview(session: Session): Promise<Overview> {
     // Direction + rounded whole-percent magnitude. A ratio, not money, so it is
     // computed and rounded here rather than at the display edge; null when there
     // is no positive baseline or the change rounds away.
-    const trendFrom = (from: Decimal, to: Decimal): Trend | null => {
+    const trendFrom = (
+      from: Decimal,
+      to: Decimal,
+    ): { direction: "up" | "down"; pct: number } | null => {
       if (!from.greaterThan(0)) return null;
       const pct = to
         .minus(from)
@@ -302,14 +326,22 @@ export async function getOverview(session: Session): Promise<Overview> {
       if (pct.isZero()) return null;
       return { direction: pct.isNegative() ? "down" : "up", pct: Math.abs(pct.toNumber()) };
     };
-    // Trend is computed from the FULL six-month window (its baseline is the
-    // oldest point, six months ago) before the display history is trimmed to
-    // the join month. A user who wasn't here six months ago has a zero
-    // baseline, so `trendFrom` returns null and no "6mo" badge shows.
-    const netWorthBaseline = netWorthHistory[0]; // oldest point, six months ago
-    const netWorthTrend = netWorthBaseline
-      ? trendFrom(new Decimal(netWorthBaseline.amount), netWorth)
-      : null;
+    // The chart and the trend both read only the user's tracked months: from the
+    // join month (which drops pre-join carried spikes — an old balance that would
+    // otherwise read as a "7000%" jump into the join month) with the leading
+    // no-data zeros then stripped, so both begin at the first month the user
+    // actually has a net-worth figure. Net worth carries forward, so once real,
+    // later months are never zero — no interior gap to worry about. A single
+    // tracked month is one dot, not a span, so a trend needs a second month; the
+    // span in months labels the badge.
+    const joinTrimmed = netWorthHistory.filter((point) => point.month >= joinMonth);
+    const firstReal = joinTrimmed.findIndex((point) => !new Decimal(point.amount).isZero());
+    const trackedHistory = firstReal === -1 ? [] : joinTrimmed.slice(firstReal);
+    let netWorthTrend: Trend | null = null;
+    if (trackedHistory.length >= 2) {
+      const change = trendFrom(new Decimal(trackedHistory[0].amount), netWorth);
+      if (change) netWorthTrend = { ...change, months: trackedHistory.length };
+    }
 
     return {
       baseCurrency: "ILS",
@@ -319,7 +351,7 @@ export async function getOverview(session: Session): Promise<Overview> {
       monthlyIncome: { amount: current.income.toString(), currency: baseCurrency },
       monthlyExpenses: { amount: current.expenses.toString(), currency: baseCurrency },
       months,
-      netWorthHistory: netWorthHistory.filter((point) => point.month >= joinMonth),
+      netWorthHistory: trackedHistory,
       netWorthMetadata,
       netWorthTrend,
     };

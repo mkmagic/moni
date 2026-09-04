@@ -60,6 +60,12 @@ export function ThisMonthCard({
   budget,
   months,
 }: ThisMonthCardProps) {
+  // A trend line needs two months of real data to draw — a lone month is just a
+  // dot (the same rule as the net-worth hero). Interior/trailing zero months
+  // don't count as data; only months with actual income or expenses do.
+  const monthsWithData = months.filter(
+    (m) => Number(m.income) !== 0 || Number(m.expenses) !== 0,
+  ).length;
   return (
     <Card data-tour="dash-this-month" className="overflow-hidden">
       <div className={cn(LABEL, "px-5 pb-3 pt-5")}>This month · {monthLabel}</div>
@@ -131,24 +137,28 @@ export function ThisMonthCard({
           )}
         </div>
 
-        <div className="col-span-2 border-t border-border px-5 py-4">
-          <div className="flex items-center justify-between gap-2">
-            <span className={LABEL}>Income vs. expenses · 6mo</span>
-            <span className="flex items-center gap-3 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1.5">
-                <span className="inline-block h-2 w-2 rounded-[2px] bg-positive" />
-                In
+        {/* One month of data is a single dot with no trend line, so the chart
+            only appears once a second month of activity exists. */}
+        {monthsWithData >= 2 && (
+          <div className="col-span-2 border-t border-border px-5 py-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className={LABEL}>Income vs. expenses · {months.length}mo</span>
+              <span className="flex items-center gap-3 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block h-2 w-2 rounded-[2px] bg-positive" />
+                  In
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block h-2 w-2 rounded-[2px] bg-negative" />
+                  Out
+                </span>
               </span>
-              <span className="flex items-center gap-1.5">
-                <span className="inline-block h-2 w-2 rounded-[2px] bg-negative" />
-                Out
-              </span>
-            </span>
+            </div>
+            <div className="mt-2">
+              <IncomeExpenseChart months={months} compact />
+            </div>
           </div>
-          <div className="mt-2">
-            <IncomeExpenseChart months={months} compact />
-          </div>
-        </div>
+        )}
       </div>
     </Card>
   );
