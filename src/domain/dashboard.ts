@@ -224,23 +224,28 @@ export async function getOverview(session: Session): Promise<Overview> {
       buckets.set(key, b);
     }
 
-    // Ordered month series across the window (fill gaps with zeros).
-    const windowMonths: MonthPoint[] = [];
+    // Ordered month series across the window (fill gaps with zeros). Activity is
+    // judged on the Decimal itself, never its "0" string — so the trim below
+    // doesn't hinge on how a zero happens to serialize.
+    const windowMonths: Array<{ point: MonthPoint; active: boolean }> = [];
     for (let i = 5; i >= 0; i--) {
       const key = monthKey(monthsBefore(today, i));
       const b = buckets.get(key) ?? { income: new Decimal(0), expenses: new Decimal(0) };
       windowMonths.push({
-        month: key,
-        income: b.income.toString(),
-        expenses: b.expenses.toString(),
-        net: b.income.minus(b.expenses).toString(),
+        point: {
+          month: key,
+          income: b.income.toString(),
+          expenses: b.expenses.toString(),
+          net: b.income.minus(b.expenses).toString(),
+        },
+        active: !b.income.isZero() || !b.expenses.isZero(),
       });
     }
     // Trim the leading zero-filled months so the Income-vs-Expenses chart starts
     // at the user's first month of activity, not a flat run of pre-history zeros.
     // Interior gaps stay (a real dip to zero is the truth); only the head is cut.
-    const firstActive = windowMonths.findIndex((m) => m.income !== "0" || m.expenses !== "0");
-    const months = firstActive === -1 ? [] : windowMonths.slice(firstActive);
+    const firstActive = windowMonths.findIndex((m) => m.active);
+    const months = firstActive === -1 ? [] : windowMonths.slice(firstActive).map((m) => m.point);
     const current = buckets.get(currentMonth) ?? {
       income: new Decimal(0),
       expenses: new Decimal(0),
@@ -321,12 +326,17 @@ export async function getOverview(session: Session): Promise<Overview> {
       if (pct.isZero()) return null;
       return { direction: pct.isNegative() ? "down" : "up", pct: Math.abs(pct.toNumber()) };
     };
-    // The chart and the trend both read only the user's tracked months — the
-    // window trimmed to their join month. A single tracked month is one dot,
-    // not a span, so growth is measured only once a second month exists, from
-    // that first tracked month (never a pre-join zero, which turned a normal
-    // balance into a "7000%" spike). The span in months labels the badge.
-    const trackedHistory = netWorthHistory.filter((point) => point.month >= joinMonth);
+    // The chart and the trend both read only the user's tracked months: from the
+    // join month (which drops pre-join carried spikes — an old balance that would
+    // otherwise read as a "7000%" jump into the join month) with the leading
+    // no-data zeros then stripped, so both begin at the first month the user
+    // actually has a net-worth figure. Net worth carries forward, so once real,
+    // later months are never zero — no interior gap to worry about. A single
+    // tracked month is one dot, not a span, so a trend needs a second month; the
+    // span in months labels the badge.
+    const joinTrimmed = netWorthHistory.filter((point) => point.month >= joinMonth);
+    const firstReal = joinTrimmed.findIndex((point) => !new Decimal(point.amount).isZero());
+    const trackedHistory = firstReal === -1 ? [] : joinTrimmed.slice(firstReal);
     let netWorthTrend: Trend | null = null;
     if (trackedHistory.length >= 2) {
       const change = trendFrom(new Decimal(trackedHistory[0].amount), netWorth);

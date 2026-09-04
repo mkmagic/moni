@@ -255,6 +255,27 @@ describe("dashboard income/expense months trim", () => {
     expect(overview.months.every((m) => m.month >= threeAgo)).toBe(true);
   });
 
+  it("keeps interior zero months — a real gap between active months is the truth", async () => {
+    const fx = await fixture();
+    // Activity five months ago and again two months ago, nothing in between.
+    // Leading months are trimmed, but the interior gap (four and three months
+    // ago) must survive as genuine zeros so the chart dips, not skips.
+    const fiveAgo = shiftMonthStart(curMonthStart, -5).toISOString().slice(0, 7);
+    const fourAgo = shiftMonthStart(curMonthStart, -4).toISOString().slice(0, 7);
+    const threeAgo = shiftMonthStart(curMonthStart, -3).toISOString().slice(0, 7);
+    const twoAgo = shiftMonthStart(curMonthStart, -2).toISOString().slice(0, 7);
+    await addEntry(fx, `${fiveAgo}-10`, "-100");
+    await addEntry(fx, `${twoAgo}-10`, "-100");
+
+    const overview = await getOverview(fx.session);
+    expect(overview.months[0]?.month).toBe(fiveAgo);
+    // Five months ago through the current month = six points, gap retained.
+    expect(overview.months).toHaveLength(6);
+    const gap = overview.months.filter((m) => m.month === fourAgo || m.month === threeAgo);
+    expect(gap).toHaveLength(2);
+    expect(gap.every((m) => m.income === "0" && m.expenses === "0")).toBe(true);
+  });
+
   it("returns no months when there has been no activity at all", async () => {
     const fx = await fixture();
     const overview = await getOverview(fx.session);
