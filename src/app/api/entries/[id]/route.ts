@@ -11,24 +11,25 @@ import { EntryNotFoundError, InvalidDateError, setEntryDate } from "@/domain/tra
 // Zod at the trust boundary (docs/design/conventions.md — Validation). The
 // dialog sends one edit at a time: either a category change or a date
 // correction. Both fields are optional so each edit stands alone.
-const PatchSchema = z.object({
-  categoryId: z.uuid().nullable().optional(),
-  /** Also write a rule so future transactions matching this condition get the
-   * same category. The operator vocabulary is the description third of the
-   * rule form's — amount operators have no meaning for a payee string. */
-  createRule: z
-    .object({
-      operator: z.enum(["contains", "starts_with", "equals"]),
-      value: z.string().min(1).max(200),
-    })
-    .optional(),
-  /** A hand-corrected calendar day (YYYY-MM-DD). Locks the date against the
-   * next scrape's re-date (attribute-locks.ts). */
-  date: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/)
-    .optional(),
-})
+const PatchSchema = z
+  .object({
+    categoryId: z.uuid().nullable().optional(),
+    /** Also write a rule so future transactions matching this condition get the
+     * same category. The operator vocabulary is the description third of the
+     * rule form's — amount operators have no meaning for a payee string. */
+    createRule: z
+      .object({
+        operator: z.enum(["contains", "starts_with", "equals"]),
+        value: z.string().min(1).max(200),
+      })
+      .optional(),
+    /** A hand-corrected calendar day (YYYY-MM-DD). Locks the date against the
+     * next scrape's re-date (attribute-locks.ts). */
+    date: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+  })
   // Reject a request that asks for nothing — an empty body (or one carrying
   // only `createRule`) would otherwise return `{ ok: true }` having changed
   // nothing, a silent success at the trust boundary.
