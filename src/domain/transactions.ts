@@ -3,9 +3,17 @@
 // narrowed set, and derives the reporting amount = entered × locked fx_rate
 // (data-model.md §4.3). Pending-FX entries are flagged, never faked to 1:1
 // (money-and-currency.md §4).
+import { randomUUID } from "node:crypto";
 import { and, desc, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import { withUser } from "@/db/client";
-import { accounts, categories, entries, entryTransactions, merchants } from "@/db/schema";
+import {
+  accounts,
+  categories,
+  entries,
+  entryFieldChangelog,
+  entryTransactions,
+  merchants,
+} from "@/db/schema";
 import { multiply, type Money } from "@/lib/money";
 import type { Session } from "@/lib/auth/session-store";
 import { normalizeDescription } from "@/lib/categorization/normalize";
@@ -18,8 +26,8 @@ import {
   type Direction,
   type SizeKey,
 } from "@/lib/transactions/predicates";
-import { decText } from "./fields";
-import { isFieldLocked } from "./attribute-locks";
+import { decText, encText } from "./fields";
+import { isFieldLocked, withFieldLocked } from "./attribute-locks";
 import { loadTransferCategoryIds } from "./flows";
 
 /** Formatted here, on the server, with an explicit locale — a client
@@ -42,6 +50,8 @@ export interface EntryView {
   categoryName: string | null;
   /** True once a human set the category — rules and the model skip it forever. */
   categoryLocked: boolean;
+  /** True once a human corrected the date — a later scrape won't re-date it. */
+  dateLocked: boolean;
   /** The category is classified `transfer`: money moved, not earned or spent.
    * The UI colors these blue rather than teal/coral, because the sign of a
    * transfer is not good or bad news (`src/domain/flows.ts`). */
@@ -208,6 +218,7 @@ export async function listEntries(
         categoryId: e.categoryId,
         categoryName: e.categoryId ? (catName.get(e.categoryId) ?? null) : null,
         categoryLocked: isFieldLocked(e.lockedAttributes, "category_id"),
+        dateLocked: isFieldLocked(e.lockedAttributes, "date"),
         isTransfer: e.categoryId !== null && transferCategoryIds.has(e.categoryId),
         merchantName: e.merchantId ? (merName.get(e.merchantId) ?? null) : null,
         installmentLabel: installmentLabel.get(e.id) ?? null,
@@ -224,5 +235,74 @@ export async function listEntries(
         matchesDirection(v, filters.direction ?? "all") && matchesSize(v, filters.size ?? "all"),
     );
     return filters.limit === undefined ? matched : matched.slice(0, filters.limit);
+  });
+}
+
+export class EntryNotFoundError extends Error {
+  constructor(entryId: string) {
+    super(`entry not found: ${entryId}`);
+    this.name = "EntryNotFoundError";
+  }
+}
+
+export class InvalidDateError extends Error {
+  constructor(value: string) {
+    super(`invalid date: ${value}`);
+    this.name = "InvalidDateError";
+  }
+}
+
+/** The shape `entries.date` stores — a calendar day, no time or zone. */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** True only for a real calendar day. The regex alone lets "2026-02-31"
+ * through, and `Date.parse` silently rolls it over to March 3 rather than
+ * rejecting it — so build the day back from its parts and require it to
+ * round-trip exactly. */
+function isValidCalendarDay(date: string): boolean {
+  if (!ISO_DATE.test(date)) return false;
+  const [year, month, day] = date.split("-").map(Number);
+  const built = new Date(Date.UTC(year, month - 1, day));
+  return (
+    built.getUTCFullYear() === year &&
+    built.getUTCMonth() === month - 1 &&
+    built.getUTCDate() === day
+  );
+}
+
+/**
+ * Corrects one transaction's date by hand and LOCKS it: the pending -> posted
+ * re-date in a later scrape then skips this entry, exactly as a hand-set
+ * category is skipped by rules and the model (attribute-locks.ts). The value
+ * is a calendar day (YYYY-MM-DD) in the user's own reckoning — no timezone
+ * conversion, because the column is a bare DATE.
+ */
+export async function setEntryDate(session: Session, entryId: string, date: string): Promise<void> {
+  const { userId, dataKey } = session;
+  if (!isValidCalendarDay(date)) {
+    throw new InvalidDateError(date);
+  }
+  await withUser(userId, async (tx) => {
+    const [entry] = await tx.select().from(entries).where(eq(entries.id, entryId)).limit(1);
+    // RLS already scoped the lookup to the caller, so a miss is "not yours or
+    // not there" — deliberately one answer.
+    if (!entry) throw new EntryNotFoundError(entryId);
+
+    await tx
+      .update(entries)
+      .set({ date, lockedAttributes: withFieldLocked(entry.lockedAttributes, "date") })
+      .where(eq(entries.id, entryId));
+
+    // The applied value lives in the append-only changelog, never in the lock
+    // map (attribute-locks.ts header).
+    const changeId = randomUUID();
+    await tx.insert(entryFieldChangelog).values({
+      id: changeId,
+      ownerId: userId,
+      entryId,
+      fieldName: "date",
+      source: "user",
+      valueCt: encText(dataKey, date, changeId, "value_ct", 1),
+    });
   });
 }
