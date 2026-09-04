@@ -202,8 +202,8 @@ export default async function DashboardPage() {
       content: (
         <>
           Net worth {up ? "up" : "down"}{" "}
-          <span className="font-medium tabular-nums">{overview.netWorthTrend.pct}%</span> over six
-          months
+          <span className="font-medium tabular-nums">{overview.netWorthTrend.pct}%</span> over{" "}
+          {overview.netWorthTrend.months} months
         </>
       ),
     });
@@ -234,7 +234,7 @@ export default async function DashboardPage() {
                 ) : (
                   <TrendingDown className="h-3.5 w-3.5" />
                 )}
-                {overview.netWorthTrend.pct}% · 6mo
+                {overview.netWorthTrend.pct}% · {overview.netWorthTrend.months}mo
               </span>
             )}
           </div>
@@ -243,13 +243,17 @@ export default async function DashboardPage() {
             className="text-3xl font-bold text-foreground sm:text-4xl"
           />
         </div>
-        <Sparkline
-          data={netWorthSeries}
-          labels={netWorthLabels}
-          currency={overview.netWorth.currency}
-          color="var(--color-chart-1)"
-          height={64}
-        />
+        {/* One month of history is a single dot with no trend line — not worth
+            a chart. It appears once a second tracked month exists. */}
+        {netWorthSeries.length >= 2 && (
+          <Sparkline
+            data={netWorthSeries}
+            labels={netWorthLabels}
+            currency={overview.netWorth.currency}
+            color="var(--color-chart-1)"
+            height={64}
+          />
+        )}
       </Card>
 
       <ThisMonthCard

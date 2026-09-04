@@ -1,7 +1,8 @@
 // src/domain/dashboard.ts + getBudgetSummary — the figures the redesigned
 // dashboard's insight panel reads. Three things worth pinning:
 //
-//   * netWorthTrend compares now against six months ago.
+//   * netWorthTrend compares now against the oldest TRACKED month (from the
+//     user's join month, never a pre-join zero) and carries that span.
 //   * netWorthHistory is trimmed to start at the month the user joined, so the
 //     months before they tracked accounts here don't read as a false spike.
 //   * getBudgetSummary names the over-budget categories, not just their count.
@@ -160,7 +161,7 @@ describe("dashboard netWorthHistory join-month trim", () => {
 });
 
 describe("dashboard netWorthTrend", () => {
-  it("compares net worth now against six months ago", async () => {
+  it("compares net worth now against the oldest tracked month, labelled by span", async () => {
     const fx = await fixture();
     const accountId = randomUUID();
     const snapshotId = randomUUID();
@@ -187,7 +188,77 @@ describe("dashboard netWorthTrend", () => {
     const overview = await getOverview(fx.session);
     expect(overview.netWorthHistory[0]?.amount).toBe("100");
     expect(overview.netWorth.amount).toBe("130");
-    expect(overview.netWorthTrend).toEqual({ direction: "up", pct: 30 });
+    // This user joined in 2000 (see fixture), so all six window months are
+    // tracked: baseline is six months ago and the badge reads "6mo".
+    expect(overview.netWorthTrend).toEqual({ direction: "up", pct: 30, months: 6 });
+  });
+
+  it("measures growth from the join month, not a pre-join zero, and needs two months", async () => {
+    const fx = await fixture();
+    // Joined last month: the window has exactly one tracked month, so there is
+    // no span to measure — no trend, and the hero hides its one-dot chart.
+    const joinMonthStart = shiftMonthStart(curMonthStart, -1);
+    const joinMonth = joinMonthStart.toISOString().slice(0, 7);
+    await elevatedDb
+      .update(schema.users)
+      .set({ createdAt: new Date(`${joinMonth}-10T12:00:00Z`) })
+      .where(eq(schema.users.id, fx.userId));
+
+    const accountId = randomUUID();
+    const snapshotId = randomUUID();
+    await elevatedDb.insert(schema.accounts).values({
+      id: accountId,
+      ownerId: fx.userId,
+      nameCt: encText(fx.dataKey, "Savings", accountId, "name_ct", 1),
+      accountType: "checking",
+      classification: "asset",
+      currency: "ILS",
+      currentBalanceCt: encText(fx.dataKey, "500", accountId, "current_balance_ct", 1),
+      status: "active",
+    });
+    // A snapshot at the join month — a real balance, not zero. Six months ago it
+    // did not exist, so the old code compared 500-now against a ~0 baseline and
+    // produced an absurd percentage; the new baseline is the join month itself.
+    const joinMonthEnd = (() => {
+      const d = shiftMonthStart(curMonthStart, 0);
+      d.setUTCDate(0);
+      return d.toISOString().slice(0, 10);
+    })();
+    await elevatedDb.insert(schema.accountBalanceSnapshots).values({
+      id: snapshotId,
+      ownerId: fx.userId,
+      accountId,
+      date: joinMonthEnd,
+      nativeBalanceCt: encText(fx.dataKey, "480", snapshotId, "native_balance_ct", 1),
+      currency: "ILS",
+      source: "manual",
+    });
+
+    const overview = await getOverview(fx.session);
+    expect(overview.netWorthHistory).toHaveLength(1);
+    expect(overview.netWorthTrend).toBeNull();
+  });
+});
+
+describe("dashboard income/expense months trim", () => {
+  it("drops leading zero-filled months so the flow chart starts at the first activity", async () => {
+    const fx = await fixture();
+    // A single expense three months ago. The window's earlier months are
+    // zero-filled and must be trimmed away; the series starts at that month.
+    const threeAgo = shiftMonthStart(curMonthStart, -3).toISOString().slice(0, 7);
+    await addEntry(fx, `${threeAgo}-15`, "-200");
+
+    const overview = await getOverview(fx.session);
+    expect(overview.months[0]?.month).toBe(threeAgo);
+    // First active month through the current month = four points, no leading zeros.
+    expect(overview.months).toHaveLength(4);
+    expect(overview.months.every((m) => m.month >= threeAgo)).toBe(true);
+  });
+
+  it("returns no months when there has been no activity at all", async () => {
+    const fx = await fixture();
+    const overview = await getOverview(fx.session);
+    expect(overview.months).toEqual([]);
   });
 });
 

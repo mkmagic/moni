@@ -133,7 +133,9 @@ export function ThisMonthCard({
 
         <div className="col-span-2 border-t border-border px-5 py-4">
           <div className="flex items-center justify-between gap-2">
-            <span className={LABEL}>Income vs. expenses · 6mo</span>
+            <span className={LABEL}>
+              Income vs. expenses{months.length > 1 ? ` · ${months.length}mo` : ""}
+            </span>
             <span className="flex items-center gap-3 text-xs text-muted-foreground">
               <span className="flex items-center gap-1.5">
                 <span className="inline-block h-2 w-2 rounded-[2px] bg-positive" />
