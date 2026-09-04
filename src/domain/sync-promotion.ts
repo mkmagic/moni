@@ -36,8 +36,20 @@ import {
 import { decText, encText } from "./fields";
 import { categorizeEntries } from "./categorization";
 import { resolveMerchants } from "./merchants";
+import { israelDate } from "./investment-valuation";
+import { isFieldLocked } from "./attribute-locks";
 
 type Tx = Parameters<Parameters<typeof withUser>[1]>[0];
+
+/** The scrapers build `date`/`processedDate` by parsing a local date and
+ * calling `moment(...).toISOString()`, so a value-date of 2026-09-01 in Israel
+ * arrives as the instant 2026-08-31T21:00:00Z. Storing that straight into the
+ * `date` column (a Postgres DATE) truncated it to 2026-08-31, a day early —
+ * the salary-on-the-wrong-day bug. Normalize to the Asia/Jerusalem calendar
+ * day, the day the user actually saw the money move. */
+function ledgerDate(scraperDate: string): string {
+  return israelDate(new Date(scraperDate));
+}
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -286,7 +298,7 @@ async function promoteTransaction(
   const accountCurrency = txn.chargedCurrency ?? resolved.currency;
   const enteredAmount = slice ? accountAmount : dealAmount;
   const enteredCurrency = slice ? accountCurrency : txn.originalCurrency;
-  const entryDate = slice ? txn.processedDate : txn.date;
+  const entryDate = ledgerDate(slice ? txn.processedDate : txn.date);
 
   // Keyed on the deal's stable figures — the purchase date and the deal sum,
   // neither of which moves — plus the slice number, because Isracard gives
@@ -358,7 +370,7 @@ async function promoteTransaction(
         ? encText(dataKey, dealAmount, entryId, "installment_total_amount_ct", 1)
         : null,
       installmentTotalCurrency: slice ? txn.originalCurrency : null,
-      installmentPurchaseDate: slice ? txn.date : null,
+      installmentPurchaseDate: slice ? ledgerDate(txn.date) : null,
     });
 
     await tx.insert(syncStaging).values({
@@ -388,7 +400,10 @@ async function promoteTransaction(
     // date as the purchase date (max.js:183); the real one arrives with this
     // scrape. Re-date the row and re-resolve FX against the new date rather
     // than leaving a slice parked in the purchase month.
-    const redate = entryDate.slice(0, 10) !== existing.date;
+    // A date the user fixed by hand is locked and authoritative — the scrape
+    // re-dates only what it still owns (attribute-locks.ts, same rule as
+    // category).
+    const redate = !isFieldLocked(existing.lockedAttributes, "date") && entryDate !== existing.date;
     const fx = redate ? await resolveFx(tx, enteredCurrency, reportingCurrency, entryDate) : null;
     await tx
       .update(entries)

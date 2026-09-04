@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Pencil } from "lucide-react";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,13 +30,14 @@ interface CategorizeDialogProps {
 }
 
 /**
- * Categorize or re-categorize one transaction. Saving here LOCKS the
- * category: no rule and no model will ever overwrite it again
- * (docs/design/categorization.md).
+ * Edit one transaction: set its category, or correct its date. Both writes
+ * LOCK the field — no rule, model, or later scrape overwrites a value a human
+ * set (docs/design/categorization.md, src/domain/attribute-locks.ts).
  *
- * Every date shown arrives pre-formatted from the server as `dateLabel` —
- * formatting an ISO string in a client component is a hydration mismatch
- * (.agents/skills/ui-developer).
+ * The date is shown pre-formatted from the server as `dateLabel` — formatting
+ * an ISO string in a client component is a hydration mismatch
+ * (.agents/skills/ui-developer). The date-picker instead binds to the raw
+ * `entry.date` (already `YYYY-MM-DD`), which a native date input takes as-is.
  */
 export function CategorizeDialog({
   entry,
@@ -59,6 +61,8 @@ export function CategorizeDialog({
   const [ruleValue, setRuleValue] = useState(entry?.matchText ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editingDate, setEditingDate] = useState(false);
+  const [dateValue, setDateValue] = useState(entry?.date ?? "");
 
   if (!entry) return null;
   const matchText = entry.matchText;
@@ -88,12 +92,72 @@ export function CategorizeDialog({
     setError(body.error ?? "Could not save");
   }
 
+  async function saveDate() {
+    if (!entry || dateValue === "") return;
+    setSaving(true);
+    setError(null);
+    const res = await fetch(`/api/entries/${entry.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ date: dateValue }),
+    });
+    setSaving(false);
+    if (res.ok) {
+      router.refresh();
+      onClose();
+      return;
+    }
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    setError(body.error ?? "Could not save the date");
+  }
+
   return (
-    <Dialog open onClose={onClose} title="Categorize transaction">
+    <Dialog open onClose={onClose} title="Edit transaction">
       <div className="flex flex-col gap-5">
-        <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 text-sm">
+        <dl className="grid grid-cols-[auto_1fr] items-center gap-x-6 gap-y-1.5 text-sm">
           <dt className="text-muted-foreground">Date</dt>
-          <dd className="tabular-nums text-foreground">{entry.dateLabel}</dd>
+          <dd className="text-foreground">
+            {editingDate ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  type="date"
+                  value={dateValue}
+                  aria-label="Transaction date"
+                  disabled={saving}
+                  onChange={(e) => setDateValue(e.target.value)}
+                  className="max-w-40 tabular-nums"
+                />
+                <Button
+                  disabled={saving || dateValue === "" || dateValue === entry.date}
+                  onClick={() => void saveDate()}
+                >
+                  {saving ? "Saving…" : "Save"}
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={saving}
+                  onClick={() => {
+                    setDateValue(entry.date);
+                    setEditingDate(false);
+                  }}
+                >
+                  {"Cancel"}
+                </Button>
+              </div>
+            ) : (
+              <span className="flex items-center gap-2">
+                <span className="tabular-nums">{entry.dateLabel}</span>
+                <button
+                  type="button"
+                  aria-label="Edit date"
+                  onClick={() => setEditingDate(true)}
+                  className="rounded p-1 text-muted-foreground hover:text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+              </span>
+            )}
+          </dd>
           <dt className="text-muted-foreground">Payee</dt>
           <dd className="text-foreground">{entry.merchantName ?? entry.description}</dd>
           <dt className="text-muted-foreground">Account</dt>

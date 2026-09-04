@@ -16,6 +16,7 @@ function entry(over: Partial<EntryView> & Pick<EntryView, "id">): EntryView {
     categoryId: "cat-1",
     categoryName: "Groceries",
     categoryLocked: false,
+    dateLocked: false,
     isTransfer: false,
     merchantName: null,
     installmentLabel: null,
