@@ -1,20 +1,17 @@
 import Link from "next/link";
-import { TrendingDown, TrendingUp } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Money } from "@/components/money";
 import { BudgetBar } from "@/components/budget-bar";
 import { IncomeExpenseChart } from "@/components/income-expense-chart";
 import { cn } from "@/lib/utils";
 import type { Money as MoneyValue } from "@/lib/money";
-import type { MonthPoint, Trend } from "@/domain/dashboard";
+import type { MonthPoint } from "@/domain/dashboard";
 import type { OverBudgetCategory } from "@/domain/budget";
 
 interface ThisMonthCardProps {
   monthLabel: string;
   income: MoneyValue;
   expenses: MoneyValue;
-  /** Month-to-date spending vs the same day-span last month; null when flat. */
-  expenseTrend: Trend | null;
   budget: {
     hasBudget: boolean;
     spent: MoneyValue;
@@ -51,22 +48,18 @@ function OverChip({ category }: { category: OverBudgetCategory }) {
 }
 
 /**
- * The month's day-to-day figures in one card — income, expenses (with a
- * like-for-like trend), the budget with its over-budget categories named, and
- * a compact Income-vs-Expenses sparkline. Grouped deliberately: three separate
- * stat tiles spread the same story across the view.
+ * The month's day-to-day figures in one card — income, expenses, the budget
+ * with its over-budget categories named, and a compact Income-vs-Expenses
+ * sparkline. Grouped deliberately: three separate stat tiles spread the same
+ * story across the view.
  */
 export function ThisMonthCard({
   monthLabel,
   income,
   expenses,
-  expenseTrend,
   budget,
   months,
 }: ThisMonthCardProps) {
-  const spendingDown = expenseTrend?.direction === "down";
-  const TrendIcon = spendingDown ? TrendingDown : TrendingUp;
-
   return (
     <Card data-tour="dash-this-month" className="overflow-hidden">
       <div className={cn(LABEL, "px-5 pb-3 pt-5")}>This month · {monthLabel}</div>
@@ -78,22 +71,7 @@ export function ThisMonthCard({
         </div>
 
         <div className="px-5 py-4">
-          <div className="flex items-center justify-between gap-2">
-            <span className={LABEL}>Expenses</span>
-            {expenseTrend && (
-              // Spending down is good (teal); up is coral. The trend is
-              // same-day-span vs last month, computed in the domain layer.
-              <span
-                className={cn(
-                  "inline-flex items-center gap-1 text-xs tabular-nums",
-                  spendingDown ? "text-positive" : "text-negative",
-                )}
-              >
-                <TrendIcon className="h-3 w-3" />
-                {expenseTrend.pct}%
-              </span>
-            )}
-          </div>
+          <span className={LABEL}>Expenses</span>
           <Money value={expenses} className="mt-1.5 block text-lg font-semibold text-negative" />
         </div>
 
