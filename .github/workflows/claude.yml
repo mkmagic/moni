@@ -83,7 +83,6 @@ jobs:
             actions: read
 
           # --model: pin the model used when Claude is tagged on this repo.
-          # --effort medium: don't start the session in high thinking mode.
           # --allowedTools Bash: Bash is off by default; this lets Claude run the
           #   gates, the build, the Postgres-backed tests, and ad-hoc diagnostics.
           #   The base file-edit and PR-comment tools are always on and are not
@@ -91,5 +90,4 @@ jobs:
           #   triggering to the repository OWNER only.
           claude_args: |
             --model claude-opus-4-8
-            --effort medium
             --allowedTools Bash
