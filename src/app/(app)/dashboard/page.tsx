@@ -8,7 +8,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { requireSession } from "@/domain/auth";
-import { getOverview, type Trend } from "@/domain/dashboard";
+import { getOverview } from "@/domain/dashboard";
 import { getProfile } from "@/domain/profile";
 import { requireOnboarded } from "@/domain/onboarding";
 import { listConnections } from "@/domain/connections";
@@ -45,22 +45,6 @@ function lastSyncLabel(days: number): string {
   if (days <= 0) return "Last synced today";
   if (days === 1) return "Last synced yesterday";
   return `Last synced ${days} days ago`;
-}
-
-/** The spending-trend row, shared by both day states. Down is good (teal), up
- * is coral — the comparison is like-for-like (see `Overview.expenseTrend`). */
-function spendingItem(trend: Trend): InsightItem {
-  const down = trend.direction === "down";
-  return {
-    tone: down ? "good" : "warning",
-    icon: down ? TrendingDown : TrendingUp,
-    content: (
-      <>
-        Spending {down ? "down" : "up"}{" "}
-        <span className="font-medium tabular-nums">{trend.pct}%</span> vs the same point last month
-      </>
-    ),
-  };
 }
 
 /** "2 categories over budget — Groceries, Dining" — names the worst offenders
@@ -204,14 +188,12 @@ export default async function DashboardPage() {
       linkLabel: "Budget",
     });
   }
-  if (overview.expenseTrend) busyItems.push(spendingItem(overview.expenseTrend));
   if (syncItem) busyItems.push(syncItem);
 
   const clearItems: InsightItem[] = [
     { tone: "good", icon: CheckCircle2, content: "Everything's categorized" },
     { tone: "good", icon: CheckCircle2, content: "No categories over budget" },
   ];
-  if (overview.expenseTrend) clearItems.push(spendingItem(overview.expenseTrend));
   if (overview.netWorthTrend) {
     const up = overview.netWorthTrend.direction === "up";
     clearItems.push({
@@ -220,8 +202,8 @@ export default async function DashboardPage() {
       content: (
         <>
           Net worth {up ? "up" : "down"}{" "}
-          <span className="font-medium tabular-nums">{overview.netWorthTrend.pct}%</span> over six
-          months
+          <span className="font-medium tabular-nums">{overview.netWorthTrend.pct}%</span> over{" "}
+          {overview.netWorthTrend.months} months
         </>
       ),
     });
@@ -252,7 +234,7 @@ export default async function DashboardPage() {
                 ) : (
                   <TrendingDown className="h-3.5 w-3.5" />
                 )}
-                {overview.netWorthTrend.pct}% · 6mo
+                {overview.netWorthTrend.pct}% · {overview.netWorthTrend.months}mo
               </span>
             )}
           </div>
@@ -261,20 +243,23 @@ export default async function DashboardPage() {
             className="text-3xl font-bold text-foreground sm:text-4xl"
           />
         </div>
-        <Sparkline
-          data={netWorthSeries}
-          labels={netWorthLabels}
-          currency={overview.netWorth.currency}
-          color="var(--color-chart-1)"
-          height={64}
-        />
+        {/* One month of history is a single dot with no trend line — not worth
+            a chart. It appears once a second tracked month exists. */}
+        {netWorthSeries.length >= 2 && (
+          <Sparkline
+            data={netWorthSeries}
+            labels={netWorthLabels}
+            currency={overview.netWorth.currency}
+            color="var(--color-chart-1)"
+            height={64}
+          />
+        )}
       </Card>
 
       <ThisMonthCard
         monthLabel={monthLabel}
         income={overview.monthlyIncome}
         expenses={overview.monthlyExpenses}
-        expenseTrend={overview.expenseTrend}
         budget={budget}
         months={overview.months}
       />
