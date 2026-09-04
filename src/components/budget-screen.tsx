@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, Plus, Repeat, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Repeat, Trash2, Users, ArrowRight } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,8 +16,27 @@ import { BudgetBar } from "@/components/budget-bar";
 import { BudgetSetup } from "@/components/budget-setup";
 import { cn } from "@/lib/utils";
 import { RESIDUAL_KEY } from "@/lib/budget/residual";
+import type { Money as MoneyValue } from "@/lib/money";
 import type { BudgetMonthView, BudgetRowView, BudgetSectionView } from "@/domain/budget";
 import type { CategoryView } from "@/domain/categorization";
+
+/** The read-only household summary shown on the personal budget: each shared
+ * category with the caller's own spend, the combined household figure, the
+ * ceiling, and the caller's share. Configured on the /household view. */
+export interface SharedBudgetSummary {
+  categories: {
+    sharedCategoryId: string;
+    name: string;
+    myFigure: MoneyValue;
+    combined: MoneyValue;
+    ceiling: MoneyValue | null;
+    myShare: MoneyValue;
+    provisional: boolean;
+  }[];
+  provisional: boolean;
+  /** Pre-formatted freshness date (least-recently-synced member), or null. */
+  freshnessLabel: string | null;
+}
 
 interface BudgetScreenProps {
   view: BudgetMonthView;
@@ -38,6 +57,8 @@ interface BudgetScreenProps {
   categories: CategoryView[];
   /** How many complete months of history exist, capped at 12. */
   historyMonths: number;
+  /** Shared-category summary when the user is in a household; null otherwise. */
+  shared: SharedBudgetSummary | null;
 }
 
 export function BudgetScreen({
@@ -50,6 +71,7 @@ export function BudgetScreen({
   isCurrentMonth,
   categories,
   historyMonths,
+  shared,
 }: BudgetScreenProps) {
   const router = useRouter();
   const hasResidual = [...view.fixed.rows, ...view.everyday.rows].some(
@@ -145,6 +167,8 @@ export function BudgetScreen({
           </CardContent>
         </Card>
       )}
+
+      {shared && <SharedSection shared={shared} />}
 
       {editing && (
         <CeilingDialog
@@ -325,6 +349,76 @@ function Section({
           />
         ))}
       </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * The read-only household summary on the personal budget. A shared category's
+ * personal ceiling is suppressed (its budget is the household ceiling), so it
+ * does not appear as an ordinary row above — this section is where the caller
+ * sees their own spend on it, the combined household figure, and their share.
+ * Editing lives on the /household view, so this is a link, not a form.
+ */
+function SharedSection({ shared }: { shared: SharedBudgetSummary }) {
+  return (
+    <Card>
+      <CardHeader className="flex-row items-baseline justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <CardTitle className="flex items-center gap-2 text-foreground">
+            <Users className="h-4 w-4 text-muted-foreground" />
+            Shared with your household
+          </CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Your own spend on these counts toward a combined household budget, not a personal
+            ceiling.
+          </p>
+        </div>
+        <Link
+          href="/household"
+          className="flex shrink-0 items-center gap-1 text-xs text-primary underline-offset-2 hover:underline"
+        >
+          Open household
+          <ArrowRight className="h-3 w-3" />
+        </Link>
+      </CardHeader>
+      <CardContent className="flex flex-col">
+        {shared.categories.map((c) => (
+          <div
+            key={c.sharedCategoryId}
+            className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border py-3 last:border-b-0"
+          >
+            <span className="flex items-center gap-2 text-sm text-foreground">
+              <bdi>{c.name}</bdi>
+              {c.provisional && (
+                <Badge className="border-primary/40 text-primary">provisional</Badge>
+              )}
+            </span>
+            <span className="flex items-center gap-4 text-xs text-muted-foreground">
+              <span>
+                you spent <Money value={c.myFigure} />
+              </span>
+              <span>
+                household <Money value={c.combined} />
+                {c.ceiling ? (
+                  <>
+                    {" of "}
+                    <Money value={c.ceiling} />
+                  </>
+                ) : null}
+              </span>
+              <span>
+                your share <Money value={c.myShare} />
+              </span>
+            </span>
+          </div>
+        ))}
+      </CardContent>
+      {shared.freshnessLabel && (
+        <p className="px-6 pb-5 text-xs text-muted-foreground">
+          {`Household figures are as of each member's last sync — ${shared.freshnessLabel} for the least-recently-synced member.`}
+        </p>
+      )}
     </Card>
   );
 }

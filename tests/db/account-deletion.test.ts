@@ -458,6 +458,19 @@ async function seedFullOwner(label: string): Promise<OwnerFixture> {
     rowCount: 1,
   });
 
+  // Household sharing (issue #115): a household this user created, with their
+  // own membership row (the sole owner-scoped household table). Deleting the
+  // user must remove it (its group-key wrap) — and cascade the household away.
+  const [household] = await elevatedDb
+    .insert(schema.households)
+    .values({ name: `${label}-household`, createdBy: userId })
+    .returning({ id: schema.households.id });
+  await elevatedDb.insert(schema.householdMembers).values({
+    householdId: household.id,
+    ownerId: userId,
+    wrappedGroupKey: ct(`${label}-group-key`),
+  });
+
   return { userId, email };
 }
 

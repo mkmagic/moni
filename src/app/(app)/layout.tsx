@@ -1,4 +1,5 @@
 import { requireSession } from "@/domain/auth";
+import { householdSummaries } from "@/domain/household";
 import { Sidebar } from "@/components/sidebar";
 import { TourProvider } from "@/components/tour/tour-provider";
 
@@ -11,13 +12,16 @@ import { TourProvider } from "@/components/tour/tour-provider";
 // (src/domain/onboarding.ts) for itself.
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const session = await requireSession();
+  // The Household nav item only appears once the user is in a household —
+  // membership is group-readable structural data, so no data key is needed.
+  const inHousehold = (await householdSummaries(session.userId)).length > 0;
 
   return (
     // Column on mobile so the sidebar's top bar stacks above the content; the
     // fixed rail returns as the left column at `md` and up.
     <TourProvider>
       <div className="flex min-h-screen flex-col md:flex-row">
-        <Sidebar baseCurrency={session.baseCurrency} />
+        <Sidebar baseCurrency={session.baseCurrency} inHousehold={inHousehold} />
         <main className="flex-1 overflow-y-auto">
           <div className="mx-auto max-w-6xl px-6 py-8 md:px-8">{children}</div>
         </main>

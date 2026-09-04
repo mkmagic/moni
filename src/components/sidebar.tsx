@@ -12,20 +12,31 @@ import {
   PiggyBank,
   Target,
   TrendingUp,
+  Users,
   Menu,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { APP_VERSION } from "@/lib/version";
 
-const NAV_ITEMS = [
+interface NavItem {
+  href: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+}
+
+const NAV_ITEMS: readonly NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
   { href: "/budget", label: "Budget", icon: Target },
   { href: "/accounts", label: "Accounts", icon: Landmark },
   { href: "/investments", label: "Investments", icon: TrendingUp },
   { href: "/long-term-savings", label: "Long-term savings", icon: PiggyBank },
-] as const;
+];
+
+// Sits right after Budget when the user is in a household — the shared budget
+// is a peer of the personal one. Hidden entirely until they join/create one.
+const HOUSEHOLD_ITEM: NavItem = { href: "/household", label: "Household", icon: Users };
 
 // Sits at the bottom of the rail, above the account block — Connections now
 // lives inside it rather than as a top-level destination.
@@ -33,6 +44,8 @@ const SETTINGS_ITEM = { href: "/settings", label: "Settings", icon: Settings } a
 
 interface SidebarProps {
   baseCurrency: string;
+  /** Whether the user belongs to a household — gates the Household nav item. */
+  inHousehold: boolean;
 }
 
 /** The brand mark. `next/image`'s optimizer proxies through a mocked internal
@@ -114,21 +127,28 @@ function NavLink({
 function RailNav({
   pathname,
   baseCurrency,
+  inHousehold,
   onLogout,
   onNavigate,
   anchored = false,
 }: {
   pathname: string;
   baseCurrency: string;
+  inHousehold: boolean;
   onLogout: () => void;
   onNavigate?: () => void;
   /** True only for the desktop rail, so tour anchors land on the visible copy. */
   anchored?: boolean;
 }) {
+  // Household slots in right after Budget so the shared and personal budgets
+  // sit together; it is dropped entirely when the user is in no household.
+  const items = inHousehold
+    ? [...NAV_ITEMS.slice(0, 3), HOUSEHOLD_ITEM, ...NAV_ITEMS.slice(3)]
+    : NAV_ITEMS;
   return (
     <>
       <nav className="flex flex-1 flex-col gap-1 px-3">
-        {NAV_ITEMS.map((item) => (
+        {items.map((item) => (
           <NavLink
             key={item.href}
             {...item}
@@ -164,7 +184,7 @@ function RailNav({
   );
 }
 
-export function Sidebar({ baseCurrency }: SidebarProps) {
+export function Sidebar({ baseCurrency, inHousehold }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -248,7 +268,13 @@ export function Sidebar({ baseCurrency }: SidebarProps) {
           <BrandLink logoClassName="h-8" />
           <p className="text-xs text-muted-foreground">Your finances, in one place</p>
         </div>
-        <RailNav pathname={pathname} baseCurrency={baseCurrency} onLogout={onLogout} anchored />
+        <RailNav
+          pathname={pathname}
+          baseCurrency={baseCurrency}
+          inHousehold={inHousehold}
+          onLogout={onLogout}
+          anchored
+        />
       </aside>
 
       {/* Mobile drawer — always mounted so it can slide, `inert` when closed so
@@ -291,6 +317,7 @@ export function Sidebar({ baseCurrency }: SidebarProps) {
         <RailNav
           pathname={pathname}
           baseCurrency={baseCurrency}
+          inHousehold={inHousehold}
           onLogout={onLogout}
           onNavigate={() => setOpen(false)}
         />
