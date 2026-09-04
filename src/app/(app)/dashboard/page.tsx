@@ -8,7 +8,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { requireSession } from "@/domain/auth";
-import { getOverview, type Trend } from "@/domain/dashboard";
+import { getOverview } from "@/domain/dashboard";
 import { getProfile } from "@/domain/profile";
 import { requireOnboarded } from "@/domain/onboarding";
 import { listConnections } from "@/domain/connections";
@@ -45,22 +45,6 @@ function lastSyncLabel(days: number): string {
   if (days <= 0) return "Last synced today";
   if (days === 1) return "Last synced yesterday";
   return `Last synced ${days} days ago`;
-}
-
-/** The spending-trend row, shared by both day states. Down is good (teal), up
- * is coral — the comparison is like-for-like (see `Overview.expenseTrend`). */
-function spendingItem(trend: Trend): InsightItem {
-  const down = trend.direction === "down";
-  return {
-    tone: down ? "good" : "warning",
-    icon: down ? TrendingDown : TrendingUp,
-    content: (
-      <>
-        Spending {down ? "down" : "up"}{" "}
-        <span className="font-medium tabular-nums">{trend.pct}%</span> vs the same point last month
-      </>
-    ),
-  };
 }
 
 /** "2 categories over budget — Groceries, Dining" — names the worst offenders
@@ -204,14 +188,12 @@ export default async function DashboardPage() {
       linkLabel: "Budget",
     });
   }
-  if (overview.expenseTrend) busyItems.push(spendingItem(overview.expenseTrend));
   if (syncItem) busyItems.push(syncItem);
 
   const clearItems: InsightItem[] = [
     { tone: "good", icon: CheckCircle2, content: "Everything's categorized" },
     { tone: "good", icon: CheckCircle2, content: "No categories over budget" },
   ];
-  if (overview.expenseTrend) clearItems.push(spendingItem(overview.expenseTrend));
   if (overview.netWorthTrend) {
     const up = overview.netWorthTrend.direction === "up";
     clearItems.push({
@@ -274,7 +256,6 @@ export default async function DashboardPage() {
         monthLabel={monthLabel}
         income={overview.monthlyIncome}
         expenses={overview.monthlyExpenses}
-        expenseTrend={overview.expenseTrend}
         budget={budget}
         months={overview.months}
       />

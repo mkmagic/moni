@@ -33,6 +33,14 @@ async function owner(): Promise<Owner> {
     SIGNUP_TOKEN,
   );
   owners.push(created.userId);
+  // createUser stamps createdAt = now, but these tests assert the full
+  // six-month net-worth history. The dashboard trims history to the join
+  // month, so backdate the join well before the window (the trim has its own
+  // test in dashboard-trends.test.ts).
+  await elevatedDb
+    .update(schema.users)
+    .set({ createdAt: new Date(Date.UTC(2000, 0, 1)) })
+    .where(eq(schema.users.id, created.userId));
   return {
     ...created,
     session: {
