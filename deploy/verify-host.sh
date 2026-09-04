@@ -57,6 +57,30 @@ cp=$(cat /proc/sys/kernel/core_pattern)
 case "$cp" in *apport*) bad "core_pattern routes to Apport: $cp";; *) ok "core_pattern discards ($cp)";; esac
 [ "$(sysctl -n fs.suid_dumpable)" = "0" ] && ok "suid_dumpable=0" || bad "suid_dumpable != 0"
 
+echo "== Blast-radius containment (#93 M3) =="
+# App tree read-only to the process + no dangerous caps/transitions, so a live
+# RCE can't overwrite server.js and persist. Verified against real scrapes.
+[ "$(systemctl show moni.service -p ProtectSystem --value)" = "strict" ] \
+  && ok "moni ProtectSystem=strict" || bad "moni ProtectSystem=$(systemctl show moni.service -p ProtectSystem --value)"
+[ "$(systemctl show moni.service -p RestrictSUIDSGID --value)" = "yes" ] \
+  && ok "moni RestrictSUIDSGID=yes" || bad "moni RestrictSUIDSGID not set"
+[ "$(systemctl show moni.service -p LockPersonality --value)" = "yes" ] \
+  && ok "moni LockPersonality=yes" || bad "moni LockPersonality not set"
+[ -z "$(systemctl show moni.service -p CapabilityBoundingSet --value)" ] \
+  && ok "moni CapabilityBoundingSet empty (no caps)" || bad "moni has capabilities: $(systemctl show moni.service -p CapabilityBoundingSet --value)"
+# The scrape tmp must stay writable, or every sync fails silently.
+systemctl show moni.service -p ReadWritePaths --value | grep -q '/mnt/secure/tmp' \
+  && ok "moni ReadWritePaths includes /mnt/secure/tmp" || bad "moni ReadWritePaths missing /mnt/secure/tmp"
+# Caddy terminates TLS: no core dumps, no needless caps, no priv-gain.
+[ "$(systemctl show caddy.service -p LimitCORE --value)" = "0" ] \
+  && ok "caddy LimitCORE=0" || bad "caddy LimitCORE=$(systemctl show caddy.service -p LimitCORE --value)"
+[ "$(systemctl show caddy.service -p NoNewPrivileges --value)" = "yes" ] \
+  && ok "caddy NoNewPrivileges=yes" || bad "caddy NoNewPrivileges not set"
+[ "$(systemctl show caddy.service -p AmbientCapabilities --value)" = "cap_net_bind_service" ] \
+  && ok "caddy ambient caps = net_bind_service only (net_admin dropped)" || bad "caddy ambient caps: $(systemctl show caddy.service -p AmbientCapabilities --value)"
+[ "$(systemctl show caddy.service -p CapabilityBoundingSet --value)" = "cap_net_bind_service" ] \
+  && ok "caddy bounding set = net_bind_service only" || bad "caddy bounding set: $(systemctl show caddy.service -p CapabilityBoundingSet --value)"
+
 echo "== Encryption at rest (LUKS #93 M2) =="
 # Configured if ANY artifact is present — removing one to fall back to plaintext still trips the gate.
 if [ -f /var/lib/moni-secure.img ] || grep -q '^moni_secure ' /etc/crypttab 2>/dev/null \

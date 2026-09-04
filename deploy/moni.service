@@ -20,6 +20,22 @@ PrivateTmp=true
 MemorySwapMax=0
 LimitCORE=0
 UMask=0077
+# Issue #93 M3 — contain the blast radius of a live RCE. The app drives a
+# headless Chrome over attacker-influenced bank pages; if Chrome/Node is
+# exploited, the attacker runs as `moni` with Tier-0 keys in RAM. These flags
+# stop that transient compromise from becoming persistent.
+# ProtectSystem=strict makes the whole tree (incl. /opt/moni/app and the Chrome
+# binary) read-only to the process, so it cannot overwrite server.js and survive
+# a restart. The only writable path is the LUKS-backed scrape tmp; the '-' makes
+# it optional so a box without the LUKS container (M2) still starts (PrivateTmp
+# then covers /tmp). Verified against real Leumi + Isracard scrapes on the box.
+ProtectSystem=strict
+ReadWritePaths=-/mnt/secure/tmp
+# No SUID/SGID transitions, no personality() (ASLR-defeat), and no capabilities
+# at all — Node binds 127.0.0.1:3000 (>1024) and needs none.
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
 
 [Install]
 WantedBy=multi-user.target
