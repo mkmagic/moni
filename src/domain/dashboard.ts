@@ -6,9 +6,9 @@
 //   * Net worth (a stock) values each account's current balance at TODAY's
 //     latest rate (money-and-currency.md §5).
 import Decimal from "decimal.js";
-import { and, gte, lte } from "drizzle-orm";
+import { and, eq, gte, lte } from "drizzle-orm";
 import { withUser } from "@/db/client";
-import { accountBalanceSnapshots, accounts, entries } from "@/db/schema";
+import { accountBalanceSnapshots, accounts, entries, users } from "@/db/schema";
 import { multiply, type Money } from "@/lib/money";
 import type { Session } from "@/lib/auth/session-store";
 import { decText } from "./fields";
@@ -43,16 +43,14 @@ export interface Overview {
   monthlyIncome: Money;
   monthlyExpenses: Money; // positive magnitude
   months: MonthPoint[];
+  /**
+   * Net-worth stock history, one point per month. Trimmed to start at the month
+   * the user joined: the months before they were tracking accounts here show
+   * carried-forward zeros that read as a false spike into the join month (when
+   * they linked accounts that had existed for years), so those are dropped.
+   */
   netWorthHistory: Array<{ month: string; amount: string; metadata: ValuationMetadata }>;
   netWorthMetadata: ValuationMetadata;
-  /**
-   * Spending so far this month vs the SAME day-span of the previous month — a
-   * like-for-like comparison. Deliberately not month-to-date-vs-full-month
-   * (which always reads "down" early in the month) and not a projection (which
-   * is why `projectedSpend` was retired). Null when the prior period had no
-   * spend to compare against, or the change rounds to nothing.
-   */
-  expenseTrend: Trend | null;
   /** Net worth now vs six months ago. Null without a positive baseline. */
   netWorthTrend: Trend | null;
 }
@@ -125,6 +123,13 @@ export async function getOverview(session: Session): Promise<Overview> {
   const windowStart = monthsBefore(today, 5); // current + 5 prior months
 
   return withUser(userId, async (tx) => {
+    // The net-worth chart starts at the month the user joined — see below.
+    const [{ createdAt: joinedAt }] = await tx
+      .select({ createdAt: users.createdAt })
+      .from(users)
+      .where(eq(users.id, userId));
+    const joinMonth = monthKey(israelDate(joinedAt));
+
     // --- Net worth (stock): current balances valued at today's latest rate ---
     const [acctRows, snapshotRows] = await Promise.all([
       tx.select().from(accounts),
@@ -190,13 +195,6 @@ export async function getOverview(session: Session): Promise<Overview> {
 
     const transferCategoryIds = await loadTransferCategoryIds(tx);
 
-    // For the like-for-like spending trend: the previous month, and how far
-    // into today's day-of-month we are. Comparing full months would read the
-    // in-progress current month against a complete prior one.
-    const prevMonth = monthKey(monthsBefore(today, 1));
-    const todayDay = Number(today.slice(8, 10));
-    let priorSamePeriodExpenses = new Decimal(0);
-
     const buckets = new Map<string, { income: Decimal; expenses: Decimal }>();
     for (const e of entryRows) {
       // Excluded legs and transfer-classified categories are neither income
@@ -211,12 +209,7 @@ export async function getOverview(session: Session): Promise<Overview> {
       const key = monthKey(e.date);
       const b = buckets.get(key) ?? { income: new Decimal(0), expenses: new Decimal(0) };
       if (reporting.isPositive()) b.income = b.income.plus(reporting);
-      else {
-        b.expenses = b.expenses.plus(reporting.abs());
-        if (key === prevMonth && Number(e.date.slice(8, 10)) <= todayDay) {
-          priorSamePeriodExpenses = priorSamePeriodExpenses.plus(reporting.abs());
-        }
-      }
+      else b.expenses = b.expenses.plus(reporting.abs());
       buckets.set(key, b);
     }
 
@@ -309,7 +302,10 @@ export async function getOverview(session: Session): Promise<Overview> {
       if (pct.isZero()) return null;
       return { direction: pct.isNegative() ? "down" : "up", pct: Math.abs(pct.toNumber()) };
     };
-    const expenseTrend = trendFrom(priorSamePeriodExpenses, current.expenses);
+    // Trend is computed from the FULL six-month window (its baseline is the
+    // oldest point, six months ago) before the display history is trimmed to
+    // the join month. A user who wasn't here six months ago has a zero
+    // baseline, so `trendFrom` returns null and no "6mo" badge shows.
     const netWorthBaseline = netWorthHistory[0]; // oldest point, six months ago
     const netWorthTrend = netWorthBaseline
       ? trendFrom(new Decimal(netWorthBaseline.amount), netWorth)
@@ -323,9 +319,8 @@ export async function getOverview(session: Session): Promise<Overview> {
       monthlyIncome: { amount: current.income.toString(), currency: baseCurrency },
       monthlyExpenses: { amount: current.expenses.toString(), currency: baseCurrency },
       months,
-      netWorthHistory,
+      netWorthHistory: netWorthHistory.filter((point) => point.month >= joinMonth),
       netWorthMetadata,
-      expenseTrend,
       netWorthTrend,
     };
   });
