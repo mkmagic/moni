@@ -60,7 +60,7 @@
     "eslint-config-next": "16.2.11",
     "eslint-config-prettier": "10.1.8",
     "patch-package": "^8.0.1",
-    "pdfjs-dist": "^5.7.284",
+    "pdfjs-dist": "^6.2.108",
     "postcss": "8.5.23",
     "prettier": "3.9.6",
     "snaptrade-typescript-sdk": "^11.0.4",
