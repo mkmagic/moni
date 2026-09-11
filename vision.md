@@ -1,4 +1,7 @@
 # Moni’s Vision
+
+> **What this document is.** This is Moni’s product vision and the reasoning behind its design — *why* it is built the way it is. It is **not** a status tracker, and it is deliberately allowed to run ahead of the code. For what actually ships today, see [`README.md`](README.md); for decisions and their rationale as they were made, see [`docs/adr/`](docs/adr/).
+
 Moni is a self-hosted personal finance app that covers the entire spectrum of managing your finances - from budgeting, tracking income and expenses, managing accounts, investments, and insurances. It is AI-native from the grounds up, providing MCPs that allow agents to interact with the data and to answer user’s queries. It is cross-currency, and extendible by design to support different integrations and data sources. It has built-it intelligence - suggestions on how to save money, how much can be invested, and can understand the user’s financial philosophy. 
 Moni is built first and foremost for Israeli citizens, but supports dual-citizenship users, mainly those with US bank / investment account accounts.
 
@@ -110,24 +113,27 @@ An integral part of every component of Moni. Insights will be created by special
 - Insights on his budgeting and saving strategies.
 - Duplications in subscriptions or anomalies in his spending that he wasn’t aware of.
 - Whether his emergency plan fits with his spending habits.
-# Version 1.0
-Moni is a large product. v1.0 deliberately ships a thin, correct spine and defers everything that isn't load-bearing for it. The goal of v1.0 is: *a family can connect their Israeli accounts, see a categorized, multi-currency picture of their income and expenses, and ask an AI about it — safely and with correct money math.*
+# Roadmap
 
-## In scope for v1.0
-- **Accounts & the unified ledger.** The single Entry-table ledger shape (from Maybe) with account subtyping. Exact decimal money (Postgres `NUMERIC`) and the multi-currency model (entered / account / reporting currency, rate locked at transaction date) from the first migration.
-- **One Israeli bank-aggregation source** via `israeli-bank-scrapers`, behind the generic connector interface. Multiple providers and US brokers are deferred.
+> **Superseded scope note.** This section originally specified a deliberately thin "v1.0" spine (accounts + ledger + one Israeli scraper + read-only AI) and listed budgeting, investments, savings and US brokers as explicitly deferred. Development ran past that plan: budgeting, the investments/savings module, long-term savings, household sharing, and US brokerage connectors have all since shipped. The original scope table is retired here so it can't contradict the code — current status lives in [`README.md`](README.md) and the GitHub issues, not in this document.
+
+## Shipped
+The founding goal is met and exceeded — *a family can connect their Israeli accounts, see a categorized, multi-currency picture of income and expenses, and ask an AI about it, safely and with correct money math* — and then some:
+
+- **Accounts & the unified ledger.** The single Entry-table ledger shape (from Maybe) with account subtyping. Exact decimal money (Postgres `NUMERIC`) and the multi-currency model (entered / account / reporting currency, rate locked at transaction date).
 - **Income & expense tracking** with deterministic-first, model-fallback categorization and attribute-locking. Subscription/recurring detection.
 - **The overview dashboard** and the income/expense/statistics views with month-over-month graphs.
-- **Security foundation**: per-user envelope encryption of sensitive fields, Postgres Row-Level Security for cross-user isolation, and the credential-custody model in `docs/security/threat-model.md` (encrypted-at-rest bank credentials, user-triggered decryption for sync, recovery codes).
-- **The read-only domain layer, API, and MCP.** The built-in AI chat assistant, read-only.
+- **Budgeting** — per-category ceilings, in-month insights, and past-month verdicts.
+- **Investments & savings** — the Ghostfolio-derived valuation module, plus Israeli long-term savings (pension, קרן השתלמות, קופת גמל) parsed from official statements.
+- **Household sharing** — shared categories, combined household budgets, and settlement.
+- **Data sources** — one Israeli bank-aggregation source via `israeli-bank-scrapers`, plus US brokerage connectors (IBKR Flex, SnapTrade), all behind the generic connector interface.
+- **Security foundation** — per-user envelope encryption of sensitive fields, Postgres Row-Level Security for cross-user isolation, and the credential-custody model in `docs/security/threat-model.md`.
+- **The read-only domain layer, API, and MCP**, and the built-in read-only AI chat assistant.
 
-## Explicitly NOT in v1.0
-- **Budgeting** — depends on the income/expense framework being mature; ships next.
-- **Investments & savings** (the Ghostfolio-derived module) — highest correctness cost, deferred to a dedicated version.
-- **Insurance** — no prior art, most design uncertainty, lowest immediate value. Deferred entirely; revisited after the core is stable.
-- **US banking & brokers** (Schwab, IBKR).
+## Not yet shipped
+- **Insurance** — no prior art, most design uncertainty. Deferred until the core is stable; revisited now that it is.
 - **The Telegram bot.**
-- **Any AI write path** — no propose-and-confirm mechanism; agents are strictly read-only.
+- **An AI write path** — the propose-and-confirm mechanism (agents generate previews, the user confirms before anything is written). Until it exists, **agents remain strictly read-only; there is no write path of any kind.** This invariant still holds.
 - **Horizontal scale / multi-instance deployment.**
 # Tech Stack
 The stack optimizes for two things: (1) being fluent to modern AI coding agents, and (2) a native fit with `israeli-bank-scrapers`, which is an npm/Node library. Both point at the TypeScript/Node ecosystem, so Moni is **TypeScript end-to-end**.
