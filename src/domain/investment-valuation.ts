@@ -8,12 +8,19 @@ import {
   instrumentSourceMappings,
   instruments,
   investmentMarketQuotes,
+  investmentActivityCoverage,
+  investmentActivityEvidence,
+  investmentCorporateActionEvidence,
+  investmentDisposalResolutionQueue,
+  investmentReconciliationQuality,
   investmentSnapshotCashBalances,
   investmentSnapshotDetails,
   investmentSnapshotPositions,
+  investmentTaxLots,
 } from "@/db/schema";
 import { syncLog } from "@/lib/sync-log";
 import { decText, encText } from "./fields";
+import { BROKER_ELSE_USER_POLICY_VERSION } from "./investment-lots";
 
 export type ValuationBasis = "broker_source" | "tiingo_estimate" | "mixed";
 export type ValuationFreshness = "current" | "stale" | "mixed_age";
@@ -701,6 +708,398 @@ export interface TiingoQuoteTarget {
   instrumentId: string;
   mappingId: string;
   symbol: string;
+}
+
+type ReconciliationDimension =
+  | "position_quantity"
+  | "cash_balance"
+  | "coverage_start"
+  | "unexplained_opening_quantity"
+  | "unsupported_corporate_action"
+  | "pending_activity";
+
+interface ReconciliationGap {
+  dimension: ReconciliationDimension;
+  instrumentId: string | null;
+  currency: string | null;
+  expected: string | null;
+  observed: string | null;
+  details: string;
+}
+
+interface ReconciliationInternalInput extends InvestmentActivityReconciliationInput {
+  policyVersion: string;
+}
+
+export interface InvestmentActivityReconciliationInput {
+  userId: string;
+  accountId: string;
+  snapshotId?: string;
+  policyVersion?: string;
+  /** Tier-1 data key. The caller owns its lifetime and wiping. */
+  dataKey: Uint8Array;
+}
+
+export interface InvestmentActivityReconciliationResult {
+  snapshotId: string;
+  gaps: number;
+  affectedInstrumentIds: string[];
+}
+
+function reconciliationKey(row: {
+  dimension: ReconciliationDimension;
+  instrumentId: string | null;
+  currency: string | null;
+}): string {
+  return `${row.dimension}:${row.instrumentId ?? ""}:${row.currency ?? ""}`;
+}
+
+async function reconcileInvestmentActivityInTransaction(
+  tx: Tx,
+  input: ReconciliationInternalInput,
+): Promise<InvestmentActivityReconciliationResult> {
+  const details = input.snapshotId
+    ? await tx
+        .select()
+        .from(investmentSnapshotDetails)
+        .where(
+          and(
+            eq(investmentSnapshotDetails.id, input.snapshotId),
+            eq(investmentSnapshotDetails.accountId, input.accountId),
+          ),
+        )
+        .limit(1)
+    : await tx
+        .select()
+        .from(investmentSnapshotDetails)
+        .where(eq(investmentSnapshotDetails.accountId, input.accountId))
+        .orderBy(desc(investmentSnapshotDetails.sourceAsOf))
+        .limit(1);
+  const detail = details[0];
+  if (!detail) throw new Error("investment snapshot not found");
+
+  const positions = await tx
+    .select()
+    .from(investmentSnapshotPositions)
+    .where(eq(investmentSnapshotPositions.snapshotId, detail.id));
+  const snapshotCash = await tx
+    .select()
+    .from(investmentSnapshotCashBalances)
+    .where(eq(investmentSnapshotCashBalances.snapshotId, detail.id));
+  const lots = await tx
+    .select()
+    .from(investmentTaxLots)
+    .where(
+      and(
+        eq(investmentTaxLots.accountId, input.accountId),
+        eq(investmentTaxLots.policyVersion, input.policyVersion),
+      ),
+    );
+  const activities = await tx
+    .select()
+    .from(investmentActivityEvidence)
+    .where(eq(investmentActivityEvidence.accountId, input.accountId));
+  const coverage = await tx
+    .select()
+    .from(investmentActivityCoverage)
+    .where(eq(investmentActivityCoverage.accountId, input.accountId));
+  const corporateActions = await tx
+    .select()
+    .from(investmentCorporateActionEvidence)
+    .where(eq(investmentCorporateActionEvidence.accountId, input.accountId));
+  const pendingQueue = await tx
+    .select()
+    .from(investmentDisposalResolutionQueue)
+    .where(
+      and(
+        eq(investmentDisposalResolutionQueue.accountId, input.accountId),
+        eq(investmentDisposalResolutionQueue.status, "pending"),
+      ),
+    );
+
+  const snapshotQuantities = new Map<string, { quantity: Decimal; unit: string }>();
+  for (const position of positions) {
+    const quantity = decText(
+      input.dataKey,
+      position.quantityCt,
+      position.id,
+      "quantity_ct",
+      position.version,
+    )!;
+    snapshotQuantities.set(position.instrumentId, {
+      quantity: new Decimal(quantity),
+      unit: position.quantityUnit,
+    });
+  }
+  const derivedQuantities = new Map<string, { quantity: Decimal; unit: string }>();
+  for (const lot of lots) {
+    const quantity = decText(
+      input.dataKey,
+      lot.remainingQuantityCt,
+      lot.id,
+      "remaining_quantity_ct",
+      lot.version,
+    )!;
+    const current = derivedQuantities.get(lot.instrumentId);
+    derivedQuantities.set(lot.instrumentId, {
+      quantity: (current?.quantity ?? new Decimal(0)).plus(quantity),
+      unit: current?.unit ?? lot.quantityUnit,
+    });
+  }
+
+  const gaps: ReconciliationGap[] = [];
+  const instrumentsToCompare = new Set([...snapshotQuantities.keys(), ...derivedQuantities.keys()]);
+  for (const instrumentId of instrumentsToCompare) {
+    const expected = snapshotQuantities.get(instrumentId);
+    const observed = derivedQuantities.get(instrumentId);
+    const expectedQuantity = expected?.quantity ?? new Decimal(0);
+    const observedQuantity = observed?.quantity ?? new Decimal(0);
+    if (expectedQuantity.equals(observedQuantity) && expected?.unit === observed?.unit) continue;
+    gaps.push({
+      dimension: "position_quantity",
+      instrumentId,
+      currency: null,
+      expected: expectedQuantity.toFixed(),
+      observed: observedQuantity.toFixed(),
+      details: expectedQuantity.greaterThan(observedQuantity)
+        ? `Snapshot quantity ${expectedQuantity.toFixed()} ${expected?.unit ?? observed?.unit ?? "units"}; activity-derived quantity ${observedQuantity.toFixed()}. Add opening-lot evidence for ${expectedQuantity.minus(observedQuantity).toFixed()} to close the gap.`
+        : `Snapshot quantity ${expectedQuantity.toFixed()} ${expected?.unit ?? observed?.unit ?? "units"}; activity-derived quantity ${observedQuantity.toFixed()}.`,
+    });
+    if (expectedQuantity.greaterThan(observedQuantity)) {
+      gaps.push({
+        dimension: "unexplained_opening_quantity",
+        instrumentId,
+        currency: null,
+        expected: expectedQuantity.minus(observedQuantity).toFixed(),
+        observed: "0",
+        details: `Add opening-lot evidence for ${expectedQuantity.minus(observedQuantity).toFixed()} ${expected?.unit ?? observed?.unit ?? "units"} to close this history gap.`,
+      });
+    }
+  }
+
+  const expectedCash = new Map<string, Decimal>();
+  for (const row of snapshotCash) {
+    expectedCash.set(
+      row.currency,
+      new Decimal(decText(input.dataKey, row.amountCt, row.id, "amount_ct", row.version)!),
+    );
+  }
+  const observedCash = new Map<string, Decimal>();
+  for (const row of activities) {
+    if (!row.currency || !row.netCashAmountCt) continue;
+    const amount = decText(
+      input.dataKey,
+      row.netCashAmountCt,
+      row.id,
+      "net_cash_amount_ct",
+      row.version,
+    )!;
+    observedCash.set(row.currency, (observedCash.get(row.currency) ?? new Decimal(0)).plus(amount));
+  }
+  for (const currency of new Set([...expectedCash.keys(), ...observedCash.keys()])) {
+    const expected = expectedCash.get(currency) ?? new Decimal(0);
+    const observed = observedCash.get(currency) ?? new Decimal(0);
+    if (expected.equals(observed)) continue;
+    gaps.push({
+      dimension: "cash_balance",
+      instrumentId: null,
+      currency,
+      expected: expected.toFixed(),
+      observed: observed.toFixed(),
+      details: `Snapshot cash ${expected.toFixed()} ${currency}; activity-derived cash ${observed.toFixed()} ${currency}.`,
+    });
+  }
+
+  for (const row of coverage) {
+    if (
+      row.completeness === "complete" ||
+      row.coverageBasis !== "earliest_observed" ||
+      !row.coverageStart
+    )
+      continue;
+    gaps.push({
+      dimension: "coverage_start",
+      instrumentId: row.instrumentId,
+      currency: null,
+      expected: null,
+      observed: row.coverageStart,
+      details: `Provider-declared account inception is unavailable; activity is observed from ${row.coverageStart}.`,
+    });
+  }
+  for (const row of corporateActions) {
+    gaps.push({
+      dimension: "unsupported_corporate_action",
+      instrumentId: row.instrumentId,
+      currency: row.currency,
+      expected: "0",
+      observed: "1",
+      details: `An unsupported corporate action dated ${row.actionDate} may affect derived lots.`,
+    });
+  }
+  const pendingByInstrument = new Map<string | null, number>();
+  const activityById = new Map(activities.map((row) => [row.id, row]));
+  for (const row of pendingQueue) {
+    if (row.kind === "reconciliation_gap") continue;
+    const instrumentId = row.activityEvidenceId
+      ? (activityById.get(row.activityEvidenceId)?.instrumentId ?? null)
+      : null;
+    pendingByInstrument.set(instrumentId, (pendingByInstrument.get(instrumentId) ?? 0) + 1);
+  }
+  for (const [instrumentId, count] of pendingByInstrument) {
+    gaps.push({
+      dimension: "pending_activity",
+      instrumentId,
+      currency: null,
+      expected: "0",
+      observed: String(count),
+      details: `${count} activity item${count === 1 ? "" : "s"} require resolution before the projection is complete.`,
+    });
+  }
+
+  const uniqueGaps = [...new Map(gaps.map((gap) => [reconciliationKey(gap), gap])).values()];
+  const existing = await tx
+    .select()
+    .from(investmentReconciliationQuality)
+    .where(
+      and(
+        eq(investmentReconciliationQuality.accountId, input.accountId),
+        eq(investmentReconciliationQuality.snapshotId, detail.id),
+      ),
+    );
+  const desiredKeys = new Set(uniqueGaps.map(reconciliationKey));
+  const existingByKey = new Map(existing.map((row) => [reconciliationKey(row), row]));
+  for (const row of existing) {
+    if (desiredKeys.has(reconciliationKey(row)) || row.status === "resolved") continue;
+    await tx
+      .update(investmentReconciliationQuality)
+      .set({ status: "resolved", resolvedAt: new Date() })
+      .where(eq(investmentReconciliationQuality.id, row.id));
+    await tx
+      .update(investmentDisposalResolutionQueue)
+      .set({ status: "resolved", resolvedAt: new Date() })
+      .where(eq(investmentDisposalResolutionQueue.reconciliationQualityId, row.id));
+  }
+
+  const affectedInstrumentIds = new Set<string>();
+  for (const gap of uniqueGaps) {
+    if (gap.instrumentId) affectedInstrumentIds.add(gap.instrumentId);
+    const current = existingByKey.get(reconciliationKey(gap));
+    const same =
+      current &&
+      current.status === "pending" &&
+      decText(
+        input.dataKey,
+        current.expectedValueCt,
+        current.id,
+        "expected_value_ct",
+        current.version,
+      ) === gap.expected &&
+      decText(
+        input.dataKey,
+        current.observedValueCt,
+        current.id,
+        "observed_value_ct",
+        current.version,
+      ) === gap.observed;
+    const id = current?.id ?? randomUUID();
+    if (!same) {
+      const version = current ? current.version + 1 : 1;
+      const values = {
+        ownerId: input.userId,
+        accountId: input.accountId,
+        instrumentId: gap.instrumentId,
+        snapshotId: detail.id,
+        dimension: gap.dimension,
+        expectedValueCt:
+          gap.expected === null
+            ? null
+            : encText(input.dataKey, gap.expected, id, "expected_value_ct", version),
+        observedValueCt:
+          gap.observed === null
+            ? null
+            : encText(input.dataKey, gap.observed, id, "observed_value_ct", version),
+        currency: gap.currency,
+        completeness: "partial" as const,
+        status: "pending" as const,
+        resolvedAt: null,
+        version,
+      };
+      if (current)
+        await tx
+          .update(investmentReconciliationQuality)
+          .set(values)
+          .where(eq(investmentReconciliationQuality.id, id));
+      else await tx.insert(investmentReconciliationQuality).values({ id, ...values });
+    }
+    if (gap.dimension === "unexplained_opening_quantity") continue;
+    const [queued] = await tx
+      .select()
+      .from(investmentDisposalResolutionQueue)
+      .where(
+        and(
+          eq(investmentDisposalResolutionQueue.reconciliationQualityId, id),
+          eq(investmentDisposalResolutionQueue.kind, "reconciliation_gap"),
+          eq(investmentDisposalResolutionQueue.policyVersion, input.policyVersion),
+        ),
+      )
+      .limit(1);
+    if (!queued) {
+      const queueId = randomUUID();
+      await tx.insert(investmentDisposalResolutionQueue).values({
+        id: queueId,
+        ownerId: input.userId,
+        accountId: input.accountId,
+        reconciliationQualityId: id,
+        kind: "reconciliation_gap",
+        detailsCt: encText(input.dataKey, gap.details, queueId, "details_ct", 1),
+        policyVersion: input.policyVersion,
+      });
+    } else if (queued.status === "resolved") {
+      await tx
+        .update(investmentDisposalResolutionQueue)
+        .set({ status: "pending", resolvedAt: null })
+        .where(eq(investmentDisposalResolutionQueue.id, queued.id));
+    }
+  }
+
+  for (const instrumentId of affectedInstrumentIds) {
+    const current = coverage.find(
+      (row) => row.instrumentId === instrumentId && row.metric === "cost_basis",
+    );
+    if (!current) {
+      await tx.insert(investmentActivityCoverage).values({
+        ownerId: input.userId,
+        accountId: input.accountId,
+        instrumentId,
+        source: detail.source,
+        metric: "cost_basis",
+        completeness: "partial",
+      });
+    } else if (current.completeness !== "partial") {
+      await tx
+        .update(investmentActivityCoverage)
+        .set({ completeness: "partial" })
+        .where(eq(investmentActivityCoverage.id, current.id));
+    }
+  }
+
+  return {
+    snapshotId: detail.id,
+    gaps: uniqueGaps.length,
+    affectedInstrumentIds: [...affectedInstrumentIds].sort(),
+  };
+}
+
+/** Reconciles one account's activity projection without changing snapshot or lot evidence. */
+export function reconcileInvestmentActivity(
+  input: InvestmentActivityReconciliationInput,
+): Promise<InvestmentActivityReconciliationResult> {
+  return withUser(input.userId, (tx) =>
+    reconcileInvestmentActivityInTransaction(tx, {
+      ...input,
+      policyVersion: input.policyVersion ?? BROKER_ELSE_USER_POLICY_VERSION,
+    }),
+  );
 }
 
 export { emptyMetadata };
