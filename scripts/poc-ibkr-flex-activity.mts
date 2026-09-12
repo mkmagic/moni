@@ -12,22 +12,18 @@
  * production fetch lives in src/lib/investments/workers.ts (fetchIbkrFlexXml);
  * this reimplements a minimal copy so the POC runs standalone with just a token.
  *
- * Fetch the live report (token + stored query id):
- *   IBKR_FLEX_TOKEN=... IBKR_QUERY_ID=1588880 npx tsx scripts/poc-ibkr-flex-activity.mts
- *   (or put those two in .env.local, or pass --token ... --query 1588880)
+ * Fetch the live report (pipe token bytes on stdin + stored query id):
+ *   secret-provider | IBKR_QUERY_ID=1588880 npx tsx scripts/poc-ibkr-flex-activity.mts
+ *   (or pass --query 1588880)
  * Analyze a report already on disk (no network):
  *   npx tsx scripts/poc-ibkr-flex-activity.mts --file report.xml
- * Also: --save report.xml (keep the fetched XML)   --json evidence.json (dump evidence)
  *
- * The Flex token is Tier-0 in Moni: this POC keeps it in argv/env only and never logs it.
+ * The Flex token is Tier-0 in Moni: this POC reads it into a Buffer, never logs it,
+ * and wipes it after the request. It deliberately provides no plaintext export path.
  */
-import { readFileSync, writeFileSync } from "node:fs";
-import { config as loadEnv } from "dotenv";
+import { readFileSync } from "node:fs";
 import Decimal from "decimal.js";
 import { XMLParser } from "fast-xml-parser";
-
-loadEnv({ path: ".env.local", quiet: true });
-loadEnv({ quiet: true });
 
 const FLEX_URL = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService";
 const INITIAL_WAIT_MS = 20_000;
@@ -72,34 +68,58 @@ async function get(url: URL): Promise<string> {
   return response.text();
 }
 
-async function fetchFlexXml(token: string, queryId: string): Promise<string> {
-  const send = new URL(`${FLEX_URL}/SendRequest`);
-  send.searchParams.set("t", token);
-  send.searchParams.set("q", queryId);
-  send.searchParams.set("v", "3");
-  const accepted = statusEnvelope(await get(send));
-  if (accepted?.status === "fail")
-    throw new Error(`SendRequest failed: code ${accepted.errorCode}`);
-  if (accepted?.status !== "success" || !accepted.referenceCode)
-    throw new Error("SendRequest: unexpected response (token/query id valid?)");
-
-  const statement = new URL(`${FLEX_URL}/GetStatement`);
-  statement.searchParams.set("t", token);
-  statement.searchParams.set("q", accepted.referenceCode);
-  statement.searchParams.set("v", "3");
-
-  console.log(`SendRequest accepted (ref ${accepted.referenceCode}); waiting for the report…`);
-  await sleep(INITIAL_WAIT_MS);
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-    const body = await get(statement);
-    const pending = statusEnvelope(body);
-    if (!pending) return body; // a body with no status envelope IS the report
-    console.log(`  attempt ${attempt}: status=${pending.status} code=${pending.errorCode ?? "-"}`);
-    if (pending.status === "fail" && attempt === MAX_ATTEMPTS)
-      throw new Error(`GetStatement failed: code ${pending.errorCode}`);
-    await sleep(RETRY_WAIT_MS);
+function readTokenFromStdin(): Buffer {
+  const input = readFileSync(0);
+  let end = input.length;
+  while (end > 0 && (input[end - 1] === 0x0a || input[end - 1] === 0x0d)) end -= 1;
+  if (end === 0) {
+    input.fill(0);
+    throw new Error("Provide the Flex token on stdin");
   }
-  throw new Error("GetStatement: report not ready after retries");
+  if (end === input.length) return input;
+  const token = Buffer.from(input.subarray(0, end));
+  input.fill(0);
+  return token;
+}
+
+async function fetchFlexXml(token: Buffer, queryId: string): Promise<string> {
+  try {
+    const send = new URL(`${FLEX_URL}/SendRequest`);
+    send.searchParams.set("t", token.toString("ascii"));
+    send.searchParams.set("q", queryId);
+    send.searchParams.set("v", "3");
+    const accepted = statusEnvelope(await get(send));
+    send.searchParams.delete("t");
+    if (accepted?.status === "fail")
+      throw new Error(`SendRequest failed: code ${accepted.errorCode}`);
+    if (accepted?.status !== "success" || !accepted.referenceCode)
+      throw new Error("SendRequest: unexpected response (token/query id valid?)");
+
+    const statement = new URL(`${FLEX_URL}/GetStatement`);
+    statement.searchParams.set("t", token.toString("ascii"));
+    statement.searchParams.set("q", accepted.referenceCode);
+    statement.searchParams.set("v", "3");
+
+    console.log(`SendRequest accepted (ref ${accepted.referenceCode}); waiting for the report…`);
+    await sleep(INITIAL_WAIT_MS);
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+      const body = await get(statement);
+      const pending = statusEnvelope(body);
+      if (!pending) {
+        statement.searchParams.delete("t");
+        return body; // a body with no status envelope IS the report
+      }
+      console.log(
+        `  attempt ${attempt}: status=${pending.status} code=${pending.errorCode ?? "-"}`,
+      );
+      if (pending.status === "fail" && attempt === MAX_ATTEMPTS)
+        throw new Error(`GetStatement failed: code ${pending.errorCode}`);
+      await sleep(RETRY_WAIT_MS);
+    }
+    throw new Error("GetStatement: report not ready after retries");
+  } finally {
+    token.fill(0);
+  }
 }
 
 // ------------------------------------------------------------------------- parsing
@@ -136,7 +156,7 @@ function records(root: unknown, tag: string): Attrs[] {
 // ------------------------------------------------------------------------ analysis
 
 const line = (label: string, value: string): void => console.log(`  ${label.padEnd(34)}${value}`);
-const verdict = (ok: boolean, warn = false): string => (ok ? "PASS" : warn ? "WARN" : "FAIL");
+const verdict = (ok: boolean, warn = false): string => (warn ? "WARN" : ok ? "PASS" : "FAIL");
 /** Exact-decimal sum of a string attribute (never touches JS float). */
 function sum(rows: Attrs[], key: string): Decimal {
   return rows.reduce((acc, row) => acc.plus(new Decimal(a(row, key) ?? "0")), new Decimal(0));
@@ -153,15 +173,13 @@ function lotKey(l: Attrs): string {
   if (txn) return `${acct}:${txn}`;
   return `fp:${[
     acct,
-    "conid",
-    "openDateTime",
-    "side",
-    "position",
-    "costBasisPrice",
-    "costBasisMoney",
-  ]
-    .map((k) => (k === acct ? acct : (a(l, k) ?? "")))
-    .join("|")}`;
+    a(l, "conid") ?? "",
+    a(l, "openDateTime") ?? "",
+    a(l, "side") ?? "",
+    a(l, "position") ?? "",
+    a(l, "costBasisPrice") ?? "",
+    a(l, "costBasisMoney") ?? "",
+  ].join("|")}`;
 }
 function cashKey(c: Attrs): string {
   const acct = a(c, "accountId") ?? "?";
@@ -183,7 +201,7 @@ function cashKey(c: Attrs): string {
 const duplicates = (keys: string[]): number => keys.length - new Set(keys).size;
 const dateOf = (value: string | undefined): string | undefined => value?.split(/[ ;T]/)[0];
 
-function analyze(xml: string, dumpJson: string | undefined): void {
+function analyze(xml: string): void {
   const parsed = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: "",
@@ -328,30 +346,31 @@ function analyze(xml: string, dumpJson: string | undefined): void {
   }
   let reconciled = 0;
   const mismatches: string[] = [];
+  const summaryKeys = new Set<string>();
   for (const s of summaries) {
     const key = `${a(s, "accountId")}:${a(s, "conid")}`;
+    summaryKeys.add(key);
     const snapshot = new Decimal(a(s, "position") ?? "0");
     const derived = lotQty.get(key);
-    if (derived === undefined) continue;
+    if (derived === undefined) {
+      mismatches.push(`${a(s, "symbol") ?? key}: lots=missing vs snapshot=${snapshot.toString()}`);
+      continue;
+    }
     if (derived.equals(snapshot)) reconciled += 1;
     else
       mismatches.push(
         `${a(s, "symbol") ?? key}: lots=${derived.toString()} vs snapshot=${snapshot.toString()}`,
       );
   }
+  for (const [key, derived] of lotQty) {
+    if (!summaryKeys.has(key))
+      mismatches.push(`${key}: lots=${derived.toString()} vs snapshot=missing`);
+  }
   console.log(
-    `[9] ${verdict(mismatches.length === 0, summaries.length === 0 || lots.length === 0)} ` +
+    `[9] ${verdict(mismatches.length === 0, summaries.length === 0 && lots.length === 0)} ` +
       `lot↔snapshot reconciliation — ${reconciled} positions match; ${mismatches.length} mismatch`,
   );
   for (const m of mismatches.slice(0, 10)) console.log(`      ${m}`);
-
-  if (dumpJson) {
-    writeFileSync(
-      dumpJson,
-      JSON.stringify({ trades, lots, summaries, cash, accruals, corp, securities }, null, 2),
-    );
-    console.log(`\nWrote normalized evidence to ${dumpJson} (contains account numbers).`);
-  }
   console.log("");
 }
 
@@ -363,25 +382,20 @@ async function main(): Promise<void> {
   if (file) {
     xml = readFileSync(file, "utf8");
   } else {
-    const token = flag("token") ?? process.env.IBKR_FLEX_TOKEN;
     const queryId = flag("query") ?? process.env.IBKR_QUERY_ID;
-    if (!token || !queryId) {
+    if (!queryId) {
       console.error(
-        "Provide the Flex token and stored query id:\n" +
-          "  IBKR_FLEX_TOKEN=... IBKR_QUERY_ID=1588880 npx tsx scripts/poc-ibkr-flex-activity.mts\n" +
-          "  (or --token ... --query ..., or --file report.xml to analyze a saved report)",
+        "Provide the stored query id and pipe the Flex token on stdin:\n" +
+          "  secret-provider | IBKR_QUERY_ID=1588880 npx tsx scripts/poc-ibkr-flex-activity.mts\n" +
+          "  (or --query 1588880, or --file report.xml to analyze a saved report)",
       );
       process.exitCode = 1;
       return;
     }
+    const token = readTokenFromStdin();
     xml = await fetchFlexXml(token, queryId);
-    const save = flag("save");
-    if (save) {
-      writeFileSync(save, xml);
-      console.log(`Saved report XML to ${save}`);
-    }
   }
-  analyze(xml, flag("json"));
+  analyze(xml);
 }
 
 main().catch((error: unknown) => {
