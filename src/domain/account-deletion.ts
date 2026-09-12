@@ -52,11 +52,18 @@ import {
   entryTransactions,
   instrumentSourceMappings,
   instruments,
+  investmentActivityCoverage,
+  investmentActivityEvidence,
+  investmentCorporateActionEvidence,
+  investmentDisposalResolutionQueue,
   investmentMarketQuotes,
+  investmentOpeningLotEvidence,
+  investmentReconciliationQuality,
   investmentSnapshotCashBalances,
   investmentSnapshotDetails,
   investmentSnapshotPositions,
   investmentSourceEvidence,
+  investmentTaxLots,
   merchantLookups,
   merchants,
   ruleActions,
@@ -101,6 +108,25 @@ export async function deleteAccount(
 
   await withUser(userId, async (tx) => {
     // Leaves — nothing references these.
+    await tx
+      .delete(investmentDisposalResolutionQueue)
+      .where(eq(investmentDisposalResolutionQueue.ownerId, userId));
+    await tx.delete(investmentTaxLots).where(eq(investmentTaxLots.ownerId, userId));
+    await tx
+      .delete(investmentReconciliationQuality)
+      .where(eq(investmentReconciliationQuality.ownerId, userId));
+    await tx
+      .delete(investmentActivityCoverage)
+      .where(eq(investmentActivityCoverage.ownerId, userId));
+    await tx
+      .delete(investmentCorporateActionEvidence)
+      .where(eq(investmentCorporateActionEvidence.ownerId, userId));
+    await tx
+      .delete(investmentOpeningLotEvidence)
+      .where(eq(investmentOpeningLotEvidence.ownerId, userId));
+    await tx
+      .delete(investmentActivityEvidence)
+      .where(eq(investmentActivityEvidence.ownerId, userId));
     await tx.delete(investmentMarketQuotes).where(eq(investmentMarketQuotes.ownerId, userId));
     await tx
       .delete(investmentSnapshotCashBalances)

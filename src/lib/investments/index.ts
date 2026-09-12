@@ -2,6 +2,14 @@ export { serializeCanonicalInvestmentEnvelope } from "./canonical";
 export { normalizeIbkrFlexXml } from "./ibkr-flex";
 export { normalizeSchwabPositionsCsv } from "./schwab-positions-csv";
 export {
+  normalizeInvestmentActivityEvidence,
+  normalizeOpenLotEvidence,
+  type InvestmentActivityEvidence,
+  type InvestmentActivityType,
+  type InvestmentEvidenceProvenance,
+  type OpenLotEvidence,
+} from "./evidence";
+export {
   BOI_SDMX_URL,
   IBKR_FLEX_URL,
   WorkerSourceError,
