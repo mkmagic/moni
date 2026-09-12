@@ -4,12 +4,15 @@ import {
   IBKR_FLEX_URL,
   completeSourceRefresh,
   fetchBoiRates,
+  fetchIbkrFlexActivityEvidence,
   fetchIbkrFlexXml,
+  incrementalIbkrActivityRange,
   parseBoiSdmxCsv,
   parseTiingoRefreshCounts,
   readBoundedResponse,
   refreshBoiWithFallback,
   requiredBoiPairs,
+  splitIbkrFlexDateRange,
 } from "@/lib/investments";
 import {
   decodeBinaryChildFrame,
@@ -19,6 +22,87 @@ import {
 } from "@/lib/connectors";
 
 describe("investment worker seams", () => {
+  it("splits long inclusive IBKR ranges into non-overlapping 365-day windows", () => {
+    expect(splitIbkrFlexDateRange("2024-01-01", "2026-01-02")).toEqual([
+      { from: "2024-01-01", to: "2024-12-30" },
+      { from: "2024-12-31", to: "2025-12-30" },
+      { from: "2025-12-31", to: "2026-01-02" },
+    ]);
+  });
+
+  it("applies the configurable incremental overlap without preceding initial coverage", () => {
+    expect(
+      incrementalIbkrActivityRange({
+        initialFrom: "2025-01-01",
+        syncedThrough: "2026-08-31",
+        to: "2026-09-12",
+      }),
+    ).toEqual({ from: "2026-08-02", to: "2026-09-12" });
+    expect(
+      incrementalIbkrActivityRange({
+        initialFrom: "2026-08-20",
+        syncedThrough: "2026-08-31",
+        to: "2026-09-12",
+        overlapDays: 90,
+      }),
+    ).toEqual({ from: "2026-08-20", to: "2026-09-12" });
+  });
+
+  it("fetches dated activity windows, parses immediately, and wipes raw and credentials", async () => {
+    const token = Buffer.from("token");
+    const query = Buffer.from("query");
+    const bodies: Uint8Array[] = [];
+    const report =
+      '<FlexQueryResponse><FlexStatements><FlexStatement accountId="A" /></FlexStatements></FlexQueryResponse>';
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname.endsWith("/SendRequest")) {
+        return new Response(
+          "<FlexStatementResponse><Status>Success</Status><ReferenceCode>123</ReferenceCode></FlexStatementResponse>",
+        );
+      }
+      const bytes = new TextEncoder().encode(report);
+      bodies.push(bytes);
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(bytes);
+            controller.close();
+          },
+        }),
+      );
+    });
+
+    const result = await fetchIbkrFlexActivityEvidence({
+      token,
+      queryId: query,
+      fingerprintKey: Buffer.from("fingerprint"),
+      from: "2025-01-01",
+      to: "2026-01-01",
+      fetcher,
+      wait: vi.fn().mockResolvedValue(undefined),
+    });
+
+    expect(result.map(({ window }) => window)).toEqual([
+      { from: "2025-01-01", to: "2025-12-31" },
+      { from: "2026-01-01", to: "2026-01-01" },
+    ]);
+    const sendUrls = fetcher.mock.calls
+      .map(([url]) => new URL(url))
+      .filter((url) => url.pathname.endsWith("/SendRequest"));
+    expect(sendUrls.map((url) => [url.searchParams.get("fd"), url.searchParams.get("td")])).toEqual(
+      [
+        ["20250101", "20251231"],
+        ["20260101", "20260101"],
+      ],
+    );
+    expect(
+      result.every(({ evidence }) => !JSON.stringify(evidence).includes("FlexQueryResponse")),
+    ).toBe(true);
+    expect(bodies.every((body) => body.every((value) => value === 0))).toBe(true);
+    expect([...token, ...query]).toEqual(Array(token.length + query.length).fill(0));
+  });
+
   it("permits an exactly-10MiB source segment plus bounded framing overhead", () => {
     const source = Buffer.alloc(MAX_CHILD_SEGMENT_BYTES, 1);
     const key = Buffer.alloc(32, 2);

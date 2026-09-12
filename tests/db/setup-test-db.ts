@@ -86,6 +86,7 @@ const MIGRATION_FILES = [
   "0042_household_invitation_accepted_by.sql",
   "0043_household_cascade_deletes.sql",
   "0044_soft_kree.sql",
+  "0045_colossal_maria_hill.sql",
 ];
 
 /** Bookkeeping for which of MIGRATION_FILES this database has already seen.

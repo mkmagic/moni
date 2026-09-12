@@ -1,7 +1,13 @@
 import Decimal from "decimal.js";
 import { parse } from "csv-parse/sync";
 import { XMLParser } from "fast-xml-parser";
-import { normalizeIbkrFlexXml, normalizeSchwabPositionsCsv, type InvestmentSyncEnvelope } from ".";
+import {
+  normalizeIbkrFlexActivityXml,
+  normalizeIbkrFlexXml,
+  normalizeSchwabPositionsCsv,
+  type IbkrFlexActivityEvidenceSet,
+  type InvestmentSyncEnvelope,
+} from ".";
 import { errorLabel, logFetch, syncLog } from "@/lib/sync-log";
 
 export const IBKR_FLEX_URL =
@@ -29,6 +35,12 @@ const IBKR_RETRYABLE_REPORT_CODES = new Set([
 
 export type FetchAdapter = (input: string, init?: RequestInit) => Promise<Response>;
 type SleepAdapter = (milliseconds: number) => Promise<void>;
+export interface IbkrFlexDateWindow {
+  from: string;
+  to: string;
+}
+
+export const DEFAULT_IBKR_ACTIVITY_OVERLAP_DAYS = 30;
 export class WorkerSourceError extends Error {
   constructor(readonly code: string) {
     super(code);
@@ -133,12 +145,17 @@ export async function fetchIbkrFlexXml(
   queryId: Buffer,
   fetcher: FetchAdapter,
   wait: SleepAdapter = sleep,
+  window?: IbkrFlexDateWindow,
 ): Promise<Buffer> {
   try {
     const sendUrl = new URL(`${IBKR_FLEX_URL}/SendRequest`);
     sendUrl.searchParams.set("t", token.toString("ascii"));
     sendUrl.searchParams.set("q", queryId.toString("ascii"));
     sendUrl.searchParams.set("v", "3");
+    if (window) {
+      sendUrl.searchParams.set("fd", window.from.replaceAll("-", ""));
+      sendUrl.searchParams.set("td", window.to.replaceAll("-", ""));
+    }
     // The query id and token live in the URL, so only the endpoint is logged.
     const sendBody = await logFetch("ibkr.send.fetch", {}, () =>
       fetchIbkrResponse(sendUrl, fetcher),
@@ -193,6 +210,112 @@ export async function fetchIbkrFlexXml(
   } finally {
     token.fill(0);
     queryId.fill(0);
+  }
+}
+
+const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+function calendarDate(value: string): Date {
+  if (!isoDatePattern.test(value)) throw new WorkerSourceError("invalid_date_range");
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value)
+    throw new WorkerSourceError("invalid_date_range");
+  return date;
+}
+
+function addDays(value: Date, days: number): Date {
+  const result = new Date(value);
+  result.setUTCDate(result.getUTCDate() + days);
+  return result;
+}
+
+function dateText(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+/** Splits an inclusive range into non-overlapping Flex windows of at most 365 days. */
+export function splitIbkrFlexDateRange(from: string, to: string): IbkrFlexDateWindow[] {
+  const first = calendarDate(from);
+  const last = calendarDate(to);
+  if (first > last) throw new WorkerSourceError("invalid_date_range");
+  const windows: IbkrFlexDateWindow[] = [];
+  for (let start = first; start <= last; start = addDays(start, 365)) {
+    const candidateEnd = addDays(start, 364);
+    windows.push({
+      from: dateText(start),
+      to: dateText(candidateEnd < last ? candidateEnd : last),
+    });
+  }
+  return windows;
+}
+
+/** Applies the intentionally repeated tail used to pick up late and corrected activity. */
+export function incrementalIbkrActivityRange(input: {
+  initialFrom: string;
+  syncedThrough?: string;
+  to: string;
+  overlapDays?: number;
+}): IbkrFlexDateWindow {
+  const initial = calendarDate(input.initialFrom);
+  const end = calendarDate(input.to);
+  const overlapDays = input.overlapDays ?? DEFAULT_IBKR_ACTIVITY_OVERLAP_DAYS;
+  if (!Number.isSafeInteger(overlapDays) || overlapDays < 1)
+    throw new WorkerSourceError("invalid_overlap_window");
+  const start = input.syncedThrough
+    ? new Date(
+        Math.max(
+          initial.getTime(),
+          addDays(calendarDate(input.syncedThrough), -(overlapDays - 1)).getTime(),
+        ),
+      )
+    : initial;
+  if (start > end) throw new WorkerSourceError("invalid_date_range");
+  return { from: dateText(start), to: dateText(end) };
+}
+
+/**
+ * Fetches and parses every activity window before moving to the next one. Raw XML is wiped and
+ * never appears in the returned value. The token and query id are caller-owned and wiped here.
+ */
+export async function fetchIbkrFlexActivityEvidence(input: {
+  token: Buffer;
+  queryId: Buffer;
+  fingerprintKey: Uint8Array;
+  from: string;
+  to: string;
+  syncedThrough?: string;
+  overlapDays?: number;
+  fetcher: FetchAdapter;
+  wait?: SleepAdapter;
+}): Promise<Array<{ window: IbkrFlexDateWindow; evidence: IbkrFlexActivityEvidenceSet }>> {
+  try {
+    const results: Array<{
+      window: IbkrFlexDateWindow;
+      evidence: IbkrFlexActivityEvidenceSet;
+    }> = [];
+    const range = incrementalIbkrActivityRange({
+      initialFrom: input.from,
+      syncedThrough: input.syncedThrough,
+      to: input.to,
+      overlapDays: input.overlapDays,
+    });
+    for (const window of splitIbkrFlexDateRange(range.from, range.to)) {
+      const token = Buffer.from(input.token);
+      const queryId = Buffer.from(input.queryId);
+      const xml = await fetchIbkrFlexXml(token, queryId, input.fetcher, input.wait, window);
+      try {
+        results.push({
+          window,
+          evidence: normalizeIbkrFlexActivityXml(xml.toString("utf8"), input.fingerprintKey),
+        });
+      } finally {
+        xml.fill(0);
+      }
+    }
+    return results;
+  } finally {
+    input.token.fill(0);
+    input.queryId.fill(0);
   }
 }
 

@@ -31,6 +31,7 @@ export const investmentProviderEnum = pgEnum("investment_provider", [
   "schwab_positions_csv",
   "snaptrade",
   "tiingo",
+  "opening_lot_import",
 ]);
 export const sourceAsOfPrecisionEnum = pgEnum("source_as_of_precision", ["date", "timestamp"]);
 export const reconciliationStateEnum = pgEnum("investment_reconciliation_state", [

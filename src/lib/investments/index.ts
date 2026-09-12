@@ -8,6 +8,13 @@ export {
 } from "./ibkr-flex";
 export { normalizeSchwabPositionsCsv } from "./schwab-positions-csv";
 export {
+  OPENING_LOT_AI_CONVERSION_PROMPT,
+  OPENING_LOT_CSV_COLUMNS,
+  OpeningLotCsvError,
+  parseOpeningLotsCsv,
+  type OpeningLotImportRow,
+} from "./opening-lots-csv";
+export {
   normalizeInvestmentActivityEvidence,
   normalizeOpenLotEvidence,
   type InvestmentActivityEvidence,
@@ -17,17 +24,22 @@ export {
 } from "./evidence";
 export {
   BOI_SDMX_URL,
+  DEFAULT_IBKR_ACTIVITY_OVERLAP_DAYS,
   IBKR_FLEX_URL,
   WorkerSourceError,
   fetchBoiRates,
+  fetchIbkrFlexActivityEvidence,
   fetchIbkrFlexXml,
   importSchwabCsv,
   normalizeIbkrPayload,
   parseBoiSdmxCsv,
+  incrementalIbkrActivityRange,
   requiredBoiPairs,
   refreshBoiWithFallback,
   completeSourceRefresh,
   readBoundedResponse,
+  splitIbkrFlexDateRange,
+  type IbkrFlexDateWindow,
 } from "./workers";
 export {
   SNAPTRADE_API_ORIGIN,
