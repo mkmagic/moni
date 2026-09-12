@@ -17,6 +17,11 @@ export type InvestmentActivityType =
 
 export type InvestmentEvidenceProvenance = "broker_reported" | "user_entered" | "imported";
 
+export interface BrokerLotAllocation {
+  sourceLotId: string;
+  quantity: string;
+}
+
 export interface InvestmentActivityEvidence {
   source: "ibkr_flex" | "snaptrade";
   sourceAccountRef: string;
@@ -26,6 +31,8 @@ export interface InvestmentActivityEvidence {
   sourceTradeId?: string;
   sourceOrderId?: string;
   sourceRevisionOfId?: string;
+  brokerOpenDateTime?: string;
+  brokerLotAllocations?: BrokerLotAllocation[];
   sourceSecurityId?: string;
   sourceSecurityIdKind?: string;
   activityType: InvestmentActivityType;
@@ -68,6 +75,10 @@ export interface OpenLotEvidence {
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const decimalSchema = z.string().transform(decimalText);
 const optionalNonblankSchema = nonblankSchema.optional();
+const brokerLotAllocationSchema = z.object({
+  sourceLotId: nonblankSchema,
+  quantity: decimalSchema,
+});
 
 const activitySchema = z
   .object({
@@ -79,6 +90,8 @@ const activitySchema = z
     sourceTradeId: optionalNonblankSchema,
     sourceOrderId: optionalNonblankSchema,
     sourceRevisionOfId: optionalNonblankSchema,
+    brokerOpenDateTime: optionalNonblankSchema,
+    brokerLotAllocations: z.array(brokerLotAllocationSchema).min(1).optional(),
     sourceSecurityId: optionalNonblankSchema,
     sourceSecurityIdKind: optionalNonblankSchema,
     activityType: z.enum([

@@ -125,11 +125,19 @@ describe("investment activity ingestion", () => {
     expect(stored.actions).toHaveLength(1);
     expect(stored.actions[0].classification).toBe("UNSUPPORTED_CORPORATE_ACTION");
 
-    const trade = stored.activities.find((row) => row.providerExecutionIdCt);
-    expect(trade).toBeDefined();
-    expect(trade!.priceCt?.equals(Buffer.from("200"))).toBe(false);
     const dataKey = getDevUserDataKey(userId);
     try {
+      const trade = stored.activities.find(
+        (row) =>
+          row.providerExecutionIdCt &&
+          decryptField(dataKey, row.providerExecutionIdCt, {
+            rowId: row.id,
+            column: "provider_execution_id_ct",
+            version: row.version,
+          }).toString("utf8") === "EXEC-1",
+      );
+      expect(trade).toBeDefined();
+      expect(trade!.priceCt?.equals(Buffer.from("200"))).toBe(false);
       expect(
         decryptField(dataKey, trade!.priceCt!, {
           rowId: trade!.id,
@@ -155,6 +163,63 @@ describe("investment activity ingestion", () => {
     };
 
     await expect(ingest(evidence)).resolves.toMatchObject({ activitiesInserted: 2 });
+  });
+
+  it("encrypts and replays an explicitly supplied broker lot allocation", async () => {
+    const sale: InvestmentActivityEvidence = {
+      ...fixture().activities[2],
+      idempotencyKey: "REDACTED-ACCOUNT:exec:ALLOCATED-SELL",
+      sourceExecutionId: "ALLOCATED-SELL",
+      sourceTradeId: "ALLOCATED-SELL-TRADE",
+      sourceRevisionOfId: undefined,
+      brokerLotAllocations: [{ sourceLotId: "LOT-1", quantity: "1" }],
+    };
+
+    await expect(
+      ingest({
+        activities: [sale],
+        openLots: [],
+        dividendAccruals: [],
+        corporateActions: [],
+      }),
+    ).resolves.toMatchObject({ activitiesInserted: 1 });
+    await expect(
+      ingest({
+        activities: [sale],
+        openLots: [],
+        dividendAccruals: [],
+        corporateActions: [],
+      }),
+    ).resolves.toMatchObject({ activitiesSkipped: 1 });
+
+    const rows = await withUser(userId, (tx) =>
+      tx
+        .select()
+        .from(schema.investmentActivityEvidence)
+        .where(eq(schema.investmentActivityEvidence.tradeDate, sale.tradeDate)),
+    );
+    const dataKey = getDevUserDataKey(userId);
+    try {
+      const row = rows.find(
+        (held) =>
+          held.providerExecutionIdCt &&
+          decryptField(dataKey, held.providerExecutionIdCt, {
+            rowId: held.id,
+            column: "provider_execution_id_ct",
+            version: held.version,
+          }).toString("utf8") === "ALLOCATED-SELL",
+      );
+      expect(row).toBeDefined();
+      expect(
+        decryptField(dataKey, row!.brokerLotAllocationsCt!, {
+          rowId: row!.id,
+          column: "broker_lot_allocations_ct",
+          version: row!.version,
+        }).toString("utf8"),
+      ).toBe('[{"sourceLotId":"LOT-1","quantity":"1"}]');
+    } finally {
+      dataKey.fill(0);
+    }
   });
 
   it("updates a corrected trade in place and links the collapsed revision", async () => {

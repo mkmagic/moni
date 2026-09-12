@@ -455,6 +455,7 @@ export function normalizeIbkrFlexActivityXml(
           sourceTradeId: tradeId,
           sourceOrderId: attribute(row, "ibOrderID"),
           sourceRevisionOfId: attribute(row, "origTradeID") ?? attribute(row, "originalTradeID"),
+          brokerOpenDateTime: attribute(row, "openDateTime"),
           sourceSecurityId: attribute(row, "conid"),
           sourceSecurityIdKind: attribute(row, "conid") ? "conid" : undefined,
           activityType: buySell.toLowerCase(),

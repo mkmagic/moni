@@ -95,6 +95,7 @@ export function newAppRoleClient(): Client {
  */
 export const OWNER_SCOPED_TABLES_DELETE_ORDER = [
   "investment_disposal_resolution_queue",
+  "investment_lot_closures",
   "investment_tax_lots",
   "investment_reconciliation_quality",
   "investment_activity_coverage",

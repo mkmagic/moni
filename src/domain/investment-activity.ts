@@ -198,6 +198,20 @@ function activityValues(
       version,
     ),
     providerTradeIdCt: encrypted(input.dataKey, tradeId, id, "provider_trade_id_ct", version),
+    brokerOpenDateTimeCt: encrypted(
+      input.dataKey,
+      evidence.brokerOpenDateTime,
+      id,
+      "broker_open_date_time_ct",
+      version,
+    ),
+    brokerLotAllocationsCt: encrypted(
+      input.dataKey,
+      evidence.brokerLotAllocations ? JSON.stringify(evidence.brokerLotAllocations) : undefined,
+      id,
+      "broker_lot_allocations_ct",
+      version,
+    ),
     tradeDate: evidence.tradeDate,
     settlementDate: evidence.settlementDate ?? null,
     quantityCt: encrypted(input.dataKey, evidence.quantity, id, "quantity_ct", version),
@@ -264,6 +278,10 @@ function sameActivity(
       evidence.sourceExecutionId &&
     storedText(input, row, row.providerTradeIdCt, "provider_trade_id_ct") ===
       (evidence.sourceRevisionOfId ?? evidence.sourceTradeId) &&
+    storedText(input, row, row.brokerOpenDateTimeCt, "broker_open_date_time_ct") ===
+      evidence.brokerOpenDateTime &&
+    storedText(input, row, row.brokerLotAllocationsCt, "broker_lot_allocations_ct") ===
+      (evidence.brokerLotAllocations ? JSON.stringify(evidence.brokerLotAllocations) : undefined) &&
     storedText(input, row, row.quantityCt, "quantity_ct") === evidence.quantity &&
     (row.quantityUnit ?? undefined) === evidence.quantityUnit &&
     storedText(input, row, row.priceCt, "price_ct") === evidence.price &&

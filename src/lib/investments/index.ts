@@ -17,6 +17,7 @@ export {
 export {
   normalizeInvestmentActivityEvidence,
   normalizeOpenLotEvidence,
+  type BrokerLotAllocation,
   type InvestmentActivityEvidence,
   type InvestmentActivityType,
   type InvestmentEvidenceProvenance,

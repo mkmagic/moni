@@ -44,12 +44,14 @@ describe("IBKR Flex activity evidence", () => {
     expect(trades[2]).toMatchObject({
       activityType: "sell",
       sourceRevisionOfId: "TRADE-OLD",
+      brokerOpenDateTime: "20250310;153000",
       rawCode: "C;Ca",
       rawDescription: "Corrected trade",
       quantity: "-1",
       grossAmount: "210",
       taxAmount: "-0.25",
     });
+    expect(trades[2].brokerLotAllocations).toBeUndefined();
   });
 
   it("normalizes only LOT detail as broker-reported opening-lot evidence", () => {

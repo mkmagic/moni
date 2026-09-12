@@ -122,21 +122,35 @@ async function seedFixture(label: string): Promise<Fixture> {
     coverageBasis: "provider_declared",
     completeness: "complete",
   });
-  await elevatedDb.insert(schema.investmentTaxLots).values({
+  const [taxLot] = await elevatedDb
+    .insert(schema.investmentTaxLots)
+    .values({
+      ownerId: user.id,
+      accountId: account.id,
+      instrumentId: instrument.id,
+      acquisitionActivityId: activity.id,
+      derivationKey: ct(`${label}-derived-key`),
+      policyVersion: "broker-reported-else-user-selected/v1",
+      tradeDate: "2026-08-31",
+      originalQuantityCt: ct("2"),
+      remainingQuantityCt: ct("2"),
+      quantityUnit: "shares",
+      costBasisCt: ct("246.90"),
+      costBasisCurrency: "USD",
+      lockedFxProvenance: "unresolved",
+      completeness: "partial",
+    })
+    .returning({ id: schema.investmentTaxLots.id });
+  await elevatedDb.insert(schema.investmentLotClosures).values({
     ownerId: user.id,
-    accountId: account.id,
-    instrumentId: instrument.id,
-    acquisitionActivityId: activity.id,
-    derivationKey: ct(`${label}-derived-key`),
-    policyVersion: "broker-reported-else-user-selected/v1",
-    tradeDate: "2026-08-31",
-    originalQuantityCt: ct("2"),
-    remainingQuantityCt: ct("2"),
-    quantityUnit: "shares",
-    costBasisCt: ct("246.90"),
-    costBasisCurrency: "USD",
+    sellActivityEvidenceId: activity.id,
+    closedTaxLotId: taxLot.id,
+    closedQuantityCt: ct("1"),
+    proceedsCt: ct("130"),
+    realizedCostBasisCt: ct("123.45"),
+    lockedFxConvention: "ILS_PER_USD",
     lockedFxProvenance: "unresolved",
-    completeness: "partial",
+    allocationProvenance: "broker_reported",
   });
   const [quality] = await elevatedDb
     .insert(schema.investmentReconciliationQuality)
@@ -186,7 +200,7 @@ describe("investment activity and lot schema", () => {
     await elevatedPool.end();
   });
 
-  it("confines all seven new tables to the current owner through RLS", async () => {
+  it("confines all eight activity and lot tables to the current owner through RLS", async () => {
     await withUser(a.userId, async (tx) => {
       const rows = [
         await tx.select().from(schema.investmentActivityEvidence),
@@ -194,6 +208,7 @@ describe("investment activity and lot schema", () => {
         await tx.select().from(schema.investmentCorporateActionEvidence),
         await tx.select().from(schema.investmentActivityCoverage),
         await tx.select().from(schema.investmentTaxLots),
+        await tx.select().from(schema.investmentLotClosures),
         await tx.select().from(schema.investmentReconciliationQuality),
         await tx.select().from(schema.investmentDisposalResolutionQueue),
       ];

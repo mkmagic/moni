@@ -91,6 +91,10 @@ export const investmentFxProvenanceEnum = pgEnum("investment_fx_provenance", [
   "user_entered",
   "unresolved",
 ]);
+export const investmentLotAllocationProvenanceEnum = pgEnum(
+  "investment_lot_allocation_provenance",
+  ["broker_reported", "user_selected", "pending"],
+);
 export const investmentReconciliationDimensionEnum = pgEnum("investment_reconciliation_dimension", [
   "position_quantity",
   "cash_balance",
@@ -369,6 +373,8 @@ export const investmentActivityEvidence = pgTable(
     providerActivityIdCt: bytea("provider_activity_id_ct"),
     providerExecutionIdCt: bytea("provider_execution_id_ct"),
     providerTradeIdCt: bytea("provider_trade_id_ct"),
+    brokerOpenDateTimeCt: bytea("broker_open_date_time_ct"),
+    brokerLotAllocationsCt: bytea("broker_lot_allocations_ct"),
     idempotencyKey: bytea("idempotency_key").notNull(),
     tradeDate: date("trade_date").notNull(),
     settlementDate: date("settlement_date"),
@@ -596,6 +602,44 @@ export const investmentTaxLots = pgTable(
     foreignKey({
       columns: [table.ownerId, table.openingLotEvidenceId],
       foreignColumns: [investmentOpeningLotEvidence.ownerId, investmentOpeningLotEvidence.id],
+    }),
+  ],
+);
+
+export const investmentLotClosures = pgTable(
+  "investment_lot_closures",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => users.id),
+    sellActivityEvidenceId: uuid("sell_activity_evidence_id").notNull(),
+    closedTaxLotId: uuid("closed_tax_lot_id").notNull(),
+    closedQuantityCt: bytea("closed_quantity_ct").notNull(),
+    proceedsCt: bytea("proceeds_ct").notNull(),
+    realizedCostBasisCt: bytea("realized_cost_basis_ct").notNull(),
+    lockedFxRateCt: bytea("locked_fx_rate_ct"),
+    lockedFxConvention: text("locked_fx_convention").notNull(),
+    lockedFxObservationDate: date("locked_fx_observation_date"),
+    lockedFxProvenance: investmentFxProvenanceEnum("locked_fx_provenance").notNull(),
+    allocationProvenance: investmentLotAllocationProvenanceEnum("allocation_provenance").notNull(),
+    version: integer("version").notNull().default(1),
+    ...timestamps,
+  },
+  (table) => [
+    unique("investment_lot_closures_owner_id_id_unique").on(table.ownerId, table.id),
+    unique("investment_lot_closures_owner_sell_lot_unique").on(
+      table.ownerId,
+      table.sellActivityEvidenceId,
+      table.closedTaxLotId,
+    ),
+    foreignKey({
+      columns: [table.ownerId, table.sellActivityEvidenceId],
+      foreignColumns: [investmentActivityEvidence.ownerId, investmentActivityEvidence.id],
+    }),
+    foreignKey({
+      columns: [table.ownerId, table.closedTaxLotId],
+      foreignColumns: [investmentTaxLots.ownerId, investmentTaxLots.id],
     }),
   ],
 );

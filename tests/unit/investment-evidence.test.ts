@@ -72,6 +72,32 @@ describe("investment evidence normalization", () => {
     expectTypeOf(lot).toEqualTypeOf<OpenLotEvidence>();
   });
 
+  it("retains only explicitly supplied broker lot allocations as exact decimals", () => {
+    const sale = normalizeInvestmentActivityEvidence({
+      source: "ibkr_flex",
+      sourceAccountRef: "U123",
+      idempotencyKey: "U123:exec:sale-1",
+      activityType: "sell",
+      tradeDate: "2026-08-31",
+      quantity: "-2.5000",
+      quantityUnit: "shares",
+      currency: "USD",
+      rawType: "Trade",
+      brokerOpenDateTime: "20260101;120000",
+      brokerLotAllocations: [{ sourceLotId: "broker-lot-7", quantity: "2.5000" }],
+      provenance: "broker_reported",
+    });
+
+    expect(sale.brokerLotAllocations).toEqual([{ sourceLotId: "broker-lot-7", quantity: "2.5" }]);
+    expect(
+      normalizeInvestmentActivityEvidence({
+        ...sale,
+        idempotencyKey: "U123:exec:sale-2",
+        brokerLotAllocations: undefined,
+      }).brokerLotAllocations,
+    ).toBeUndefined();
+  });
+
   it("requires a durable source security id rather than a symbol or name", () => {
     expect(() =>
       normalizeOpenLotEvidence({
