@@ -1,5 +1,11 @@
 export { serializeCanonicalInvestmentEnvelope } from "./canonical";
-export { normalizeIbkrFlexXml } from "./ibkr-flex";
+export {
+  normalizeIbkrFlexActivityXml,
+  normalizeIbkrFlexXml,
+  type IbkrCorporateActionEvidence,
+  type IbkrDividendAccrualEvidence,
+  type IbkrFlexActivityEvidenceSet,
+} from "./ibkr-flex";
 export { normalizeSchwabPositionsCsv } from "./schwab-positions-csv";
 export {
   normalizeInvestmentActivityEvidence,

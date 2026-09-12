@@ -1,7 +1,14 @@
+import { createHmac } from "node:crypto";
 import { XMLParser } from "fast-xml-parser";
 import { z } from "zod";
 
 import { addDecimal, decimalText, isZero } from "./decimal";
+import {
+  normalizeInvestmentActivityEvidence,
+  normalizeOpenLotEvidence,
+  type InvestmentActivityEvidence,
+  type OpenLotEvidence,
+} from "./evidence";
 import {
   asOf,
   checked,
@@ -313,5 +320,337 @@ export function normalizeIbkrFlexXml(source: string): InvestmentSyncEnvelope {
     const failure = code(error);
     if (process.env.MONI_IBKR_DIAGNOSTIC === "1") reportStructure(source, failure.code);
     throw failure;
+  }
+}
+
+export interface IbkrDividendAccrualEvidence {
+  source: "ibkr_flex";
+  sourceAccountRef: string;
+  idempotencyKey: string;
+  sourceSecurityId: string;
+  sourceSecurityIdKind: "conid";
+  payDate: string;
+  grossAmount?: string;
+  withholdingTaxAmount?: string;
+  feeAmount?: string;
+  netAmount?: string;
+  currency: string;
+  rawCode?: string;
+  linkedCashActivityId?: string;
+}
+
+export interface IbkrCorporateActionEvidence {
+  source: "ibkr_flex";
+  sourceAccountRef: string;
+  idempotencyKey: string;
+  sourceActionId?: string;
+  sourceSecurityId?: string;
+  sourceSecurityIdKind?: "conid";
+  actionDate: string;
+  rawType: string;
+  rawCode?: string;
+  rawDescription?: string;
+  quantity?: string;
+  proceeds?: string;
+  currency?: string;
+  classification: "UNSUPPORTED_CORPORATE_ACTION";
+  provenance: "broker_reported";
+}
+
+export interface IbkrFlexActivityEvidenceSet {
+  activities: InvestmentActivityEvidence[];
+  openLots: OpenLotEvidence[];
+  dividendAccruals: IbkrDividendAccrualEvidence[];
+  corporateActions: IbkrCorporateActionEvidence[];
+}
+
+function attribute(row: Attributes, name: string): string | undefined {
+  return row[name]?.trim() || undefined;
+}
+
+function activityReport(source: string): Record<string, unknown> {
+  sourceText(source);
+  const parsed = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: "",
+    parseTagValue: false,
+    parseAttributeValue: false,
+    trimValues: true,
+  }).parse(source) as { FlexQueryResponse?: { FlexStatements?: Record<string, unknown> } };
+  const statements = parsed.FlexQueryResponse?.FlexStatements?.FlexStatement;
+  if (!statements || Array.isArray(statements) || typeof statements !== "object")
+    throw new InvestmentNormalizationError("unsupported_source_shape");
+  return statements as Record<string, unknown>;
+}
+
+function flexDateTime(date: string, time?: string): string {
+  const normalizedDate = flexDate(date);
+  if (!time) return normalizedDate;
+  const text = time.trim().split(";")[0];
+  const compact = /^(\d{2})(\d{2})(\d{2})$/.exec(text);
+  return compact
+    ? `${normalizedDate}T${compact[1]}:${compact[2]}:${compact[3]}`
+    : `${normalizedDate}T${text}`;
+}
+
+function fingerprint(key: Uint8Array, kind: string, parts: Array<string | undefined>): string {
+  if (key.byteLength === 0) throw new InvestmentNormalizationError("unsupported_source_shape");
+  return `ibkr:${kind}:fp:${createHmac("sha256", key)
+    .update(JSON.stringify(parts.map((part) => part ?? "")))
+    .digest("base64url")}`;
+}
+
+function cashActivityType(type: string): InvestmentActivityEvidence["activityType"] {
+  const normalized = type.toLowerCase();
+  // The provider-neutral contract calls contributions `deposit` and keeps
+  // substitute dividends under `dividend`; rawType preserves both distinctions.
+  if (normalized.includes("dividend") || normalized.includes("payment in lieu")) return "dividend";
+  if (normalized.includes("withholding") || normalized === "tax") return "tax";
+  if (normalized.includes("fee") || normalized.includes("commission")) return "fee";
+  if (normalized.includes("deposit") || normalized.includes("contribution")) return "deposit";
+  if (normalized.includes("withdraw")) return "withdrawal";
+  if (normalized.includes("interest")) return "interest";
+  return "other";
+}
+
+function cashLinkKey(row: Attributes): string {
+  return [
+    attribute(row, "accountId"),
+    attribute(row, "conid"),
+    attribute(row, "currency"),
+    flexDate(attribute(row, "dateTime") ?? ""),
+  ].join("|");
+}
+
+/**
+ * Normalizes activity evidence independently of the existing snapshot path.
+ * The fingerprint key is caller-owned and is never copied, stringified, or wiped here.
+ */
+export function normalizeIbkrFlexActivityXml(
+  source: string,
+  fingerprintKey: Uint8Array,
+): IbkrFlexActivityEvidenceSet {
+  try {
+    const report = activityReport(source);
+    const activities: InvestmentActivityEvidence[] = [];
+
+    for (const row of records(report, "Trade")) {
+      if (attribute(row, "levelOfDetail")?.toUpperCase() !== "EXECUTION") continue;
+      const buySell = attribute(row, "buySell")?.toUpperCase();
+      if (buySell !== "BUY" && buySell !== "SELL") continue;
+      const accountId = checked(nonblankSchema, attribute(row, "accountId"));
+      const executionId = attribute(row, "ibExecID");
+      const tradeId = attribute(row, "tradeID");
+      if (!executionId && !tradeId) throw new InvestmentNormalizationError("incomplete_coverage");
+      const tradeDate = flexDate(checked(nonblankSchema, attribute(row, "tradeDate")));
+      activities.push(
+        normalizeInvestmentActivityEvidence({
+          source: "ibkr_flex",
+          sourceAccountRef: accountId,
+          idempotencyKey: executionId
+            ? `${accountId}:exec:${executionId}`
+            : `${accountId}:trade:${tradeId}`,
+          sourceActivityId: attribute(row, "transactionID"),
+          sourceExecutionId: executionId,
+          sourceTradeId: tradeId,
+          sourceOrderId: attribute(row, "ibOrderID"),
+          sourceRevisionOfId: attribute(row, "origTradeID") ?? attribute(row, "originalTradeID"),
+          sourceSecurityId: attribute(row, "conid"),
+          sourceSecurityIdKind: attribute(row, "conid") ? "conid" : undefined,
+          activityType: buySell.toLowerCase(),
+          tradeDate,
+          occurredAt: flexDateTime(tradeDate, attribute(row, "tradeTime")),
+          settlementDate: attribute(row, "settleDateTarget")
+            ? flexDate(attribute(row, "settleDateTarget")!)
+            : undefined,
+          quantity: attribute(row, "quantity"),
+          quantityUnit: attribute(row, "quantity") ? "shares" : undefined,
+          price: attribute(row, "tradePrice"),
+          grossAmount: attribute(row, "proceeds"),
+          feeAmount: attribute(row, "ibCommission"),
+          taxAmount: attribute(row, "tax") ?? attribute(row, "taxes"),
+          netCashAmount: attribute(row, "netCash"),
+          currency: attribute(row, "currency"),
+          rawType: attribute(row, "tradeType") ?? "Trade",
+          rawCode: attribute(row, "code"),
+          rawDescription: attribute(row, "notes"),
+          provenance: "broker_reported",
+        }),
+      );
+    }
+
+    const openLots = records(report, "OpenPosition")
+      .filter((row) => attribute(row, "levelOfDetail")?.toUpperCase() === "LOT")
+      .map((row) => {
+        const accountId = checked(nonblankSchema, attribute(row, "accountId"));
+        const conid = checked(nonblankSchema, attribute(row, "conid"));
+        const opened = checked(nonblankSchema, attribute(row, "openDateTime"));
+        const quantity = checked(nonblankSchema, attribute(row, "position"));
+        const totalCost = checked(nonblankSchema, attribute(row, "costBasisMoney"));
+        const sourceLotId = attribute(row, "originatingTransactionID");
+        const idempotencyKey = sourceLotId
+          ? `${accountId}:lot:${sourceLotId}`
+          : fingerprint(fingerprintKey, "lot", [
+              accountId,
+              conid,
+              opened,
+              attribute(row, "side"),
+              quantity,
+              attribute(row, "costBasisPrice"),
+              totalCost,
+            ]);
+        return normalizeOpenLotEvidence({
+          source: "ibkr_flex",
+          sourceAccountRef: accountId,
+          idempotencyKey,
+          sourceLotId: sourceLotId ?? idempotencyKey,
+          sourceSecurityId: conid,
+          sourceSecurityIdKind: "conid",
+          tradeDate: flexDate(opened),
+          originalQuantity: quantity,
+          remainingQuantity: quantity,
+          quantityUnit: "shares",
+          unitCost: attribute(row, "costBasisPrice"),
+          totalCost,
+          currency: attribute(row, "currency"),
+          provenance: "broker_reported",
+        });
+      });
+
+    const cashRows = records(report, "CashTransaction");
+    const cashActivityIds = new Map<string, string[]>();
+    for (const row of cashRows) {
+      const accountId = checked(nonblankSchema, attribute(row, "accountId"));
+      const type = checked(nonblankSchema, attribute(row, "type"));
+      const dateTime = checked(nonblankSchema, attribute(row, "dateTime"));
+      const tradeId = attribute(row, "tradeID");
+      const activityId = tradeId
+        ? `${accountId}:cash:${tradeId}`
+        : fingerprint(fingerprintKey, "cash", [
+            accountId,
+            dateTime,
+            type,
+            attribute(row, "conid"),
+            attribute(row, "currency"),
+            attribute(row, "amount"),
+            attribute(row, "description"),
+            attribute(row, "code"),
+          ]);
+      const activityType = cashActivityType(type);
+      activities.push(
+        normalizeInvestmentActivityEvidence({
+          source: "ibkr_flex",
+          sourceAccountRef: accountId,
+          idempotencyKey: activityId,
+          sourceActivityId: activityId,
+          sourceTradeId: tradeId,
+          sourceSecurityId: attribute(row, "conid"),
+          sourceSecurityIdKind: attribute(row, "conid") ? "conid" : undefined,
+          activityType,
+          tradeDate: flexDate(dateTime),
+          occurredAt: flexDateTime(dateTime),
+          grossAmount: activityType === "dividend" ? attribute(row, "amount") : undefined,
+          taxAmount: activityType === "tax" ? attribute(row, "amount") : undefined,
+          feeAmount: activityType === "fee" ? attribute(row, "amount") : undefined,
+          netCashAmount: attribute(row, "amount"),
+          currency: attribute(row, "currency"),
+          rawType: type,
+          rawCode: attribute(row, "code"),
+          rawDescription: attribute(row, "description"),
+          provenance: "broker_reported",
+        }),
+      );
+      if (activityType === "dividend") {
+        const key = cashLinkKey(row);
+        cashActivityIds.set(key, [...(cashActivityIds.get(key) ?? []), activityId]);
+      }
+    }
+
+    const usedCashActivityIds = new Set<string>();
+    const dividendAccruals = records(report, "ChangeInDividendAccrual").map((row) => {
+      const accountId = checked(nonblankSchema, attribute(row, "accountId"));
+      const conid = checked(nonblankSchema, attribute(row, "conid"));
+      const currency = checked(currencySchema, attribute(row, "currency"));
+      const payDate = flexDate(checked(nonblankSchema, attribute(row, "payDate")));
+      const key = [accountId, conid, currency, payDate].join("|");
+      const linkedCashActivityId = cashActivityIds
+        .get(key)
+        ?.find((candidate) => !usedCashActivityIds.has(candidate));
+      if (linkedCashActivityId) usedCashActivityIds.add(linkedCashActivityId);
+      return {
+        source: "ibkr_flex" as const,
+        sourceAccountRef: accountId,
+        idempotencyKey: fingerprint(fingerprintKey, "accrual", [
+          accountId,
+          conid,
+          currency,
+          attribute(row, "exDate"),
+          payDate,
+          attribute(row, "quantity"),
+          attribute(row, "grossAmount"),
+          attribute(row, "tax"),
+          attribute(row, "netAmount"),
+          attribute(row, "code"),
+        ]),
+        sourceSecurityId: conid,
+        sourceSecurityIdKind: "conid" as const,
+        payDate,
+        grossAmount: attribute(row, "grossAmount")
+          ? decimalText(attribute(row, "grossAmount")!)
+          : undefined,
+        withholdingTaxAmount: attribute(row, "tax")
+          ? decimalText(attribute(row, "tax")!)
+          : undefined,
+        feeAmount: attribute(row, "fee") ? decimalText(attribute(row, "fee")!) : undefined,
+        netAmount: attribute(row, "netAmount")
+          ? decimalText(attribute(row, "netAmount")!)
+          : undefined,
+        currency,
+        rawCode: attribute(row, "code"),
+        linkedCashActivityId,
+      };
+    });
+
+    const corporateActions = records(report, "CorporateAction").map((row) => {
+      const accountId = checked(nonblankSchema, attribute(row, "accountId"));
+      const dateTime = checked(nonblankSchema, attribute(row, "dateTime"));
+      const actionId = attribute(row, "transactionID");
+      return {
+        source: "ibkr_flex" as const,
+        sourceAccountRef: accountId,
+        idempotencyKey: actionId
+          ? `${accountId}:corp:${actionId}`
+          : fingerprint(fingerprintKey, "corp", [
+              accountId,
+              dateTime,
+              attribute(row, "type"),
+              attribute(row, "code"),
+              attribute(row, "conid"),
+              attribute(row, "quantity"),
+              attribute(row, "proceeds") ?? attribute(row, "value"),
+              attribute(row, "description"),
+            ]),
+        sourceActionId: actionId,
+        sourceSecurityId: attribute(row, "conid"),
+        sourceSecurityIdKind: attribute(row, "conid") ? ("conid" as const) : undefined,
+        actionDate: flexDate(dateTime),
+        rawType: attribute(row, "type") ?? "CorporateAction",
+        rawCode: attribute(row, "code"),
+        rawDescription: attribute(row, "description"),
+        quantity: attribute(row, "quantity") ? decimalText(attribute(row, "quantity")!) : undefined,
+        proceeds: attribute(row, "proceeds")
+          ? decimalText(attribute(row, "proceeds")!)
+          : attribute(row, "value")
+            ? decimalText(attribute(row, "value")!)
+            : undefined,
+        currency: attribute(row, "currency"),
+        classification: "UNSUPPORTED_CORPORATE_ACTION" as const,
+        provenance: "broker_reported" as const,
+      };
+    });
+
+    return { activities, openLots, dividendAccruals, corporateActions };
+  } catch (error) {
+    throw code(error);
   }
 }

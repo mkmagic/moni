@@ -24,11 +24,13 @@ export interface InvestmentActivityEvidence {
   sourceActivityId?: string;
   sourceExecutionId?: string;
   sourceTradeId?: string;
+  sourceOrderId?: string;
   sourceRevisionOfId?: string;
   sourceSecurityId?: string;
   sourceSecurityIdKind?: string;
   activityType: InvestmentActivityType;
   tradeDate: string;
+  occurredAt?: string;
   settlementDate?: string;
   quantity?: string;
   quantityUnit?: string;
@@ -75,6 +77,7 @@ const activitySchema = z
     sourceActivityId: optionalNonblankSchema,
     sourceExecutionId: optionalNonblankSchema,
     sourceTradeId: optionalNonblankSchema,
+    sourceOrderId: optionalNonblankSchema,
     sourceRevisionOfId: optionalNonblankSchema,
     sourceSecurityId: optionalNonblankSchema,
     sourceSecurityIdKind: optionalNonblankSchema,
@@ -91,6 +94,7 @@ const activitySchema = z
       "other",
     ]),
     tradeDate: dateSchema,
+    occurredAt: optionalNonblankSchema,
     settlementDate: dateSchema.optional(),
     quantity: decimalSchema.optional(),
     quantityUnit: optionalNonblankSchema,
