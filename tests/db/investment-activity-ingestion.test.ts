@@ -288,6 +288,83 @@ describe("investment activity ingestion", () => {
     expect(correctedRows).toHaveLength(1);
   });
 
+  it("does not treat a fresh execution with a C code but no origTradeID as a correction", async () => {
+    const base = fixture().activities[0];
+    const fresh: InvestmentActivityEvidence = {
+      ...base,
+      idempotencyKey: "REDACTED-ACCOUNT:exec:F10-EXEC",
+      sourceExecutionId: "F10-EXEC",
+      sourceTradeId: "F10-TRADE",
+      sourceRevisionOfId: undefined,
+      rawCode: undefined,
+      rawDescription: undefined,
+      price: "100",
+    };
+    await expect(
+      ingest({ activities: [fresh], openLots: [], dividendAccruals: [], corporateActions: [] }),
+    ).resolves.toMatchObject({ activitiesInserted: 1 });
+    // Same execution replayed with different content and a benign C code/note.
+    const amended: InvestmentActivityEvidence = {
+      ...fresh,
+      price: "105",
+      rawCode: "Ca",
+      rawDescription: "position correction expected",
+    };
+    await expect(
+      ingest({ activities: [amended], openLots: [], dividendAccruals: [], corporateActions: [] }),
+    ).resolves.toMatchObject({ activitiesUpdated: 1 });
+
+    const dataKey = getDevUserDataKey(userId);
+    try {
+      const rows = await withUser(userId, (tx) =>
+        tx.select().from(schema.investmentActivityEvidence),
+      );
+      const row = rows.find(
+        (held) =>
+          held.providerExecutionIdCt &&
+          decryptField(dataKey, held.providerExecutionIdCt, {
+            rowId: held.id,
+            column: "provider_execution_id_ct",
+            version: held.version,
+          }).toString("utf8") === "F10-EXEC",
+      );
+      expect(row).toBeDefined();
+      expect(row!.revisionOfId).toBeNull();
+    } finally {
+      dataKey.fill(0);
+    }
+  });
+
+  it("dedups a re-fetched transactionID-keyed dividend to one updated row", async () => {
+    const base = fixture().activities.find((activity) => activity.activityType === "dividend")!;
+    const make = (description: string): InvestmentActivityEvidence => ({
+      ...base,
+      idempotencyKey: "REDACTED-ACCOUNT:cash:txn:F9-TXN",
+      sourceActivityId: "REDACTED-ACCOUNT:cash:txn:F9-TXN",
+      sourceTradeId: undefined,
+      sourceRevisionOfId: undefined,
+      grossAmount: "50",
+      netCashAmount: "50",
+      rawDescription: description,
+    });
+    await expect(
+      ingest({
+        activities: [make("AAPL dividend")],
+        openLots: [],
+        dividendAccruals: [],
+        corporateActions: [],
+      }),
+    ).resolves.toMatchObject({ activitiesInserted: 1 });
+    await expect(
+      ingest({
+        activities: [make("AAPL cash dividend (reformatted)")],
+        openLots: [],
+        dividendAccruals: [],
+        corporateActions: [],
+      }),
+    ).resolves.toMatchObject({ activitiesInserted: 0, activitiesUpdated: 1 });
+  });
+
   it("queues a non-identical fingerprint collision instead of merging it", async () => {
     const base = fixture().activities.find((activity) => activity.idempotencyKey.includes(":fp:"));
     expect(base).toBeDefined();

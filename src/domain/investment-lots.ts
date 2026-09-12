@@ -416,14 +416,26 @@ async function derive(
     const basis = (gross ? absolute(gross) : absolute(price!).mul(heldQuantity)).plus(
       fee ? absolute(fee) : new Decimal("0"),
     );
-    const fx = await lockAcquisitionFx(tx, {
-      tradeDate: row.tradeDate,
-      settlementDate: row.settlementDate ?? undefined,
-      fromCurrency: row.currency,
-      toCurrency: "ILS",
-    });
     const key = derivedKey(input.dataKey, "activity", row.id);
     const current = currentByKey.get(key.toString("hex")) ?? null;
+    // ADR 0014: acquisition FX is locked historical evidence. Reuse the rate a
+    // prior derivation already locked and only (re)lock when it was never
+    // resolved, so a BoI observation published after the first run cannot
+    // rewrite an existing lot (openings persist their rate the same way).
+    const fx =
+      current && current.lockedFxProvenance !== "unresolved"
+        ? {
+            rateString: text(input.dataKey, current, current.lockedFxRateCt, "locked_fx_rate_ct"),
+            convention: current.lockedFxConvention,
+            observationDate: current.lockedFxObservationDate,
+            provenance: current.lockedFxProvenance,
+          }
+        : await lockAcquisitionFx(tx, {
+            tradeDate: row.tradeDate,
+            settlementDate: row.settlementDate ?? undefined,
+            fromCurrency: row.currency,
+            toCurrency: "ILS",
+          });
     lots.push({
       id: current?.id ?? randomUUID(),
       current,
@@ -505,30 +517,65 @@ async function derive(
       continue;
     }
 
-    const saleProceeds = gross ? absolute(gross) : absolute(price!).mul(saleQuantity);
-    const fx = await lockAcquisitionFx(tx, {
+    // Net the disposal's own commission (and any sale tax) out of proceeds so
+    // realized gain subtracts both legs symmetrically with the buy side, which
+    // folds the acquisition fee into cost basis.
+    const disposalFee = text(input.dataKey, sale, sale.feeAmountCt, "fee_amount_ct");
+    const disposalTax = text(input.dataKey, sale, sale.taxAmountCt, "tax_amount_ct");
+    const saleProceeds = (gross ? absolute(gross) : absolute(price!).mul(saleQuantity))
+      .minus(disposalFee ? absolute(disposalFee) : new Decimal("0"))
+      .minus(disposalTax ? absolute(disposalTax) : new Decimal("0"));
+    const saleFx = await lockAcquisitionFx(tx, {
       tradeDate: sale.tradeDate,
       settlementDate: sale.settlementDate ?? undefined,
       fromCurrency: sale.currency!,
       toCurrency: "ILS",
     });
-    for (const { allocation, lot } of targets!) {
+    const saleTargets = targets!;
+    let allocatedProceeds = new Decimal("0");
+    for (let index = 0; index < saleTargets.length; index += 1) {
+      const { allocation, lot } = saleTargets[index];
       const heldLot = lot!;
       const closedQuantity = decimal(allocation.quantity);
+      // Allocate the final lot as (total − sum of previous) so per-lot proceeds
+      // reconcile exactly to the recorded sale total instead of drifting by a
+      // rounding unit across the split.
+      const proceeds =
+        index === saleTargets.length - 1
+          ? saleProceeds.minus(allocatedProceeds)
+          : saleProceeds.mul(closedQuantity).div(saleQuantity);
+      allocatedProceeds = allocatedProceeds.plus(proceeds);
+      const existingClosure = closureByPair.get(`${sale.id}:${heldLot.id}`) ?? null;
+      // The disposal FX is locked historical evidence too (ADR 0014): reuse the
+      // rate a prior derivation locked and only (re)lock when unresolved.
+      const closureFx =
+        existingClosure && existingClosure.lockedFxProvenance !== "unresolved"
+          ? {
+              rateString: text(
+                input.dataKey,
+                existingClosure,
+                existingClosure.lockedFxRateCt,
+                "locked_fx_rate_ct",
+              ),
+              convention: existingClosure.lockedFxConvention,
+              observationDate: existingClosure.lockedFxObservationDate,
+              provenance: existingClosure.lockedFxProvenance,
+            }
+          : saleFx;
       closures.push({
-        current: closureByPair.get(`${sale.id}:${heldLot.id}`) ?? null,
+        current: existingClosure,
         sellActivityEvidenceId: sale.id,
         lot: heldLot,
         closedQuantity: closedQuantity.toString(),
-        proceeds: saleProceeds.mul(closedQuantity).div(saleQuantity).toString(),
+        proceeds: proceeds.toString(),
         realizedCostBasis: decimal(heldLot.costBasis)
           .mul(closedQuantity)
           .div(heldLot.originalQuantity)
           .toString(),
-        lockedFxRate: fx.rateString,
-        lockedFxConvention: fx.convention,
-        lockedFxObservationDate: fx.observationDate,
-        lockedFxProvenance: fx.provenance,
+        lockedFxRate: closureFx.rateString,
+        lockedFxConvention: closureFx.convention,
+        lockedFxObservationDate: closureFx.observationDate,
+        lockedFxProvenance: closureFx.provenance,
       });
       heldLot.remainingQuantity = decimal(heldLot.remainingQuantity)
         .minus(closedQuantity)

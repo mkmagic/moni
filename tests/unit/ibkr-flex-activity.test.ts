@@ -129,6 +129,27 @@ describe("IBKR Flex activity evidence", () => {
     expect(parseActivity()).toEqual(parseActivity());
   });
 
+  it("keys tradeID-less cash off the stable transactionID so a description reformat stays one row", () => {
+    const build = (description: string) =>
+      `<FlexQueryResponse><FlexStatements><FlexStatement><CashTransactions>` +
+      `<CashTransaction accountId="ACC" conid="1" currency="USD" dateTime="20250515" amount="23.0000" ` +
+      `type="Dividends" transactionID="TXN-9" description="${description}" code="Po" />` +
+      `</CashTransactions></FlexStatement></FlexStatements></FlexQueryResponse>`;
+    const key = Buffer.from("ibkr-activity-test-fingerprint-key");
+    try {
+      const dividendKey = (source: string) =>
+        normalizeIbkrFlexActivityXml(source, key).activities.find(
+          (activity) => activity.activityType === "dividend",
+        )?.idempotencyKey;
+      const first = dividendKey(build("AAPL dividend"));
+      const second = dividendKey(build("AAPL cash dividend (reformatted)"));
+      expect(first).toBe("ACC:cash:txn:TXN-9");
+      expect(second).toBe(first);
+    } finally {
+      key.fill(0);
+    }
+  });
+
   it("leaves the existing SUMMARY snapshot normalization unchanged", () => {
     expect(normalizeIbkrFlexXml(xml)).toEqual({
       source: "ibkr_flex",

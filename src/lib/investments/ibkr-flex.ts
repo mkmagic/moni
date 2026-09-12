@@ -524,19 +524,25 @@ export function normalizeIbkrFlexActivityXml(
       const accountId = checked(nonblankSchema, attribute(row, "accountId"));
       const type = checked(nonblankSchema, attribute(row, "type"));
       const dateTime = checked(nonblankSchema, attribute(row, "dateTime"));
+      // CashTransaction rows carry a stable transactionID; key off it first so a
+      // benign description/code reformat across the overlap window cannot change
+      // the fingerprint and re-insert an already-counted dividend/fee/tax.
+      const transactionId = attribute(row, "transactionID");
       const tradeId = attribute(row, "tradeID");
-      const activityId = tradeId
-        ? `${accountId}:cash:${tradeId}`
-        : fingerprint(fingerprintKey, "cash", [
-            accountId,
-            dateTime,
-            type,
-            attribute(row, "conid"),
-            attribute(row, "currency"),
-            attribute(row, "amount"),
-            attribute(row, "description"),
-            attribute(row, "code"),
-          ]);
+      const activityId = transactionId
+        ? `${accountId}:cash:txn:${transactionId}`
+        : tradeId
+          ? `${accountId}:cash:${tradeId}`
+          : fingerprint(fingerprintKey, "cash", [
+              accountId,
+              dateTime,
+              type,
+              attribute(row, "conid"),
+              attribute(row, "currency"),
+              attribute(row, "amount"),
+              attribute(row, "description"),
+              attribute(row, "code"),
+            ]);
       const activityType = cashActivityType(type);
       activities.push(
         normalizeInvestmentActivityEvidence({
@@ -567,6 +573,11 @@ export function normalizeIbkrFlexActivityXml(
       }
     }
 
+    // Accruals are extracted and linked to their booked cash row to keep the
+    // linkage evidence ready, but v1 does not persist them (investment-activity
+    // ingest drops this list): dividend income is counted once from booked cash,
+    // so persisting accruals would only add a double-count risk. Intentional
+    // scope choice, not an oversight.
     const usedCashActivityIds = new Set<string>();
     const dividendAccruals = records(report, "ChangeInDividendAccrual").map((row) => {
       const accountId = checked(nonblankSchema, attribute(row, "accountId"));

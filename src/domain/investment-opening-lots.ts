@@ -1,4 +1,5 @@
 import { createHmac, randomUUID } from "node:crypto";
+import Decimal from "decimal.js";
 import { eq } from "drizzle-orm";
 
 import { withUser, type UserTransaction } from "@/db/client";
@@ -15,7 +16,7 @@ import { lockAcquisitionFx } from "./investment-fx";
 type Tx = UserTransaction;
 
 export class OpeningLotImportError extends Error {
-  constructor(readonly code: "account_not_found" | "identity_conflict") {
+  constructor(readonly code: "account_not_found" | "identity_conflict" | "invalid_fx_override") {
     super(code);
     this.name = "OpeningLotImportError";
   }
@@ -213,7 +214,24 @@ async function resolveInstrumentId(
 }
 
 async function resolveFx(tx: Tx, row: OpeningLotImportRow): Promise<ResolvedFx> {
+  // An ILS acquisition needs no conversion; the rate is the definitional
+  // identity, so skip FX resolution and never emit a nonsensical ILS_PER_ILS
+  // convention label.
+  if (row.currency === "ILS") {
+    return { rate: "1", convention: null, observationDate: null, provenance: "boi_derived" };
+  }
   if (row.ilsFxRate) {
+    // A user-entered override is persisted as locked evidence, so validate it is
+    // a positive decimal in the BoI (ILS-per-foreign) direction before trusting it.
+    let override: Decimal;
+    try {
+      override = new Decimal(row.ilsFxRate);
+    } catch {
+      throw new OpeningLotImportError("invalid_fx_override");
+    }
+    if (!override.isFinite() || override.lte(0)) {
+      throw new OpeningLotImportError("invalid_fx_override");
+    }
     return {
       rate: row.ilsFxRate,
       convention: `ILS_PER_${row.currency}`,

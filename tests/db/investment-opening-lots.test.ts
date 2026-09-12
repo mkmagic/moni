@@ -140,6 +140,28 @@ describe("opening-lot import", () => {
     ).resolves.toEqual({ inserted: 0, skipped: 3, unresolvedFx: 0 });
   });
 
+  it("skips FX for ILS lots and rejects a non-positive user override", async () => {
+    const ilsRows = parseOpeningLotsCsv(
+      Buffer.from(`${header}\n${accountRef},,ILSCO,XTAE,2020-02-02,3,,,90,ILS,,,ILS-LOT\n`),
+    );
+    const preview = await withKey((dataKey) =>
+      previewOpeningLotImport({ userId, dataKey, rows: ilsRows }),
+    );
+    expect(preview.unresolvedFx).toBe(0);
+    expect(preview.rows[0]).toMatchObject({
+      lockedFxRate: "1",
+      lockedFxConvention: null,
+      lockedFxProvenance: "boi_derived",
+    });
+
+    const badRows = parseOpeningLotsCsv(
+      Buffer.from(`${header}\n${accountRef},,BADFX,XTAE,2020-02-02,1,,,10,USD,,-3,BAD-LOT\n`),
+    );
+    await expect(
+      withKey((dataKey) => previewOpeningLotImport({ userId, dataKey, rows: badRows })),
+    ).rejects.toThrow("invalid_fx_override");
+  });
+
   it("rolls back the whole promotion when a later account cannot be resolved", async () => {
     const before = await withUser(userId, (tx) =>
       tx.select().from(schema.investmentOpeningLotEvidence),

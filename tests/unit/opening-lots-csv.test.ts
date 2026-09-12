@@ -40,6 +40,16 @@ describe("opening-lot CSV", () => {
     ).toThrow("invalid_row:2");
   });
 
+  it("rejects non-positive quantities and remaining greater than original", () => {
+    const row = (quantity: string, remaining: string) =>
+      Buffer.from(
+        `${header}\nU123,US0378331005,AAPL,NASDAQ,2020-01-02,${quantity},${remaining},,1000,USD,,,\n`,
+      );
+    expect(() => parseOpeningLotsCsv(row("10", "15"))).toThrow("invalid_row:2");
+    expect(() => parseOpeningLotsCsv(row("0", ""))).toThrow("invalid_row:2");
+    expect(() => parseOpeningLotsCsv(row("-5", ""))).toThrow("invalid_row:2");
+  });
+
   it("requires the exact locked header", () => {
     expect(() =>
       parseOpeningLotsCsv(Buffer.from(`account,symbol,trade_date\nU123,AAPL,2020-01-02\n`)),

@@ -1,5 +1,5 @@
 import { createHmac, randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 
 import { withUser, type UserTransaction } from "@/db/client";
 import {
@@ -251,12 +251,13 @@ function storedText(
   return decText(input.dataKey, value, row.id, field, row.version) ?? undefined;
 }
 
+// Only an explicit origTradeID/originalTradeID (surfaced as sourceRevisionOfId)
+// marks a correction. IBKR's `C`/`Ca` code letters and "correction" notes are
+// overloaded and advisory only — treating them as the signal would flip a fresh
+// execution into a self-referencing revision and suppress later legitimate
+// replays.
 function isCorrection(evidence: InvestmentActivityEvidence): boolean {
-  return (
-    evidence.sourceRevisionOfId !== undefined ||
-    evidence.rawCode?.split(";").some((code) => /^(?:c|ca)$/i.test(code.trim())) === true ||
-    /\bcorrect(?:ed|ion)\b/i.test(evidence.rawDescription ?? "")
-  );
+  return evidence.sourceRevisionOfId !== undefined;
 }
 
 function sameActivity(
@@ -349,8 +350,19 @@ async function ingestActivity(
     evidence.currency,
   );
   const key = keyedIdentity(input.dataKey, "activity", evidence.idempotencyKey);
-  const rows = await tx.select().from(investmentActivityEvidence);
-  const exact = rows.find((row) => Buffer.from(row.idempotencyKey).equals(key));
+  // Hit the unique (owner, source, idempotency_key) index directly instead of
+  // scanning and decrypting the whole activity table on every row.
+  const [exact] = await tx
+    .select()
+    .from(investmentActivityEvidence)
+    .where(
+      and(
+        eq(investmentActivityEvidence.ownerId, input.userId),
+        eq(investmentActivityEvidence.source, evidence.source),
+        eq(investmentActivityEvidence.idempotencyKey, key),
+      ),
+    )
+    .limit(1);
   if (exact) {
     if (sameActivity(input, exact, evidence, accountId, instrumentId)) {
       result.activitiesSkipped++;
@@ -387,7 +399,20 @@ async function ingestActivity(
 
   let revision: typeof investmentActivityEvidence.$inferSelect | undefined;
   if (evidence.sourceRevisionOfId) {
-    revision = rows.find(
+    // A correction targets the same security, so narrow to this account and
+    // instrument before decrypting provider trade ids to find the revised row.
+    const candidates = await tx
+      .select()
+      .from(investmentActivityEvidence)
+      .where(
+        and(
+          eq(investmentActivityEvidence.accountId, accountId),
+          instrumentId === null
+            ? isNull(investmentActivityEvidence.instrumentId)
+            : eq(investmentActivityEvidence.instrumentId, instrumentId),
+        ),
+      );
+    revision = candidates.find(
       (row) =>
         storedText(input, row, row.providerTradeIdCt, "provider_trade_id_ct") ===
         evidence.sourceRevisionOfId,
@@ -571,6 +596,10 @@ async function ingest(
       await ingestOpeningLot(tx, input, openingLot, result);
     for (const action of evidence.corporateActions)
       await ingestCorporateAction(tx, input, action, result);
+    // v1 intentionally does not persist `evidence.dividendAccruals`: dividend
+    // income is counted once from booked cash rows, so persisting accruals would
+    // add a double-count surface with no consumer. The parser still extracts and
+    // links them so the evidence is ready when an accruals table is introduced.
   }
   return result;
 }

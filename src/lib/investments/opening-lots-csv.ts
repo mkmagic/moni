@@ -102,13 +102,22 @@ export function parseOpeningLotsCsv(source: Buffer): OpeningLotImportRow[] {
         const unitCost = decimal(row.unit_cost);
         const suppliedTotalCost = decimal(row.total_cost);
         const currency = row.currency?.toUpperCase();
+        // Quantities must be positive and remaining cannot exceed the original
+        // lot; otherwise derivation would .abs() a negative into a phantom
+        // holding or prorate basis above the recorded cost.
+        const quantityValid = quantity !== undefined && new Decimal(quantity).gt(0);
+        const remainingValid =
+          remainingQuantity !== undefined &&
+          new Decimal(remainingQuantity).gt(0) &&
+          quantity !== undefined &&
+          new Decimal(remainingQuantity).lte(quantity);
         if (
           !account ||
           !tradeDate ||
           !datePattern.test(tradeDate) ||
           new Date(`${tradeDate}T00:00:00Z`).toISOString().slice(0, 10) !== tradeDate ||
-          !quantity ||
-          !remainingQuantity ||
+          !quantityValid ||
+          !remainingValid ||
           !currency ||
           !currencyPattern.test(currency) ||
           (!unitCost && !suppliedTotalCost) ||

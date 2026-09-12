@@ -148,6 +148,12 @@ export async function fetchIbkrFlexXml(
   window?: IbkrFlexDateWindow,
 ): Promise<Buffer> {
   try {
+    // IBKR's Flex API is GET-only, so the Tier-0 token and query id must be
+    // materialized as interned (unwipeable) JS strings on the query string —
+    // the same unavoidable, transient, worker-lifetime String exposure ADR 0009
+    // accepts for the Tiingo token. Containment is the mitigation: these strings
+    // and the assembled URL are never logged (only the endpoint is), fetch runs
+    // with redirect:"error", and nothing here stringifies the full URL.
     const sendUrl = new URL(`${IBKR_FLEX_URL}/SendRequest`);
     sendUrl.searchParams.set("t", token.toString("ascii"));
     sendUrl.searchParams.set("q", queryId.toString("ascii"));

@@ -364,6 +364,7 @@ async function unrealizedGain(tx: Tx, input: RequiredInput): Promise<InvestmentU
     }
     let nativeBasis = new Decimal(0);
     let ilsBasis = new Decimal(0);
+    let coveredQuantity = new Decimal(0);
     for (const lot of lots.filter((row) => row.instrumentId === position.instrumentId)) {
       const original = new Decimal(
         decText(
@@ -383,6 +384,7 @@ async function unrealizedGain(tx: Tx, input: RequiredInput): Promise<InvestmentU
           lot.version,
         )!,
       );
+      coveredQuantity = coveredQuantity.plus(remaining);
       const openBasis = new Decimal(
         decText(input.dataKey, lot.costBasisCt, lot.id, "cost_basis_ct", lot.version)!,
       )
@@ -400,13 +402,23 @@ async function unrealizedGain(tx: Tx, input: RequiredInput): Promise<InvestmentU
       } else incomplete = true;
       provenance.add(`acquisition_fx:${lot.lockedFxProvenance}`);
     }
+    // Derived lots may not explain the full snapshot position (the normal D3
+    // coverage-gap case). Prorate market value to the quantity the lots cover so
+    // uncovered shares are not booked as pure zero-basis gain, and mark the
+    // figure partial even before reconciliation runs.
+    const coveredValue = coveredQuantity.equals(quantity)
+      ? value
+      : quantity.isZero()
+        ? new Decimal(0)
+        : value.mul(coveredQuantity).div(quantity);
+    if (!coveredQuantity.equals(quantity)) incomplete = true;
     native.set(
       valueCurrency,
-      (native.get(valueCurrency) ?? new Decimal(0)).plus(value.minus(nativeBasis)),
+      (native.get(valueCurrency) ?? new Decimal(0)).plus(coveredValue.minus(nativeBasis)),
     );
     const currentFx = await usableIlsRate(tx, valueCurrency, currentDate);
     if (currentFx) {
-      ils = ils.plus(value.mul(currentFx.rate).minus(ilsBasis));
+      ils = ils.plus(coveredValue.mul(currentFx.rate).minus(ilsBasis));
       fxDates.push(currentFx.date);
       provenance.add(valueCurrency === "ILS" ? "current_fx:identity" : "current_fx:boi");
     } else incomplete = true;
@@ -559,6 +571,12 @@ async function performance(tx: Tx, input: RequiredInput): Promise<InvestmentPerf
     provenance.add(`snapshot:${snapshot.source}`);
     if (value.metadata.qualityFlags.includes("incomplete_fx")) valuationIncomplete = true;
   }
+  // FX basis note: external flows are converted to ILS at each flow's own
+  // trade-date BoI rate (see externalFlows), while the snapshot valuations use
+  // their own snapshot-date FX. Subtracting a flow-date-converted amount from a
+  // snapshot-date-converted value means the ILS TWR/MWR includes some FX drift
+  // alongside the price return. This is inherent to an ILS-basis return over a
+  // multi-currency account; the metric's `basis` label ("..._ils") flags it.
   const flows = await externalFlows(tx, input);
   flows.provenance.forEach((value) => provenance.add(value));
   const twrRate = calculateTimeWeightedReturn(valuations, flows.ils);
