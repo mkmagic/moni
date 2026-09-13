@@ -433,6 +433,11 @@ export function normalizeIbkrFlexActivityXml(
   try {
     const report = activityReport(source);
     const activities: InvestmentActivityEvidence[] = [];
+    // Transaction ids of the trades in this statement. An OpenPosition LOT
+    // reports its opening trade in `originatingTransactionID`; when that trade
+    // is also present here, the lot and the trade are the same shares, so the
+    // lot must not become a second acquisition (see openLots below).
+    const tradeTransactionIds = new Set<string>();
 
     for (const row of records(report, "Trade")) {
       if (attribute(row, "levelOfDetail")?.toUpperCase() !== "EXECUTION") continue;
@@ -442,6 +447,9 @@ export function normalizeIbkrFlexActivityXml(
       const executionId = attribute(row, "ibExecID");
       const tradeId = attribute(row, "tradeID");
       if (!executionId && !tradeId) throw new InvestmentNormalizationError("incomplete_coverage");
+      const transactionId = attribute(row, "transactionID");
+      if (transactionId) tradeTransactionIds.add(transactionId);
+      if (tradeId) tradeTransactionIds.add(tradeId);
       const tradeDate = flexDate(checked(nonblankSchema, attribute(row, "tradeDate")));
       activities.push(
         normalizeInvestmentActivityEvidence({
@@ -482,6 +490,14 @@ export function normalizeIbkrFlexActivityXml(
 
     const openLots = records(report, "OpenPosition")
       .filter((row) => attribute(row, "levelOfDetail")?.toUpperCase() === "LOT")
+      // Drop lots opened by a trade already in this statement: that trade
+      // becomes an acquisition on its own, so keeping the lot too would double
+      // the holding. Lots whose opening trade predates the activity window (no
+      // matching trade here) are kept — they are the genuine opening evidence.
+      .filter((row) => {
+        const originatingTransactionId = attribute(row, "originatingTransactionID");
+        return !originatingTransactionId || !tradeTransactionIds.has(originatingTransactionId);
+      })
       .map((row) => {
         const accountId = checked(nonblankSchema, attribute(row, "accountId"));
         const conid = checked(nonblankSchema, attribute(row, "conid"));

@@ -75,6 +75,38 @@ describe("IBKR Flex activity evidence", () => {
     });
   });
 
+  it("does not emit an opening lot for a lot opened by a trade in the same statement", () => {
+    // A combined statement (positions + trades in one query) reports every
+    // still-open buy twice: once as a Trade and once as the OpenPosition LOT it
+    // produced. The lot must be dropped or the holding derives at double.
+    const combined = `<?xml version="1.0"?>
+<FlexQueryResponse>
+  <FlexStatements count="1">
+    <FlexStatement accountId="U1" fromDate="20260101" toDate="20260401">
+      <Trades>
+        <Trade accountId="U1" levelOfDetail="EXECUTION" buySell="BUY" conid="111" ibExecID="EXEC-A" tradeID="TRADE-A" transactionID="TXN-A" tradeDate="20260115" tradeTime="100000" quantity="10" tradePrice="50" proceeds="-500" ibCommission="-1" netCash="-501" currency="USD" tradeType="Trade"/>
+      </Trades>
+      <OpenPositions>
+        <OpenPosition accountId="U1" levelOfDetail="LOT" conid="111" openDateTime="20260115;100000" position="10" costBasisPrice="50" costBasisMoney="500" currency="USD" originatingTransactionID="TXN-A"/>
+        <OpenPosition accountId="U1" levelOfDetail="LOT" conid="111" openDateTime="20240101;100000" position="7" costBasisPrice="40" costBasisMoney="280" currency="USD" originatingTransactionID="OLD-TXN"/>
+      </OpenPositions>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>`;
+    const key = Buffer.from("ibkr-activity-dedup-test-key");
+    let evidence;
+    try {
+      evidence = normalizeIbkrFlexActivityXml(combined, key);
+    } finally {
+      key.fill(0);
+    }
+    // The in-window buy stays; only the pre-window lot (no matching trade) is
+    // kept as opening evidence.
+    expect(evidence.activities.filter((a) => a.activityType === "buy")).toHaveLength(1);
+    expect(evidence.openLots).toHaveLength(1);
+    expect(evidence.openLots[0].sourceLotId).toBe("OLD-TXN");
+  });
+
   it("classifies booked cash while keeping the accrual linked and non-paying", () => {
     const evidence = parseActivity();
     const cash = evidence.activities.filter((activity) => activity.rawType !== "Trade");
