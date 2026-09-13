@@ -96,6 +96,20 @@ export const TOUR_STEPS: TourStep[] = [
     body: "See gains, cash income, and two different return measures without mixing their meanings. Each figure shows its basis and whether the underlying history is complete.",
   },
   {
+    id: "investment-activity",
+    route: "/investments/activity",
+    anchor: '[data-tour="investments-activity"]',
+    title: "Activity & lots",
+    body: "If an investment event needs your decision, its count appears here. Review the evidence and confirm changes before Moni updates your lot history.",
+  },
+  {
+    id: "investment-opening-lots",
+    route: "/investments/activity",
+    anchor: '[data-tour="investments-opening-lots"]',
+    title: "Opening lots",
+    body: "Add the investments you already owned before Moni had their history. You can enter one lot or prepare a CSV with an optional copy-paste prompt.",
+  },
+  {
     id: "long-term-savings",
     route: "/long-term-savings",
     anchor: '[data-tour="nav-/long-term-savings"]',

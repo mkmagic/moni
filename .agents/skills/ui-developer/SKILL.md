@@ -42,6 +42,32 @@ new feedback lands.
 
 ## Feedback log (newest first — append, don't overwrite)
 
+### 2026-09-13 — activity & lots verified: identity stays evidence-only
+
+- **Identity ambiguity is deliberately read-only until ingestion retains both candidates.** The
+  Understand view shows the activity and durable identifier evidence Moni does have, says plainly
+  that the conflicting candidate was not stored, and directs the user to re-import corrected source
+  data. It has no Choose, Review, commit, edit, or reopen affordance.
+- **Verified the audit-first hierarchy in Chrome at desktop width.** The conditional tab count,
+  grouped filters, opening-lot summary, exact missing-quantity prefill, sale allocation running total,
+  named final confirms, and immutable Recently resolved view all stayed compact and legible. The
+  opening-lot controls remain visually secondary to the pending queue.
+- **The full CSV prompt and canonical header remain visible and selectable before upload.** Chrome's
+  extension did not have file-URL access, so the native file chooser could not attach a local test
+  file; invalid-row reporting and valid preview/import were instead exercised against the same live
+  endpoints while the in-browser preparation and copy states were verified separately.
+
+### 2026-09-13 — activity & lots pre-work: audit-only resolution and a conditional queue
+
+- **The owner approved an audit-only resolution model for Wave 6.** Resolution gets immutable
+  evidence, local choices, and a named Review-step commit, followed by a permanent Recently resolved
+  record with View resolution. There is no reopen or edit-after-commit affordance.
+- **Pending work is conditional, but opening-lot management is persistent.** Activity & lots shows a
+  compact grouped queue only while items are pending; when it is empty, the Opening lots Card leads.
+  Overview and the Activity & lots tab likewise omit their attention signal entirely at zero.
+- **Partial figures remain visible but unmistakably qualified.** Known amounts keep their basis label,
+  an amber-outline Partial pill, and a “from known data” caveat; unknown remains “Not available”.
+
 ### 2026-09-04 — dashboard forecast fixes: the spending trend comes back out, and net worth starts at the join month
 
 - **The owner reversed the 2026-08-09 `expenseTrend` decision — a like-for-like comparison the domain worked hard for still read wrong to a real user.** Even day-span-vs-day-span, a first partial month against a near-empty prior period produced figures like "up 7,000%", and the owner's verdict was the `projectedSpend` one again: _"I don't think it really means anything… it currently shows crazy values."_ Both surfaces are gone — the Expenses tile's little up/down icon (`this-month-card.tsx`) and the insight-panel "Spending down X% vs last month" row (`dashboard/page.tsx`'s `spendingItem`) — and with them the whole `expenseTrend` field and its domain computation (`priorSamePeriodExpenses`, the same-day-span bucketing in `dashboard.ts`). **A number that needs a footnote to be trustworthy is a number to delete, not to reword — the second time this exact lesson landed.** `netWorthTrend` (now vs six months ago) stayed; only the spending trend was the problem.

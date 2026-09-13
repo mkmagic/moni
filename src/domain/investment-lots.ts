@@ -75,6 +75,12 @@ interface PlainClosure {
   lockedFxConvention: string;
   lockedFxObservationDate: string | null;
   lockedFxProvenance: FxProvenance;
+  allocationProvenance: "broker_reported" | "user_selected";
+}
+
+interface UserDisposalAllocation {
+  type: "disposal_allocation";
+  allocations: Array<{ lotId: string; quantity: string }>;
 }
 
 function decimal(value: string): Decimal {
@@ -243,7 +249,7 @@ function closureMatches(
     row.lockedFxConvention === desired.lockedFxConvention &&
     row.lockedFxObservationDate === desired.lockedFxObservationDate &&
     row.lockedFxProvenance === desired.lockedFxProvenance &&
-    row.allocationProvenance === "broker_reported"
+    row.allocationProvenance === desired.allocationProvenance
   );
 }
 
@@ -280,7 +286,7 @@ async function storeClosure(
     lockedFxConvention: closure.lockedFxConvention,
     lockedFxObservationDate: closure.lockedFxObservationDate,
     lockedFxProvenance: closure.lockedFxProvenance,
-    allocationProvenance: "broker_reported" as const,
+    allocationProvenance: closure.allocationProvenance,
     version,
   };
   if (closure.current) {
@@ -290,7 +296,7 @@ async function storeClosure(
   }
 }
 
-async function derive(
+export async function deriveInvestmentTaxLotsInTransaction(
   tx: Tx,
   input: Required<InvestmentTaxLotDerivationInput>,
 ): Promise<InvestmentTaxLotDerivationResult> {
@@ -479,50 +485,98 @@ async function derive(
       closure,
     ]),
   );
+  const disposalResolutions = await tx
+    .select()
+    .from(investmentDisposalResolutionQueue)
+    .where(
+      and(
+        eq(investmentDisposalResolutionQueue.accountId, input.accountId),
+        eq(investmentDisposalResolutionQueue.kind, "unresolved_disposal"),
+        eq(investmentDisposalResolutionQueue.policyVersion, input.policyVersion),
+      ),
+    );
+  const userAllocations = new Map<string, UserDisposalAllocation["allocations"]>();
+  for (const row of disposalResolutions) {
+    if (row.status !== "resolved" || !row.activityEvidenceId || !row.detailsCt) continue;
+    try {
+      const parsed = JSON.parse(
+        text(input.dataKey, row, row.detailsCt, "details_ct") ?? "",
+      ) as UserDisposalAllocation;
+      if (
+        parsed.type === "disposal_allocation" &&
+        Array.isArray(parsed.allocations) &&
+        parsed.allocations.length > 0
+      ) {
+        userAllocations.set(row.activityEvidenceId, parsed.allocations);
+      }
+    } catch {
+      // Pending rows and older rows contain a plain evidence sentence.
+    }
+  }
   const closures: PlainClosure[] = [];
   const unresolvedSales: (typeof investmentActivityEvidence.$inferSelect)[] = [];
 
   for (const sale of activities.filter((activity) => activity.activityType === "sell")) {
-    const allocations = parseAllocations(
+    const brokerAllocations = parseAllocations(
       text(input.dataKey, sale, sale.brokerLotAllocationsCt, "broker_lot_allocations_ct"),
     );
     const saleQuantityText = text(input.dataKey, sale, sale.quantityCt, "quantity_ct");
     const gross = text(input.dataKey, sale, sale.grossAmountCt, "gross_amount_ct");
     const price = text(input.dataKey, sale, sale.priceCt, "price_ct");
     const saleQuantity = saleQuantityText ? absolute(saleQuantityText) : null;
-    const targets = allocations?.map((allocation) => ({
-      allocation,
-      lot: aliases.get(allocation.sourceLotId) ?? null,
-    }));
-    const allocationTotal = allocations?.reduce(
-      (sum, allocation) => sum.plus(allocation.quantity),
-      new Decimal("0"),
-    );
-    const valid =
-      allocations !== null &&
-      saleQuantity !== null &&
-      saleQuantity.isPositive() &&
-      allocationTotal?.equals(saleQuantity) === true &&
-      sale.currency !== null &&
-      (gross !== null || price !== null) &&
-      targets?.every(
-        ({ allocation, lot }) =>
-          lot !== null &&
-          lot.tradeDate <= sale.tradeDate &&
-          (!sale.quantityUnit || lot.quantityUnit === sale.quantityUnit) &&
-          decimal(lot.remainingQuantity).gte(allocation.quantity),
-      ) === true;
-    if (!valid) {
+    const candidates = [
+      brokerAllocations && {
+        provenance: "broker_reported" as const,
+        targets: brokerAllocations.map((allocation) => ({
+          quantity: allocation.quantity,
+          lot: aliases.get(allocation.sourceLotId) ?? null,
+        })),
+      },
+      userAllocations.get(sale.id) && {
+        provenance: "user_selected" as const,
+        targets: userAllocations.get(sale.id)!.map((allocation) => ({
+          quantity: allocation.quantity,
+          lot: lots.find((lot) => lot.id === allocation.lotId) ?? null,
+        })),
+      },
+    ].filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
+    const selected = candidates.find((candidate) => {
+      try {
+        const total = candidate.targets.reduce(
+          (sum, allocation) => sum.plus(allocation.quantity),
+          new Decimal("0"),
+        );
+        return (
+          saleQuantity !== null &&
+          saleQuantity.isPositive() &&
+          total.equals(saleQuantity) &&
+          sale.currency !== null &&
+          (gross !== null || price !== null) &&
+          candidate.targets.every(
+            ({ quantity, lot }) =>
+              lot !== null &&
+              lot.tradeDate <= sale.tradeDate &&
+              (!sale.quantityUnit || lot.quantityUnit === sale.quantityUnit) &&
+              decimal(quantity).isPositive() &&
+              decimal(lot.remainingQuantity).gte(quantity),
+          )
+        );
+      } catch {
+        return false;
+      }
+    });
+    if (!selected) {
       unresolvedSales.push(sale);
       continue;
     }
+    const heldSaleQuantity = saleQuantity!;
 
     // Net the disposal's own commission (and any sale tax) out of proceeds so
     // realized gain subtracts both legs symmetrically with the buy side, which
     // folds the acquisition fee into cost basis.
     const disposalFee = text(input.dataKey, sale, sale.feeAmountCt, "fee_amount_ct");
     const disposalTax = text(input.dataKey, sale, sale.taxAmountCt, "tax_amount_ct");
-    const saleProceeds = (gross ? absolute(gross) : absolute(price!).mul(saleQuantity))
+    const saleProceeds = (gross ? absolute(gross) : absolute(price!).mul(heldSaleQuantity))
       .minus(disposalFee ? absolute(disposalFee) : new Decimal("0"))
       .minus(disposalTax ? absolute(disposalTax) : new Decimal("0"));
     const saleFx = await lockAcquisitionFx(tx, {
@@ -531,19 +585,19 @@ async function derive(
       fromCurrency: sale.currency!,
       toCurrency: "ILS",
     });
-    const saleTargets = targets!;
+    const saleTargets = selected.targets;
     let allocatedProceeds = new Decimal("0");
     for (let index = 0; index < saleTargets.length; index += 1) {
-      const { allocation, lot } = saleTargets[index];
+      const { quantity, lot } = saleTargets[index];
       const heldLot = lot!;
-      const closedQuantity = decimal(allocation.quantity);
+      const closedQuantity = decimal(quantity);
       // Allocate the final lot as (total − sum of previous) so per-lot proceeds
       // reconcile exactly to the recorded sale total instead of drifting by a
       // rounding unit across the split.
       const proceeds =
         index === saleTargets.length - 1
           ? saleProceeds.minus(allocatedProceeds)
-          : saleProceeds.mul(closedQuantity).div(saleQuantity);
+          : saleProceeds.mul(closedQuantity).div(heldSaleQuantity);
       allocatedProceeds = allocatedProceeds.plus(proceeds);
       const existingClosure = closureByPair.get(`${sale.id}:${heldLot.id}`) ?? null;
       // The disposal FX is locked historical evidence too (ADR 0014): reuse the
@@ -576,6 +630,7 @@ async function derive(
         lockedFxConvention: closureFx.convention,
         lockedFxObservationDate: closureFx.observationDate,
         lockedFxProvenance: closureFx.provenance,
+        allocationProvenance: selected.provenance,
       });
       heldLot.remainingQuantity = decimal(heldLot.remainingQuantity)
         .minus(closedQuantity)
@@ -644,7 +699,7 @@ async function derive(
   ).filter((row) => row.activityEvidenceId && activityIds.has(row.activityEvidenceId));
   const unresolvedIds = new Set(unresolvedSales.map((sale) => sale.id));
   for (const row of queued) {
-    if (!unresolvedIds.has(row.activityEvidenceId!)) {
+    if (row.status === "pending" && !unresolvedIds.has(row.activityEvidenceId!)) {
       await tx
         .delete(investmentDisposalResolutionQueue)
         .where(eq(investmentDisposalResolutionQueue.id, row.id));
@@ -724,5 +779,5 @@ export function deriveInvestmentTaxLots(
     ...input,
     policyVersion: input.policyVersion ?? BROKER_ELSE_USER_POLICY_VERSION,
   };
-  return withUser(input.userId, (tx) => derive(tx, required));
+  return withUser(input.userId, (tx) => deriveInvestmentTaxLotsInTransaction(tx, required));
 }

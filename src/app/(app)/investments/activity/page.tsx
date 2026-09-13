@@ -1,16 +1,23 @@
 import { requireSession } from "@/domain/auth";
-import { Card } from "@/components/ui/card";
+import { readInvestmentActivity } from "@/domain/investment-activity-resolution";
+import { ActivityScreen } from "./activity-screen";
 
-// Placeholder for Wave 6b. The queue, opening-lots card, and resolution flows
-// land here next; for now the route resolves so the sub-navigation works.
-export default async function InvestmentActivityPage() {
-  await requireSession();
-  return (
-    <Card className="flex min-h-[240px] flex-col items-center justify-center gap-2 p-8 text-center">
-      <p className="text-sm font-medium text-foreground">Activity & lots</p>
-      <p className="max-w-md text-sm text-muted-foreground">
-        Pending investment items and your opening-lot history will live here. Coming next.
-      </p>
-    </Card>
-  );
+export default async function InvestmentActivityPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const session = await requireSession();
+  const [view, query] = await Promise.all([readInvestmentActivity(session), searchParams]);
+  const resolved = typeof query.resolved === "string" ? query.resolved : null;
+  const imported = typeof query.imported === "string" ? query.imported : null;
+  const added = query.added === "1";
+  const notice = resolved
+    ? "Sale allocation confirmed. The resolution is retained below for audit."
+    : imported
+      ? `${imported} opening lots imported. Reconciliation was re-checked synchronously.`
+      : added
+        ? "Opening lot added. Reconciliation was re-checked synchronously."
+        : null;
+  return <ActivityScreen view={view} notice={notice} highlightedResolutionId={resolved} />;
 }

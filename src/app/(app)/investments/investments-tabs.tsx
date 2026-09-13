@@ -14,7 +14,7 @@ const TABS = [
 /** Route-based sub-navigation, matching budget-tabs.tsx: each destination stays
  * a server component reading through the domain layer, and every tab is
  * deep-linkable (a Partial figure's details link jumps straight to the queue). */
-export function InvestmentsTabs() {
+export function InvestmentsTabs({ pendingCount }: { pendingCount: number }) {
   const pathname = usePathname();
 
   return (
@@ -39,6 +39,11 @@ export function InvestmentsTabs() {
             >
               <Icon className="h-4 w-4" />
               {label}
+              {href === "/investments/activity" && pendingCount > 0 && (
+                <span className="rounded-full border border-primary/40 px-2 py-0.5 text-xs text-primary tabular-nums">
+                  {pendingCount} items
+                </span>
+              )}
             </Link>
           );
         })}

@@ -1,17 +1,24 @@
 import { createHmac, randomUUID } from "node:crypto";
 import Decimal from "decimal.js";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import { withUser, type UserTransaction } from "@/db/client";
 import {
   accounts,
   instruments,
   instrumentSourceMappings,
+  investmentActivityEvidence,
   investmentOpeningLotEvidence,
+  investmentSnapshotPositions,
+  investmentSnapshotDetails,
+  investmentTaxLots,
 } from "@/db/schema";
+import type { Session } from "@/lib/auth/session-store";
 import type { OpeningLotImportRow } from "@/lib/investments";
 import { decText, encText } from "./fields";
 import { lockAcquisitionFx } from "./investment-fx";
+import { deriveInvestmentTaxLots } from "./investment-lots";
+import { reconcileInvestmentActivity } from "./investment-valuation";
 
 type Tx = UserTransaction;
 
@@ -41,6 +48,33 @@ export interface OpeningLotImportResult {
   inserted: number;
   skipped: number;
   unresolvedFx: number;
+}
+
+export interface OpeningLotRefreshResult extends OpeningLotImportResult {
+  affectedLots: Array<{ id: string; accountId: string; instrumentId: string }>;
+  reconciliation: Array<{ accountId: string; gaps: number }>;
+}
+
+export interface SingleOpeningLotInput {
+  userId: string;
+  dataKey: Uint8Array;
+  accountId: string;
+  instrumentId: string;
+  tradeDate: string;
+  quantity: string;
+  remainingQuantity: string;
+  unitCost?: string;
+  totalCost: string;
+  currency: string;
+  fee?: string;
+  ilsFxRate?: string;
+}
+
+export interface OpeningLotFormOption {
+  accountId: string;
+  accountName: string;
+  currency: string;
+  instruments: Array<{ id: string; label: string; currency: string }>;
 }
 
 export interface OpeningLotImportInput {
@@ -348,5 +382,268 @@ export function promoteOpeningLotImport(
       if (fx.provenance === "unresolved") result.unresolvedFx++;
     }
     return result;
+  });
+}
+
+async function refreshScopes(
+  input: Pick<OpeningLotImportInput, "userId" | "dataKey">,
+  affectedLots: Array<{ id: string; accountId: string; instrumentId: string }>,
+): Promise<Pick<OpeningLotRefreshResult, "affectedLots" | "reconciliation">> {
+  const scopes = [
+    ...new Map(
+      affectedLots.map((row) => [`${row.accountId}:${row.instrumentId}`, row] as const),
+    ).values(),
+  ];
+  for (const scope of scopes) {
+    await deriveInvestmentTaxLots({
+      userId: input.userId,
+      accountId: scope.accountId,
+      instrumentId: scope.instrumentId,
+      dataKey: input.dataKey,
+    });
+  }
+  const reconciliation: OpeningLotRefreshResult["reconciliation"] = [];
+  for (const accountId of new Set(scopes.map((scope) => scope.accountId))) {
+    try {
+      const result = await reconcileInvestmentActivity({
+        userId: input.userId,
+        accountId,
+        dataKey: input.dataKey,
+      });
+      reconciliation.push({ accountId, gaps: result.gaps });
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "investment snapshot not found")
+        throw error;
+    }
+  }
+  return { affectedLots, reconciliation };
+}
+
+/** Imports, derives affected tax lots, and synchronously re-checks latest snapshots. */
+export async function promoteOpeningLotImportAndRefresh(
+  input: OpeningLotImportInput,
+): Promise<OpeningLotRefreshResult> {
+  const result = await promoteOpeningLotImport(input);
+  const keys = input.rows.map((row) => importKey(input.dataKey, row));
+  const affectedLots = await withUser(input.userId, async (tx) => {
+    const rows = await tx.select().from(investmentOpeningLotEvidence);
+    return rows
+      .filter((row) => keys.some((key) => Buffer.from(row.idempotencyKey).equals(key)))
+      .map((row) => ({ id: row.id, accountId: row.accountId, instrumentId: row.instrumentId }));
+  });
+  return { ...result, ...(await refreshScopes(input, affectedLots)) };
+}
+
+function manualKey(input: SingleOpeningLotInput): Buffer {
+  return createHmac("sha256", input.dataKey)
+    .update("manual-opening-lot\0")
+    .update(
+      JSON.stringify([
+        input.accountId,
+        input.instrumentId,
+        input.tradeDate,
+        input.quantity,
+        input.remainingQuantity,
+        input.unitCost ?? "",
+        input.totalCost,
+        input.currency,
+        input.fee ?? "",
+        input.ilsFxRate ?? "",
+      ]),
+    )
+    .digest();
+}
+
+/** Adds one opening lot against existing account/instrument identities. */
+export async function promoteSingleOpeningLot(
+  input: SingleOpeningLotInput,
+): Promise<OpeningLotRefreshResult> {
+  const key = manualKey(input);
+  const stored = await withUser(input.userId, async (tx) => {
+    const [account] = await tx
+      .select({ id: accounts.id })
+      .from(accounts)
+      .where(and(eq(accounts.id, input.accountId), eq(accounts.accountType, "investment")))
+      .limit(1);
+    const [instrument] = await tx
+      .select({ id: instruments.id })
+      .from(instruments)
+      .where(eq(instruments.id, input.instrumentId))
+      .limit(1);
+    if (!account) throw new OpeningLotImportError("account_not_found");
+    if (!instrument) throw new OpeningLotImportError("identity_conflict");
+    let quantity: Decimal;
+    let remaining: Decimal;
+    let totalCost: Decimal;
+    try {
+      quantity = new Decimal(input.quantity);
+      remaining = new Decimal(input.remainingQuantity);
+      totalCost = new Decimal(input.totalCost);
+    } catch {
+      throw new OpeningLotImportError("identity_conflict");
+    }
+    if (
+      !quantity.isFinite() ||
+      !quantity.isPositive() ||
+      !remaining.isFinite() ||
+      !remaining.isPositive() ||
+      remaining.gt(quantity) ||
+      !totalCost.isFinite() ||
+      !totalCost.isPositive()
+    )
+      throw new OpeningLotImportError("identity_conflict");
+    const [duplicate] = await tx
+      .select({ id: investmentOpeningLotEvidence.id })
+      .from(investmentOpeningLotEvidence)
+      .where(eq(investmentOpeningLotEvidence.idempotencyKey, key))
+      .limit(1);
+    if (duplicate)
+      return {
+        result: { inserted: 0, skipped: 1, unresolvedFx: 0 },
+        lot: { id: duplicate.id, accountId: input.accountId, instrumentId: input.instrumentId },
+      };
+    const fx = await resolveFx(tx, {
+      account: "",
+      tradeDate: input.tradeDate,
+      quantity: input.quantity,
+      remainingQuantity: input.remainingQuantity,
+      unitCost: input.unitCost,
+      totalCost: input.totalCost,
+      currency: input.currency,
+      fee: input.fee,
+      ilsFxRate: input.ilsFxRate,
+      symbol: "DIRECT",
+      exchange: "DIRECT",
+    });
+    const id = randomUUID();
+    await tx.insert(investmentOpeningLotEvidence).values({
+      id,
+      ownerId: input.userId,
+      accountId: input.accountId,
+      instrumentId: input.instrumentId,
+      idempotencyKey: key,
+      tradeDate: input.tradeDate,
+      originalQuantityCt: encText(
+        input.dataKey,
+        quantity.toString(),
+        id,
+        "original_quantity_ct",
+        1,
+      ),
+      remainingQuantityCt: encText(
+        input.dataKey,
+        remaining.toString(),
+        id,
+        "remaining_quantity_ct",
+        1,
+      ),
+      quantityUnit: "shares",
+      unitCostCt: input.unitCost
+        ? encText(input.dataKey, new Decimal(input.unitCost).toString(), id, "unit_cost_ct", 1)
+        : null,
+      totalCostCt: encText(input.dataKey, totalCost.toString(), id, "total_cost_ct", 1),
+      feesCt: input.fee
+        ? encText(input.dataKey, new Decimal(input.fee).toString(), id, "fees_ct", 1)
+        : null,
+      currency: input.currency,
+      lockedFxRateCt: fx.rate ? encText(input.dataKey, fx.rate, id, "locked_fx_rate_ct", 1) : null,
+      lockedFxConvention: fx.convention,
+      lockedFxObservationDate: fx.observationDate,
+      lockedFxProvenance: fx.provenance,
+      provenance: "user_entered",
+    });
+    return {
+      result: {
+        inserted: 1,
+        skipped: 0,
+        unresolvedFx: fx.provenance === "unresolved" ? 1 : 0,
+      },
+      lot: { id, accountId: input.accountId, instrumentId: input.instrumentId },
+    };
+  });
+  return {
+    ...stored.result,
+    ...(await refreshScopes(input, [stored.lot])),
+  };
+}
+
+export function readOpeningLotFormOptions(session: Session): Promise<OpeningLotFormOption[]> {
+  return withUser(session.userId, async (tx) => {
+    const accountRows = await tx
+      .select()
+      .from(accounts)
+      .where(eq(accounts.accountType, "investment"));
+    const instrumentRows = await tx.select().from(instruments);
+    const mappings = await tx.select().from(instrumentSourceMappings);
+    const lotRows = await tx.select().from(investmentTaxLots);
+    const details = await tx.select().from(investmentSnapshotDetails);
+    const positions = await tx.select().from(investmentSnapshotPositions);
+    const activities = await tx.select().from(investmentActivityEvidence);
+    const detailById = new Map(details.map((row) => [row.id, row]));
+    const scopeCurrencies = new Map<string, string>();
+    for (const lot of lotRows)
+      scopeCurrencies.set(`${lot.accountId}:${lot.instrumentId}`, lot.costBasisCurrency);
+    for (const position of positions) {
+      const detail = detailById.get(position.snapshotId);
+      if (detail)
+        scopeCurrencies.set(`${detail.accountId}:${position.instrumentId}`, position.currency);
+    }
+    for (const activity of activities) {
+      if (activity.instrumentId && activity.currency)
+        scopeCurrencies.set(`${activity.accountId}:${activity.instrumentId}`, activity.currency);
+    }
+    return accountRows.map((account) => {
+      const instrumentIds = [
+        ...new Set(
+          [...scopeCurrencies.keys()]
+            .filter((key) => key.startsWith(`${account.id}:`))
+            .map((key) => key.slice(account.id.length + 1)),
+        ),
+      ];
+      return {
+        accountId: account.id,
+        accountName:
+          decText(session.dataKey, account.nameCt, account.id, "name_ct", account.version) ||
+          "Investment account",
+        currency: account.currency,
+        instruments: instrumentIds.flatMap((id) => {
+          const instrument = instrumentRows.find((row) => row.id === id);
+          if (!instrument) return [];
+          const mapping = mappings.find((row) => row.instrumentId === id);
+          const label =
+            decText(
+              session.dataKey,
+              instrument.canonicalSymbolCt,
+              instrument.id,
+              "canonical_symbol_ct",
+              instrument.version,
+            ) ??
+            (mapping?.providerSymbolCt
+              ? decText(
+                  session.dataKey,
+                  mapping.providerSymbolCt,
+                  mapping.id,
+                  "provider_symbol_ct",
+                  mapping.version,
+                )
+              : null) ??
+            decText(
+              session.dataKey,
+              instrument.canonicalNameCt,
+              instrument.id,
+              "canonical_name_ct",
+              instrument.version,
+            ) ??
+            "Unnamed investment";
+          return [
+            {
+              id,
+              label,
+              currency: scopeCurrencies.get(`${account.id}:${id}`) ?? account.currency,
+            },
+          ];
+        }),
+      };
+    });
   });
 }

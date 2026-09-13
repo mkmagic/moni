@@ -6,6 +6,7 @@ import { withUser } from "@/db/client";
 import * as schema from "@/db/schema";
 import { encText } from "@/domain/fields";
 import { BROKER_ELSE_USER_POLICY_VERSION } from "@/domain/investment-lots";
+import { promoteSingleOpeningLot } from "@/domain/investment-opening-lots";
 import { reconcileInvestmentActivity } from "@/domain/investment-valuation";
 import { decryptField, getDevUserDataKey } from "@/lib/crypto";
 import { cleanupOwners, elevatedDb, elevatedPool } from "./helpers";
@@ -236,5 +237,37 @@ describe("investment activity reconciliation", () => {
     }));
     expect(replay.quality).toEqual(stored.allQuality);
     expect(replay.queue).toEqual(stored.queue);
+  });
+
+  it("adds one opening lot and synchronously resolves the quantity gap on read-back", async () => {
+    await reconcile();
+    const dataKey = getDevUserDataKey(userId);
+    try {
+      await expect(
+        promoteSingleOpeningLot({
+          userId,
+          dataKey,
+          accountId,
+          instrumentId: gapInstrumentId,
+          tradeDate: "2019-01-01",
+          quantity: "40",
+          remainingQuantity: "40",
+          totalCost: "400",
+          currency: "USD",
+          ilsFxRate: "3.5",
+        }),
+      ).resolves.toMatchObject({ inserted: 1, reconciliation: [{ accountId }] });
+    } finally {
+      dataKey.fill(0);
+    }
+    const rows = await withUser(userId, (tx) =>
+      tx
+        .select()
+        .from(schema.investmentDisposalResolutionQueue)
+        .where(eq(schema.investmentDisposalResolutionQueue.kind, "reconciliation_gap")),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe("resolved");
+    expect(rows[0].resolvedAt).not.toBeNull();
   });
 });

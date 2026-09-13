@@ -1,13 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
+import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { POST as importOpeningLots } from "@/app/api/investments/activity/opening-lots/import/route";
+import { POST as previewOpeningLots } from "@/app/api/investments/activity/opening-lots/preview/route";
 import { withUser } from "@/db/client";
 import * as schema from "@/db/schema";
+import { SESSION_COOKIE } from "@/domain/auth";
 import { encText } from "@/domain/fields";
 import { upsertBoiFxRate } from "@/domain/fx-rates";
 import { previewOpeningLotImport, promoteOpeningLotImport } from "@/domain/investment-opening-lots";
 import { decryptField, getDevUserDataKey } from "@/lib/crypto";
+import { createSession, destroySession } from "@/lib/auth/session-store";
 import { parseOpeningLotsCsv } from "@/lib/investments";
 import { cleanupFxRates, cleanupOwners, elevatedDb, elevatedPool } from "./helpers";
 
@@ -18,6 +23,7 @@ describe("opening-lot import", () => {
   let userId: string;
   let accountId: string;
   let fxRateId: string;
+  let sessionId: string;
   const accountRef = "OPENING-ACCOUNT-135";
 
   beforeAll(async () => {
@@ -52,6 +58,7 @@ describe("opening-lot import", () => {
     } finally {
       dataKey.fill(0);
     }
+    sessionId = createSession(userId, Buffer.from(getDevUserDataKey(userId)), "ILS");
     await upsertBoiFxRate({
       fromCurrency: "XAA",
       date: "2026-09-11",
@@ -66,6 +73,7 @@ describe("opening-lot import", () => {
   });
 
   afterAll(async () => {
+    destroySession(sessionId);
     await cleanupOwners([userId]);
     await cleanupFxRates([fxRateId]);
     await elevatedPool.end();
@@ -129,6 +137,48 @@ describe("opening-lot import", () => {
         }).toString("utf8"),
       ).toBe("3.45");
     });
+  });
+
+  it("wires uploaded CSV bytes through parse, preview, and promotion", async () => {
+    function upload(source: string): NextRequest {
+      const form = new FormData();
+      form.set("file", new File([source], "opening-lots.csv", { type: "text/csv" }));
+      return new NextRequest("http://localhost/api/investments/activity/opening-lots/preview", {
+        method: "POST",
+        headers: { cookie: `${SESSION_COOKIE}=${sessionId}` },
+        body: form,
+      });
+    }
+
+    const invalid = await previewOpeningLots(
+      upload(`${header}\n${accountRef},,MISSING-EXCHANGE,,2021-01-02,1,,,25,USD,,,ROUTE-BAD\n`),
+    );
+    expect(invalid.status).toBe(400);
+    await expect(invalid.json()).resolves.toMatchObject({ row: 2 });
+
+    const preview = await previewOpeningLots(
+      upload(`${header}\n${accountRef},,ROUTE,XTAE,2021-01-02,2,2,25,50,USD,,3.5,ROUTE-OK\n`),
+    );
+    expect(preview.status).toBe(200);
+    const payload = (await preview.json()) as {
+      preview: { ready: number };
+      rows: unknown[];
+    };
+    expect(payload.preview.ready).toBe(1);
+    expect(payload.rows).toHaveLength(1);
+
+    const promoted = await importOpeningLots(
+      new NextRequest("http://localhost/api/investments/activity/opening-lots/import", {
+        method: "POST",
+        headers: {
+          cookie: `${SESSION_COOKIE}=${sessionId}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ rows: payload.rows }),
+      }),
+    );
+    expect(promoted.status).toBe(200);
+    await expect(promoted.json()).resolves.toMatchObject({ inserted: 1, skipped: 0 });
   });
 
   it("reports the same file as skipped and creates no duplicate lots", async () => {
