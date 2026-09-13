@@ -3,6 +3,9 @@ import { and, asc, eq, gte, inArray, lte } from "drizzle-orm";
 
 import { withUser, type UserTransaction } from "@/db/client";
 import {
+  accounts,
+  instruments,
+  instrumentSourceMappings,
   investmentActivityCoverage,
   investmentActivityEvidence,
   investmentCorporateActionEvidence,
@@ -552,7 +555,21 @@ async function externalFlows(
   return { ils, provenance, fxDates, incomplete };
 }
 
-async function performance(tx: Tx, input: RequiredInput): Promise<InvestmentPerformance> {
+interface PerformanceComputation {
+  /** The account's dated ILS value-series (one point per in-range snapshot). */
+  valuations: Array<{ date: string; value: string }>;
+  /** The account's external ILS cashflow-series (deposits/withdrawals/transfers). */
+  flowsIls: Array<{ date: string; amount: string }>;
+  performance: InvestmentPerformance;
+}
+
+/**
+ * Builds one account's raw value-series and cashflow-series, then computes its
+ * TWR/MWR and quality. The portfolio-aggregate read reuses the two series
+ * (never the per-account rates) so that portfolio TWR/IRR is computed ONCE over
+ * the COMBINED series across accounts, per the aggregation contract.
+ */
+async function computePerformance(tx: Tx, input: RequiredInput): Promise<PerformanceComputation> {
   const snapshots = await tx
     .select()
     .from(investmentSnapshotDetails)
@@ -580,17 +597,7 @@ async function performance(tx: Tx, input: RequiredInput): Promise<InvestmentPerf
   const flows = await externalFlows(tx, input);
   flows.provenance.forEach((value) => provenance.add(value));
   const twrRate = calculateTimeWeightedReturn(valuations, flows.ils);
-  const datedFlows = valuations.length
-    ? [
-        { date: valuations[0].date, amount: new Decimal(valuations[0].value).neg().toFixed() },
-        ...flows.ils.map((flow) => ({
-          date: flow.date,
-          amount: new Decimal(flow.amount).neg().toFixed(),
-        })),
-        { date: valuations.at(-1)!.date, amount: valuations.at(-1)!.value },
-      ]
-    : [];
-  const mwrRate = calculateMoneyWeightedReturn(datedFlows);
+  const mwrRate = calculateMoneyWeightedReturn(datedFlowSeries(valuations, flows.ils));
   const valuationAsOf = selected.at(-1)?.sourceAsOf.toISOString() ?? null;
   const twrQuality = await metricQuality(
     tx,
@@ -611,9 +618,37 @@ async function performance(tx: Tx, input: RequiredInput): Promise<InvestmentPerf
     flows.incomplete || valuationIncomplete || mwrRate === null,
   );
   return {
-    twr: { rate: twrRate, basis: "time_weighted_return_ils", quality: twrQuality },
-    mwr: { rate: mwrRate, basis: "money_weighted_return_ils_irr", quality: mwrQuality },
+    valuations,
+    flowsIls: flows.ils,
+    performance: {
+      twr: { rate: twrRate, basis: "time_weighted_return_ils", quality: twrQuality },
+      mwr: { rate: mwrRate, basis: "money_weighted_return_ils_irr", quality: mwrQuality },
+    },
   };
+}
+
+/**
+ * Money-weighted return input: the value-series bookends (opening value out, the
+ * closing value back in) with every external flow negated in between, matching
+ * the sign convention `calculateMoneyWeightedReturn` expects.
+ */
+function datedFlowSeries(
+  valuations: Array<{ date: string; value: string }>,
+  flowsIls: Array<{ date: string; amount: string }>,
+): Array<{ date: string; amount: string }> {
+  if (!valuations.length) return [];
+  return [
+    { date: valuations[0].date, amount: new Decimal(valuations[0].value).neg().toFixed() },
+    ...flowsIls.map((flow) => ({
+      date: flow.date,
+      amount: new Decimal(flow.amount).neg().toFixed(),
+    })),
+    { date: valuations.at(-1)!.date, amount: valuations.at(-1)!.value },
+  ];
+}
+
+async function performance(tx: Tx, input: RequiredInput): Promise<InvestmentPerformance> {
+  return (await computePerformance(tx, input)).performance;
 }
 
 async function dividendIncome(tx: Tx, input: RequiredInput): Promise<InvestmentDividendIncome> {
@@ -722,4 +757,336 @@ export function readInvestmentReturns(
     performance: await performance(tx, held),
     dividendIncome: await dividendIncome(tx, held),
   }));
+}
+
+// --------------------------------------------------------------------------
+// Portfolio aggregate — the same reads summed/combined across every one of a
+// user's investment accounts. The correctness-critical rule: TWR and IRR are
+// computed ONCE over the COMBINED value-series and cashflow-series, never by
+// averaging or blending the per-account rates.
+// --------------------------------------------------------------------------
+
+export type PortfolioReturnsInput = Omit<InvestmentReturnsInput, "accountId" | "instrumentId">;
+
+interface PortfolioRequiredInput extends PortfolioReturnsInput {
+  policyVersion: string;
+  now: Date;
+}
+
+function requiredPortfolio(input: PortfolioReturnsInput): PortfolioRequiredInput {
+  return {
+    ...input,
+    policyVersion: input.policyVersion ?? BROKER_ELSE_USER_POLICY_VERSION,
+    now: input.now ?? new Date(),
+  };
+}
+
+async function investmentAccountIds(tx: Tx): Promise<string[]> {
+  // RLS scopes this to the current user; no owner filter needed here.
+  const rows = await tx
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(eq(accounts.accountType, "investment"));
+  return rows.map((row) => row.id).sort();
+}
+
+function sumIls(figures: InvestmentMoneyFigure[]): string {
+  return figures.reduce((total, figure) => total.plus(figure.amount), new Decimal(0)).toFixed();
+}
+
+function mergeNative(
+  lists: InvestmentMoneyFigure[][],
+  basis: "native_price_gain" | "booked_cash_income",
+): InvestmentMoneyFigure[] {
+  const totals = new Map<string, Decimal>();
+  for (const figure of lists.flat()) {
+    totals.set(
+      figure.currency,
+      (totals.get(figure.currency) ?? new Decimal(0)).plus(figure.amount),
+    );
+  }
+  return nativeFigures(totals, basis);
+}
+
+function latest(values: Array<string | null>): string | null {
+  return (
+    values
+      .filter((value): value is string => value !== null)
+      .sort()
+      .at(-1) ?? null
+  );
+}
+
+function mergeQuality(
+  qualities: InvestmentMetricQuality[],
+  forcedPartial = false,
+): InvestmentMetricQuality {
+  const base = mergeCompleteness(qualities.map((quality) => quality.completeness));
+  return {
+    completeness: forcedPartial && base !== "unknown" ? "partial" : base,
+    provenance: [...new Set(qualities.flatMap((quality) => quality.provenance))].sort(),
+    valuationAsOf: latest(qualities.map((quality) => quality.valuationAsOf)),
+    fxAsOf: latest(qualities.map((quality) => quality.fxAsOf)),
+  };
+}
+
+/**
+ * Portfolio value-series: the union of every account's snapshot dates, and at
+ * each date the sum across accounts of that account's most recent valuation on
+ * or before the date (carried forward). Feeding this single combined series to
+ * `calculateTimeWeightedReturn` is what makes the portfolio TWR a real
+ * combined-series figure rather than an average of per-account TWRs.
+ */
+function combineValuations(
+  perAccount: Array<Array<{ date: string; value: string }>>,
+): Array<{ date: string; value: string }> {
+  const dates = [
+    ...new Set(perAccount.flatMap((series) => series.map((point) => point.date))),
+  ].sort();
+  return dates.map((date) => {
+    let value = new Decimal(0);
+    for (const series of perAccount) {
+      const carried = series
+        .filter((point) => point.date <= date)
+        .sort((left, right) => left.date.localeCompare(right.date))
+        .at(-1);
+      if (carried) value = value.plus(carried.value);
+    }
+    return { date, value: value.toFixed() };
+  });
+}
+
+async function portfolioReturns(
+  tx: Tx,
+  held: PortfolioRequiredInput,
+): Promise<InvestmentReturnsRead> {
+  const accountIds = await investmentAccountIds(tx);
+  const realized: InvestmentRealizedGain[] = [];
+  const unrealized: InvestmentUnrealizedGain[] = [];
+  const dividends: InvestmentDividendIncome[] = [];
+  const performances: PerformanceComputation[] = [];
+  for (const accountId of accountIds) {
+    const accountInput: RequiredInput = { ...held, accountId, instrumentId: undefined };
+    realized.push(await realizedGain(tx, accountInput));
+    unrealized.push(await unrealizedGain(tx, accountInput));
+    dividends.push(await dividendIncome(tx, accountInput));
+    performances.push(await computePerformance(tx, accountInput));
+  }
+
+  const combinedValuations = combineValuations(performances.map((entry) => entry.valuations));
+  const combinedFlows = performances.flatMap((entry) => entry.flowsIls);
+  const twrRate = calculateTimeWeightedReturn(combinedValuations, combinedFlows);
+  const mwrRate = calculateMoneyWeightedReturn(datedFlowSeries(combinedValuations, combinedFlows));
+
+  return {
+    realizedGain: {
+      ils: {
+        amount: sumIls(realized.map((r) => r.ils)),
+        currency: "ILS",
+        basis: "ils_gain_includes_fx",
+      },
+      native: mergeNative(
+        realized.map((r) => r.native),
+        "native_price_gain",
+      ),
+      closureCount: realized.reduce((total, r) => total + r.closureCount, 0),
+      quality: mergeQuality(realized.map((r) => r.quality)),
+    },
+    unrealizedGain: {
+      ils: {
+        amount: sumIls(unrealized.map((u) => u.ils)),
+        currency: "ILS",
+        basis: "ils_gain_includes_fx",
+      },
+      native: mergeNative(
+        unrealized.map((u) => u.native),
+        "native_price_gain",
+      ),
+      quality: mergeQuality(unrealized.map((u) => u.quality)),
+    },
+    performance: {
+      twr: {
+        rate: twrRate,
+        basis: "time_weighted_return_ils",
+        quality: mergeQuality(
+          performances.map((p) => p.performance.twr.quality),
+          twrRate === null,
+        ),
+      },
+      mwr: {
+        rate: mwrRate,
+        basis: "money_weighted_return_ils_irr",
+        quality: mergeQuality(
+          performances.map((p) => p.performance.mwr.quality),
+          mwrRate === null,
+        ),
+      },
+    },
+    dividendIncome: {
+      ils: {
+        amount: sumIls(dividends.map((d) => d.ils)),
+        currency: "ILS",
+        basis: "booked_cash_income",
+      },
+      native: mergeNative(
+        dividends.map((d) => d.native),
+        "booked_cash_income",
+      ),
+      bookedCashCount: dividends.reduce((total, d) => total + d.bookedCashCount, 0),
+      quality: mergeQuality(dividends.map((d) => d.quality)),
+    },
+  };
+}
+
+/** Portfolio-aggregate returns across all of a user's investment accounts. */
+export function readPortfolioInvestmentReturns(
+  input: PortfolioReturnsInput,
+): Promise<InvestmentReturnsRead> {
+  const held = requiredPortfolio(input);
+  return withUser(input.userId, (tx) => portfolioReturns(tx, held));
+}
+
+// --------------------------------------------------------------------------
+// Per-instrument breakdown — one row per instrument in scope (portfolio or a
+// single account), each carrying gains + dividends + completeness. NOTE: the
+// value-series that TWR/IRR need is account-level, not per-instrument, so this
+// deliberately omits TWR/IRR rather than fabricating a per-holding rate.
+// --------------------------------------------------------------------------
+
+export interface InvestmentInstrumentReturns {
+  accountId: string;
+  instrumentId: string;
+  label: string;
+  symbol: string | null;
+  name: string | null;
+  realizedGain: InvestmentRealizedGain;
+  unrealizedGain: InvestmentUnrealizedGain;
+  dividendIncome: InvestmentDividendIncome;
+}
+
+export type InstrumentReturnsInput = PortfolioReturnsInput & { accountId?: string };
+
+async function instrumentLabels(
+  tx: Tx,
+  dataKey: Uint8Array,
+  instrumentIds: string[],
+): Promise<Map<string, { label: string; symbol: string | null; name: string | null }>> {
+  const result = new Map<string, { label: string; symbol: string | null; name: string | null }>();
+  if (!instrumentIds.length) return result;
+  const rows = await tx.select().from(instruments).where(inArray(instruments.id, instrumentIds));
+  const mappings = await tx
+    .select()
+    .from(instrumentSourceMappings)
+    .where(inArray(instrumentSourceMappings.instrumentId, instrumentIds));
+  for (const row of rows) {
+    let symbol = row.canonicalSymbolCt
+      ? decText(dataKey, row.canonicalSymbolCt, row.id, "canonical_symbol_ct", row.version)
+      : null;
+    let name = row.canonicalNameCt
+      ? decText(dataKey, row.canonicalNameCt, row.id, "canonical_name_ct", row.version)
+      : null;
+    let providerIdentifier: string | null = null;
+    if (!symbol || !name) {
+      const mapping = mappings.find((entry) => entry.instrumentId === row.id);
+      if (mapping) {
+        symbol =
+          symbol ??
+          (mapping.providerSymbolCt
+            ? decText(
+                dataKey,
+                mapping.providerSymbolCt,
+                mapping.id,
+                "provider_symbol_ct",
+                mapping.version,
+              )
+            : null);
+        name =
+          name ??
+          (mapping.providerNameCt
+            ? decText(
+                dataKey,
+                mapping.providerNameCt,
+                mapping.id,
+                "provider_name_ct",
+                mapping.version,
+              )
+            : null);
+        // Last resort so a row is never a bare "Instrument": the provider's own
+        // identifier (e.g. an IBKR conid) is at least recognizable.
+        providerIdentifier = decText(
+          dataKey,
+          mapping.providerIdentifierCt,
+          mapping.id,
+          "provider_identifier_ct",
+          mapping.version,
+        );
+      }
+    }
+    result.set(row.id, {
+      label: symbol ?? name ?? providerIdentifier ?? "Instrument",
+      symbol,
+      name,
+    });
+  }
+  return result;
+}
+
+async function instrumentReturns(
+  tx: Tx,
+  held: PortfolioRequiredInput,
+  scopeAccountId?: string,
+): Promise<InvestmentInstrumentReturns[]> {
+  const accountIds = scopeAccountId ? [scopeAccountId] : await investmentAccountIds(tx);
+  // Enumerate the instruments that carry a lot or an activity row in scope: a
+  // fully-sold holding has no current position but still has realized gains, so
+  // enumerating from lots + activity is more complete than reading positions.
+  const pairs: Array<{ accountId: string; instrumentId: string }> = [];
+  const seen = new Set<string>();
+  for (const accountId of accountIds) {
+    const lots = await tx
+      .select({ instrumentId: investmentTaxLots.instrumentId })
+      .from(investmentTaxLots)
+      .where(
+        and(
+          eq(investmentTaxLots.accountId, accountId),
+          eq(investmentTaxLots.policyVersion, held.policyVersion),
+        ),
+      );
+    const activity = await tx
+      .select({ instrumentId: investmentActivityEvidence.instrumentId })
+      .from(investmentActivityEvidence)
+      .where(eq(investmentActivityEvidence.accountId, accountId));
+    for (const row of [...lots, ...activity]) {
+      if (!row.instrumentId) continue;
+      const key = `${accountId}:${row.instrumentId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      pairs.push({ accountId, instrumentId: row.instrumentId });
+    }
+  }
+  const labels = await instrumentLabels(tx, held.dataKey, [
+    ...new Set(pairs.map((pair) => pair.instrumentId)),
+  ]);
+  const rows: InvestmentInstrumentReturns[] = [];
+  for (const { accountId, instrumentId } of pairs) {
+    const scoped: RequiredInput = { ...held, accountId, instrumentId };
+    const label = labels.get(instrumentId) ?? { label: "Instrument", symbol: null, name: null };
+    rows.push({
+      accountId,
+      instrumentId,
+      ...label,
+      realizedGain: await realizedGain(tx, scoped),
+      unrealizedGain: await unrealizedGain(tx, scoped),
+      dividendIncome: await dividendIncome(tx, scoped),
+    });
+  }
+  return rows.sort((left, right) => left.label.localeCompare(right.label));
+}
+
+/** Per-instrument gains + dividends across the portfolio or one account. */
+export function readInvestmentInstrumentReturns(
+  input: InstrumentReturnsInput,
+): Promise<InvestmentInstrumentReturns[]> {
+  const held = requiredPortfolio(input);
+  return withUser(input.userId, (tx) => instrumentReturns(tx, held, input.accountId));
 }

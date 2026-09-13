@@ -89,6 +89,13 @@ export const TOUR_STEPS: TourStep[] = [
     body: "Your portfolio — holdings, allocation, and how its value moves over time.",
   },
   {
+    id: "investment-performance",
+    route: "/investments/performance",
+    anchor: '[data-tour="investments-performance"]',
+    title: "Performance",
+    body: "See gains, cash income, and two different return measures without mixing their meanings. Each figure shows its basis and whether the underlying history is complete.",
+  },
+  {
     id: "long-term-savings",
     route: "/long-term-savings",
     anchor: '[data-tour="nav-/long-term-savings"]',

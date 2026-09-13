@@ -356,12 +356,9 @@ export function InvestmentsScreen({
     );
   return (
     <div className="flex flex-col gap-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Investments</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          What you own now and how its value evolved.
-        </p>
-      </header>
+      {/* The page title + sub-navigation live in the shared layout now; this
+          screen keeps only its own subtitle and content. */}
+      <p className="text-sm text-muted-foreground">What you own now and how its value evolved.</p>
       {error && <Notice tone="error">{error}</Notice>}
       {notice && <Notice>{notice}</Notice>}
       <Card className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_360px]">
