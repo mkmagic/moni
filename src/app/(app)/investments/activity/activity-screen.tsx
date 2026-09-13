@@ -40,10 +40,12 @@ export function ActivityScreen({
   view,
   notice,
   highlightedResolutionId,
+  highlightedAccountIds,
 }: {
   view: InvestmentActivityView;
   notice: string | null;
   highlightedResolutionId: string | null;
+  highlightedAccountIds: string[];
 }) {
   const [filter, setFilter] = useState<InvestmentResolutionKind | null>(null);
   const visible = filter ? view.pending.filter((item) => item.kind === filter) : view.pending;
@@ -64,7 +66,24 @@ export function ActivityScreen({
       {notice && (
         <div className="flex items-start gap-2 rounded-[var(--radius)] border border-positive/30 px-4 py-3 text-sm text-positive">
           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-          {notice}
+          <div>
+            <p>{notice}</p>
+            {highlightedAccountIds.length > 0 && (
+              <p className="mt-1 flex flex-wrap gap-x-3 text-xs">
+                {view.openingLots
+                  .filter((account) => highlightedAccountIds.includes(account.accountId))
+                  .map((account) => (
+                    <a
+                      key={account.accountId}
+                      href={`#opening-lots-${account.accountId}`}
+                      className="underline underline-offset-2"
+                    >
+                      View {account.accountName}
+                    </a>
+                  ))}
+              </p>
+            )}
+          </div>
         </div>
       )}
 
@@ -175,7 +194,14 @@ export function ActivityScreen({
             </thead>
             <tbody>
               {view.openingLots.map((account) => (
-                <tr key={account.accountId}>
+                <tr
+                  key={account.accountId}
+                  id={`opening-lots-${account.accountId}`}
+                  className={cn(
+                    highlightedAccountIds.includes(account.accountId) &&
+                      "outline outline-1 outline-positive/40",
+                  )}
+                >
                   <td className="border-b border-border/60 py-3 font-medium">
                     {account.accountName}
                   </td>

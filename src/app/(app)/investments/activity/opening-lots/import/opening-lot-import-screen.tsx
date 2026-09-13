@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type {
   OpeningLotImportPreview,
-  OpeningLotImportResult,
+  OpeningLotRefreshResult,
 } from "@/domain/investment-opening-lots";
 import type { OpeningLotImportRow } from "@/lib/investments/opening-lots-csv";
 
@@ -81,11 +81,14 @@ export function OpeningLotImportScreen({ prompt, columns }: { prompt: string; co
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ rows: validated.rows }),
       });
-      const payload = (await response.json().catch(() => ({}))) as OpeningLotImportResult & {
+      const payload = (await response.json().catch(() => ({}))) as OpeningLotRefreshResult & {
         error?: string;
       };
       if (!response.ok) throw new Error(payload.error ?? "The opening lots could not be imported.");
-      window.location.assign(`/investments/activity?imported=${payload.inserted}#opening-lots`);
+      const accountIds = [...new Set(payload.affectedLots.map((lot) => lot.accountId))].join(",");
+      window.location.assign(
+        `/investments/activity?imported=${payload.inserted}&accounts=${encodeURIComponent(accountIds)}#opening-lots`,
+      );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The opening lots could not be imported.");
       setBusy(false);

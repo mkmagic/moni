@@ -11,6 +11,8 @@ export default async function InvestmentActivityPage({
   const [view, query] = await Promise.all([readInvestmentActivity(session), searchParams]);
   const resolved = typeof query.resolved === "string" ? query.resolved : null;
   const imported = typeof query.imported === "string" ? query.imported : null;
+  const highlightedAccountIds =
+    typeof query.accounts === "string" ? query.accounts.split(",").filter(Boolean) : [];
   const added = query.added === "1";
   const notice = resolved
     ? "Sale allocation confirmed. The resolution is retained below for audit."
@@ -19,5 +21,12 @@ export default async function InvestmentActivityPage({
       : added
         ? "Opening lot added. Reconciliation was re-checked synchronously."
         : null;
-  return <ActivityScreen view={view} notice={notice} highlightedResolutionId={resolved} />;
+  return (
+    <ActivityScreen
+      view={view}
+      notice={notice}
+      highlightedResolutionId={resolved}
+      highlightedAccountIds={highlightedAccountIds}
+    />
+  );
 }
