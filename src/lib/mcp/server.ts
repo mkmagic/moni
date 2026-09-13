@@ -20,6 +20,8 @@
 //   * `portfolio` /    — the authoritative investment position
 //     `holdings`         (getPortfolioOverview) and its raw-lot drill-down
 //                        (listPortfolioHoldings, capped).
+//   * `investment_returns` — portfolio- or account-level gains, performance,
+//                            and dividend income (readInvestmentReturns).
 //   * `long_term_savings` — pension / gemel reports (listLongTermSavingsAccounts).
 //   * `categories` /   — the structural category tree (listCategoryTree) and the
 //     `rules`            categorization rules (listRules); no money.
@@ -44,6 +46,7 @@ import { listEntries } from "@/domain/transactions";
 import { listAccountsGrouped } from "@/domain/accounts";
 import { getBudgetMonth, getBudgetHistory, currentMonth } from "@/domain/budget";
 import { getPortfolioOverview, listPortfolioHoldings } from "@/domain/investments";
+import { readInvestmentReturns, readPortfolioInvestmentReturns } from "@/domain/investment-returns";
 import { listLongTermSavingsAccounts } from "@/domain/long-term-savings";
 import { listCategoryTree, listRules } from "@/domain/categorization";
 import { householdSummaries } from "@/domain/household";
@@ -99,8 +102,10 @@ const SERVER_INSTRUCTIONS = [
   "`accounts` (balances grouped by how soon the money is reachable, with base-currency",
   "subtotals); `budget` (a month's ceilings vs. spend — pass `month`, defaults to the current",
   "one) and `budget_history` (past months plus verdicts on ceilings set too high or low);",
-  "`portfolio` (the authoritative investment position — total, cash, allocation) and its raw",
-  "drill-down `holdings` (individual lots, capped — prefer `portfolio` for totals);",
+  "`portfolio` (the authoritative investment position — total, cash, allocation);",
+  "`investment_returns` (realized/unrealized gain, TWR/IRR, and dividend income — use this",
+  "for performance, with optional account/instrument drill-down); `holdings` (individual lots,",
+  "capped — prefer `portfolio` for position totals);",
   "`long_term_savings` (pension / קרן השתלמות / gemel reports); and the structural `categories`",
   "(the category tree) and `rules` (the categorization rules). Investment and savings figures",
   "carry their own valuation freshness — surface it, never restate a stale figure as current.",
@@ -602,6 +607,86 @@ export async function buildAgentMcpServer(
           rowCount: pageResult.rows.length,
         };
       }),
+  );
+
+  server.registerTool(
+    "investment_returns",
+    {
+      description:
+        "Investment performance: realized and unrealized gain, time-weighted and " +
+        "money-weighted returns, and dividend income, each with its basis, completeness, " +
+        "provenance, valuation date, and FX date. Defaults to the combined portfolio; pass " +
+        "account_id for one account and optionally instrument_id to scope gains and dividends. " +
+        "TWR and IRR remain account-level when instrument_id is supplied because Moni has no " +
+        "per-instrument value series. Exact-decimal domain output; do not recompute. Read-only.",
+      inputSchema: {
+        account_id: z.string().uuid().optional(),
+        instrument_id: z.string().uuid().optional(),
+        start_date: ISO_DATE,
+        end_date: ISO_DATE,
+      },
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    ({ account_id, instrument_id, start_date, end_date }) =>
+      guardedTool(
+        ctx,
+        "investment_returns",
+        { account_id, instrument_id, start_date, end_date },
+        async () => {
+          if (instrument_id && !account_id) {
+            throw new Error("instrument_id requires account_id");
+          }
+          const common = {
+            userId: ctx.userId,
+            dataKey: ctx.dataKey,
+            startDate: start_date,
+            endDate: end_date,
+          };
+          const result = account_id
+            ? await readInvestmentReturns({
+                ...common,
+                accountId: account_id,
+                instrumentId: instrument_id,
+              })
+            : await readPortfolioInvestmentReturns(common);
+          return {
+            payload: result,
+            provenance: {
+              identity,
+              freshness: {
+                realizedGain: {
+                  valuationAsOf: result.realizedGain.quality.valuationAsOf,
+                  fxAsOf: result.realizedGain.quality.fxAsOf,
+                },
+                unrealizedGain: {
+                  valuationAsOf: result.unrealizedGain.quality.valuationAsOf,
+                  fxAsOf: result.unrealizedGain.quality.fxAsOf,
+                },
+                twr: {
+                  valuationAsOf: result.performance.twr.quality.valuationAsOf,
+                  fxAsOf: result.performance.twr.quality.fxAsOf,
+                },
+                mwr: {
+                  valuationAsOf: result.performance.mwr.quality.valuationAsOf,
+                  fxAsOf: result.performance.mwr.quality.fxAsOf,
+                },
+                dividendIncome: {
+                  valuationAsOf: result.dividendIncome.quality.valuationAsOf,
+                  fxAsOf: result.dividendIncome.quality.fxAsOf,
+                },
+              },
+              completeness: {
+                realizedGain: result.realizedGain.quality.completeness,
+                unrealizedGain: result.unrealizedGain.quality.completeness,
+                twr: result.performance.twr.quality.completeness,
+                mwr: result.performance.mwr.quality.completeness,
+                dividendIncome: result.dividendIncome.quality.completeness,
+              },
+            },
+            rowCount: 1,
+          };
+        },
+      ),
   );
 
   server.registerTool(
