@@ -14,6 +14,14 @@ import { defineConfig, devices } from "@playwright/test";
 const PORT = Number(process.env.E2E_PORT ?? 3000);
 const BASE_URL = `http://localhost:${PORT}`;
 
+// Which browser to drive. Unset (local) uses Playwright's bundled Chromium.
+// CI sets E2E_BROWSER_CHANNEL=chrome to drive the runner's preinstalled Google
+// Chrome instead: Playwright's own browser download hangs on the GitHub
+// runner's network (the CDN fetch completes but the install then stalls to the
+// job timeout), and a named channel launches an already-installed browser with
+// nothing to download. Same Chromium engine either way.
+const BROWSER_CHANNEL = process.env.E2E_BROWSER_CHANNEL;
+
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: false,
@@ -28,6 +36,9 @@ export default defineConfig({
   use: {
     baseURL: BASE_URL,
     trace: "on-first-retry",
+    // Applies to every project, so the login-setup project drives the same
+    // browser as the specs. Omitted when unset (bundled Chromium).
+    ...(BROWSER_CHANNEL ? { channel: BROWSER_CHANNEL } : {}),
   },
   projects: [
     // Logs in once and saves the session for the authed spec to reuse.
