@@ -14,8 +14,8 @@ skill (Chrome/Puppeteer specifics) and `db-schema` (migrations).
 - **Domain:** `MONI_DOMAIN` in `/root/moni-secrets.env` — registrar get.tech, **DNS on Cloudflare
   (grey-cloud / DNS-only)**. Scripts validate it and fail closed; never infer it from an HTTP Host header.
 - **Topology:** **bare-host, no Docker.** Next via systemd `moni.service` (`next start -H 127.0.0.1`,
-  loopback only); Postgres 16 co-located (loopback); Caddy terminates TLS. Chrome-for-Testing
-  managed by hand.
+  loopback only); Postgres 16 co-located (loopback); Caddy terminates TLS. Chrome-for-Testing is
+  pinned in `deploy/chrome-for-testing.env` and reconciled by every release.
 - **App runs as user `moni`** (`/opt/moni/app`). Secrets: `/root/moni-secrets.env` (root, 600) holds
   role passwords + signup token + `MIGRATE_STEADY`; app runtime env is `/opt/moni/app/.env`
   (moni, 600). The `moni_owner` migrate credential is injected **only at migrate time**, never in
@@ -45,10 +45,14 @@ skill (Chrome/Puppeteer specifics) and `db-schema` (migrations).
 - **Chrome runtime libs** (Ubuntu 24.04 `t64` names) + `kernel.apparmor_restrict_unprivileged_userns=0`
   (keeps the sandbox — **never** `--no-sandbox` on a box holding real credentials). Full list and
   reasoning: `israeli-scraper` skill.
-- **Chrome install:** set `PUPPETEER_SKIP_DOWNLOAD=true` for `npm ci` (npm's auto-download is
-  unreliable and aborts the install), then fetch Chrome-for-Testing manually to match
-  `node -p "require('puppeteer').executablePath()"` and set `MONI_CHROME_PATH`. `release.sh` does
-  this automatically.
+- **Chrome install:** set `PUPPETEER_SKIP_DOWNLOAD=true` for `npm ci`. `release.sh` downloads the
+  exact Linux artifact and SHA-256 pinned in `deploy/chrome-for-testing.env`, verifies it before
+  extraction, rejects unsafe paths and non-file/directory entries, and installs it root-owned under
+  `/opt/moni/chrome/<version>` with no service-user write permission. The artifact records the same
+  version and digest; `verify-host.sh` checks those markers, ownership/modes, and the reported binary
+  version. Update Puppeteer, the Chrome pin, and the reviewed digest together.
+- **Caddy version:** `deploy/Caddyfile.production` uses `request_body`, which requires Caddy 2.10+
+  and rejects bodies above 11 MiB before Next buffers them (the app's file cap remains 10 MiB).
 
 ## Database bootstrap (first time on a host)
 
@@ -101,9 +105,12 @@ onto `/var/lib/postgresql/16/main`), the secret envs (`/root/*.env`, `rclone.con
 ## Releasing a version
 
 - **`/opt/moni/release.sh`** receives a SHA/digest-bound artifact over stdin from CI's forced-command
-  SSH key. It verifies both, takes an **age-encrypted** pre-deploy backup, reconciles Chrome, migrates
-  with `moni_owner`, switches `/opt/moni/app` to an immutable release directory, restarts, and checks
+  SSH key. It verifies both, reconciles the reviewed Caddy config/override and their effective
+  service properties, takes an **age-encrypted** pre-deploy backup, reconciles Chrome, migrates with
+  `moni_owner`, switches `/opt/moni/app` to an immutable release directory, restarts, and checks
   **`/api/health`**. A failed health check switches the app symlink back; migrations remain forward-only.
+  It atomically refreshes `/root/verify-host.sh`; that verifier reads the full
+  `.moni-release-sha` marker and fails on a missing, invalid, or mismatched revision.
 - **CI:** `.github/workflows/deploy.yml` fires only on a **published GitHub Release**, refuses a SHA
   without a successful `ci.yml` run, checks out that exact SHA, builds without production secrets,
   packages the runtime, and streams it to the forced command. The SSH host key is pinned in the
