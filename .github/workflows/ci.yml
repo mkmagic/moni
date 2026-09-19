@@ -110,7 +110,9 @@ jobs:
   # browser regression is legible on its own and never blocks the fast checks.
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Headroom for a cold-cache browser download plus its bounded retry; a warm
+    # cache finishes in a couple of minutes.
+    timeout-minutes: 25
     services:
       # Same throwaway Postgres as the `test` job. Here the app connects to the
       # real `moni` database (as `moni_app`), so this job migrates and seeds it
@@ -156,10 +158,33 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      # Downloads only Chromium (the one browser playwright.config.ts drives),
-      # plus its OS libraries. Independent of the workflow-level
+      # The Chromium download is the slowest, flakiest part of this job (a
+      # stalled CDN fetch once hung it to the 20-minute timeout). Cache the
+      # browser binaries, keyed on the pinned @playwright/test version so a
+      # version bump misses the cache and re-fetches; everything else reuses it.
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.pw.outputs.version }}
+      # The apt system libraries aren't in the browser cache, so install them
+      # every run (fast). Independent of the workflow-level
       # PUPPETEER_SKIP_DOWNLOAD, which governs the unrelated puppeteer Chromium.
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install-deps chromium
+      # Only on a cache miss, and wrapped in a bounded retry so a stalled fetch
+      # fails fast and retries instead of hanging the job until its timeout.
+      - if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: |
+          for attempt in 1 2 3; do
+            timeout 300 npx playwright install chromium && exit 0
+            echo "playwright install attempt $attempt failed or timed out; retrying in 10s" >&2
+            sleep 10
+          done
+          echo "playwright install failed after 3 attempts" >&2
+          exit 1
       - run: npm run db:migrate
       - run: npm run seed:demo
       - run: npm run build
