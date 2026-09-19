@@ -58,6 +58,10 @@ export default defineConfig({
   webServer: {
     command: "npm run start",
     url: BASE_URL,
+    // Next reads PORT (not E2E_PORT), so pass it through — otherwise a
+    // non-default E2E_PORT would move BASE_URL while the server stayed on 3000
+    // and Playwright would probe the wrong port until timeout.
+    env: { PORT: String(PORT) },
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
   },
