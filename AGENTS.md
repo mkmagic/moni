@@ -11,7 +11,7 @@ Moni is **TypeScript end-to-end**:
 - **UI:** Tailwind CSS + shadcn/ui + Recharts
 - **MCP:** `@modelcontextprotocol/sdk`
 - **Background Jobs:** none yet. Long-running work (bank scraping) is a fire-and-forget `spawn()` of a `tsx` child process from the API route (`scripts/scrape-worker.mts`); the parent marks the `sync_runs` row `running` and the UI polls it. A Postgres-backed queue (`pg-boss`) is the intended destination but **is not installed** — don't write code that assumes a scheduler exists.
-- **Testing & Tooling:** Vitest (tests live under `tests/unit/**` and `tests/db/**`; all tests currently require a live Postgres via `vitest.setup.ts`), Zod, `@node-rs/argon2` + `@noble/ciphers`/`@noble/hashes`. There is **no e2e/browser test layer** — Playwright is not installed.
+- **Testing & Tooling:** Vitest (tests live under `tests/unit/**` and `tests/db/**`; all tests currently require a live Postgres via `vitest.setup.ts`), Zod, `@node-rs/argon2` + `@noble/ciphers`/`@noble/hashes`. A thin **Playwright smoke layer** lives under `tests/e2e/**` (Chromium only): it proves the app boots, the signed-in pages render, and login works — nothing about the numbers on a page (that stays in `tests/db/**`). It is **not** part of the four gates because it needs the whole app running (see §5); run it with `npm run test:e2e` after `npm run build` + `npm run db:migrate` + `npm run seed:demo`.
 ## Non-Negotiable Invariants
 These override “simplicity” — never trade them away without asking.
 - **Money is exact-decimal.** Postgres `NUMERIC`, mapped by Drizzle to `string`. Arithmetic via a decimal library. Never a JS `number`/float for money — not even transiently.
@@ -76,6 +76,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - Read the gate's *exit code*, not just its last line. A tool that never ran is not a tool that passed.
 - `format:check` has **no** known-acceptable failures — any failure is real. (`tsconfig.json`, which `next dev` *and* `next build` both rewrite, is prettier-ignored now.)
 - The same four gates run in CI (`.github/workflows/ci.yml`), plus `npm run build`. `npm test` needs a live Postgres for *every* test, `tests/unit/**` included — `vitest.setup.ts` bootstraps `moni_test` unconditionally.
+- CI also runs a separate **`e2e`** job (the Playwright smoke layer, §Tech Stack): it migrates + seeds the real `moni` database, builds, starts the app, and drives Chromium. It is its own job — not one of the four gates — so it does not gate the fast checks.
 ### 6\. Keep the skills honest
 Skills are the project's memory. **If a skill turns out to be out-of-date or misleading more than once in a session, don't just work around it — tell the owner exactly what you'd change and cite the evidence from this session that proved it wrong.** A skill that quietly misleads costs every future session, and you are the only one positioned to notice.
 ### 7\. Every major feature joins the guided tour

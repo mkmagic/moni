@@ -103,3 +103,70 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+
+  # End-to-end smoke layer (issue #9). Unlike `test`, this needs the whole app
+  # running: it builds, migrates + seeds the real `moni` database, starts
+  # `next start`, and drives Chromium against it. It is a separate job so a
+  # browser regression is legible on its own and never blocks the fast checks.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      # Same throwaway Postgres as the `test` job. Here the app connects to the
+      # real `moni` database (as `moni_app`), so this job migrates and seeds it
+      # rather than bootstrapping an isolated `moni_test`.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: moni
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d moni"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Runtime connection the app and the seed's RLS-scoped writes use.
+      DATABASE_URL: postgresql://moni_app:moni_app_dev_password@localhost:5432/moni
+      # Elevated connection for migrations and the seed's TRUNCATE/fx_rates
+      # writes. It is the Postgres superuser rather than `moni_owner` on
+      # purpose: on a brand-new database the `moni_owner` role does not exist
+      # until drizzle/0001_rls_and_roles.sql creates it, so the very first
+      # migrate must connect as the superuser (see .env.example's bootstrap
+      # note). The roles it creates carry the dev passwords the app URL above
+      # expects.
+      DATABASE_URL_MIGRATE: postgresql://postgres:postgres@localhost:5432/moni
+      # Same literal as the `test` job — gates the seed's signup path against a
+      # throwaway database (see that job's note on why it is not a secret).
+      MONI_SIGNUP_TOKEN: ci-signup-token
+      # The app refuses passkey routes until these agree; the smoke suite never
+      # exercises a passkey, but the localhost defaults keep any settings page
+      # that renders enrollment UI from throwing at import time.
+      MONI_WEBAUTHN_RP_ID: localhost
+      MONI_WEBAUTHN_ORIGIN: http://localhost:3000
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # Downloads only Chromium (the one browser playwright.config.ts drives),
+      # plus its OS libraries. Independent of the workflow-level
+      # PUPPETEER_SKIP_DOWNLOAD, which governs the unrelated puppeteer Chromium.
+      - run: npx playwright install --with-deps chromium
+      - run: npm run db:migrate
+      - run: npm run seed:demo
+      - run: npm run build
+      - run: npm run test:e2e
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
