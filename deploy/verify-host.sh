@@ -4,7 +4,7 @@
 # deploy. Read-only: it asserts the security posture, changes nothing. Exits non-zero
 # if any check fails, so it can gate a reboot window (issue #93 M1, AC 3).
 #
-#   verify-host.sh [expected-ref]   optional git ref the app tree must be at
+#   verify-host.sh [expected-sha]   optional full release SHA to require
 #
 set -uo pipefail
 # Domain is not hardcoded (SEC-21/#95) — it comes from MONI_DOMAIN in
@@ -21,12 +21,16 @@ bad(){  printf '  \033[31mFAIL\033[0m %s\n' "$1"; fails=$((fails+1)); }
 psqlp(){ sudo -u postgres psql -tAqc "$1"; }
 
 echo "== production revision =="
-HEAD=$(sudo -u moni git -C "$APP" rev-parse --short HEAD 2>/dev/null || echo unknown)
-if [ "${1:-}" ]; then
-  want=$(sudo -u moni git -C "$APP" rev-parse --short "${1}" 2>/dev/null || echo "$1")
-  [ "$HEAD" = "$want" ] && ok "app at $HEAD (== $1)" || bad "app at $HEAD, expected $want ($1)"
+MARKER="$APP/.moni-release-sha"
+RELEASE_SHA=$(cat "$MARKER" 2>/dev/null || true)
+if [[ ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  bad "release marker missing or invalid"
+elif [ "${1:-}" ]; then
+  [[ "$1" =~ ^[0-9a-f]{40}$ ]] || bad "expected release SHA is invalid: $1"
+  [ "$RELEASE_SHA" = "$1" ] && ok "app at $RELEASE_SHA" \
+    || bad "app at $RELEASE_SHA, expected $1"
 else
-  ok "app at $HEAD ($(sudo -u moni git -C "$APP" describe --tags 2>/dev/null || echo untagged))"
+  ok "app at $RELEASE_SHA"
 fi
 
 echo "== local-only listeners (app/DB/caddy-admin must be loopback) =="
@@ -122,6 +126,24 @@ if grep -q -- '--no-sandbox' "$APP/.env" 2>/dev/null; then
 else
   ok "no --no-sandbox in app .env"
 fi
+# The release manifest and root-owned install markers must agree, and the
+# service user must not be able to replace the reviewed browser binary.
+# shellcheck disable=SC1091
+source "$APP/deploy/chrome-for-testing.env"
+chrome_root="/opt/moni/chrome/$CHROME_VERSION"
+chrome_bin="$chrome_root/chrome-linux64/chrome"
+[ "$(cat "$APP/.moni-chrome-version" 2>/dev/null)" = "$CHROME_VERSION" ] \
+  && [ "$(cat "$APP/.moni-chrome-sha256" 2>/dev/null)" = "$CHROME_SHA256" ] \
+  && ok "release records Chrome $CHROME_VERSION / $CHROME_SHA256" \
+  || bad "release Chrome manifest mismatch"
+[ "$(cat "$chrome_root/.moni-chrome-sha256" 2>/dev/null)" = "$CHROME_SHA256" ] \
+  && ok "installed Chrome digest marker matches" || bad "installed Chrome digest marker mismatch"
+[ -x "$chrome_bin" ] && [ "$(stat -c '%U:%G' "$chrome_root" 2>/dev/null)" = "root:root" ] \
+  && [ -z "$(find "$chrome_root" -perm /022 -print -quit 2>/dev/null)" ] \
+  && ok "Chrome is root-owned and not group/world writable" \
+  || bad "Chrome ownership or mode is unsafe"
+"$chrome_bin" --version 2>/dev/null | grep -Fq "$CHROME_VERSION" \
+  && ok "Chrome binary reports $CHROME_VERSION" || bad "Chrome binary version mismatch"
 
 echo "== off-box backups armed =="
 [ "$(systemctl is-active moni-backup.timer)" = "active" ] && ok "moni-backup.timer active" || bad "moni-backup.timer not active"
