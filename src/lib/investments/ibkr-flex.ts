@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import Decimal from "decimal.js";
 import { XMLParser } from "fast-xml-parser";
 import { z } from "zod";
 
@@ -400,8 +401,13 @@ function fingerprint(key: Uint8Array, kind: string, parts: Array<string | undefi
     .digest("base64url")}`;
 }
 
-function cashActivityType(type: string): InvestmentActivityEvidence["activityType"] {
+function cashActivityType(
+  type: string,
+  amount: string,
+): InvestmentActivityEvidence["activityType"] {
   const normalized = type.toLowerCase();
+  if (normalized === "deposits/withdrawals")
+    return new Decimal(decimalText(amount)).isNegative() ? "withdrawal" : "deposit";
   // The provider-neutral contract calls contributions `deposit` and keeps
   // substitute dividends under `dividend`; rawType preserves both distinctions.
   if (normalized.includes("dividend") || normalized.includes("payment in lieu")) return "dividend";
@@ -451,6 +457,71 @@ export function normalizeIbkrFlexActivityXml(
       if (transactionId) tradeTransactionIds.add(transactionId);
       if (tradeId) tradeTransactionIds.add(tradeId);
       const tradeDate = flexDate(checked(nonblankSchema, attribute(row, "tradeDate")));
+      if (attribute(row, "assetCategory") === "CASH") {
+        // Spot FX moves two cash balances; it never acquires security shares.
+        // Keep the old execution key on the quote leg so replay corrects rows
+        // imported by the former buy/sell parser instead of double-counting them.
+        const pair = checked(nonblankSchema, attribute(row, "symbol")).split(".");
+        const baseCurrency = checked(currencySchema, pair[0]);
+        const quoteCurrency = checked(currencySchema, pair[1]);
+        if (pair.length !== 2 || quoteCurrency !== attribute(row, "currency"))
+          throw new InvestmentNormalizationError("unsupported_source_shape");
+        const key = executionId
+          ? `${accountId}:exec:${executionId}`
+          : `${accountId}:trade:${tradeId}`;
+        const legs = [
+          {
+            suffix: "",
+            currency: quoteCurrency,
+            amount: attribute(row, "proceeds"),
+            type: "other",
+          },
+          {
+            suffix: ":fx-base",
+            currency: baseCurrency,
+            amount: attribute(row, "quantity"),
+            type: "other",
+          },
+        ];
+        const commission = attribute(row, "ibCommission");
+        if (commission && !isZero(decimalText(commission))) {
+          legs.push({
+            suffix: ":fx-fee",
+            currency: checked(currencySchema, attribute(row, "ibCommissionCurrency")),
+            amount: commission,
+            type: "fee",
+          });
+        }
+        for (const leg of legs) {
+          const revisionId = attribute(row, "origTradeID") ?? attribute(row, "originalTradeID");
+          activities.push(
+            normalizeInvestmentActivityEvidence({
+              source: "ibkr_flex",
+              sourceAccountRef: accountId,
+              idempotencyKey: `${key}${leg.suffix}`,
+              sourceActivityId: transactionId ? `${transactionId}${leg.suffix}` : undefined,
+              sourceExecutionId: executionId ? `${executionId}${leg.suffix}` : undefined,
+              sourceTradeId: tradeId ? `${tradeId}${leg.suffix}` : undefined,
+              sourceOrderId: attribute(row, "ibOrderID"),
+              sourceRevisionOfId: revisionId ? `${revisionId}${leg.suffix}` : undefined,
+              activityType: leg.type,
+              tradeDate,
+              occurredAt: flexDateTime(tradeDate, attribute(row, "tradeTime")),
+              settlementDate: attribute(row, "settleDateTarget")
+                ? flexDate(attribute(row, "settleDateTarget")!)
+                : undefined,
+              netCashAmount: checked(nonblankSchema, leg.amount),
+              feeAmount: leg.type === "fee" ? leg.amount : undefined,
+              currency: leg.currency,
+              rawType: "Forex",
+              rawCode: attribute(row, "code"),
+              rawDescription: attribute(row, "symbol"),
+              provenance: "broker_reported",
+            }),
+          );
+        }
+        continue;
+      }
       activities.push(
         normalizeInvestmentActivityEvidence({
           source: "ibkr_flex",
@@ -559,7 +630,10 @@ export function normalizeIbkrFlexActivityXml(
               attribute(row, "description"),
               attribute(row, "code"),
             ]);
-      const activityType = cashActivityType(type);
+      const activityType = cashActivityType(
+        type,
+        checked(nonblankSchema, attribute(row, "amount")),
+      );
       activities.push(
         normalizeInvestmentActivityEvidence({
           source: "ibkr_flex",

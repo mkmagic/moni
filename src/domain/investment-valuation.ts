@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import Decimal from "decimal.js";
-import { and, desc, eq, lte } from "drizzle-orm";
+import { and, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import { withUser, type UserTransaction } from "@/db/client";
 import {
   accounts,
@@ -718,6 +718,20 @@ type ReconciliationDimension =
   | "unsupported_corporate_action"
   | "pending_activity";
 
+/** Historical snapshot warnings remain evidence, not current review items.
+ * Also handles records left pending by older reconciliation implementations. */
+export function currentReconciliationSnapshot() {
+  return eq(
+    investmentReconciliationQuality.snapshotId,
+    sql`(
+    select ${investmentSnapshotDetails.id} from ${investmentSnapshotDetails}
+    where ${investmentSnapshotDetails.accountId} = ${investmentReconciliationQuality.accountId}
+    order by ${investmentSnapshotDetails.sourceAsOf} desc
+    limit 1
+  )`,
+  );
+}
+
 interface ReconciliationGap {
   dimension: ReconciliationDimension;
   instrumentId: string | null;
@@ -963,13 +977,32 @@ async function reconcileInvestmentActivityInTransaction(
     .where(
       and(
         eq(investmentReconciliationQuality.accountId, input.accountId),
-        eq(investmentReconciliationQuality.snapshotId, detail.id),
+        inArray(
+          investmentReconciliationQuality.snapshotId,
+          tx
+            .select({ id: investmentSnapshotDetails.id })
+            .from(investmentSnapshotDetails)
+            .where(
+              and(
+                eq(investmentSnapshotDetails.accountId, input.accountId),
+                lte(investmentSnapshotDetails.sourceAsOf, detail.sourceAsOf),
+              ),
+            ),
+        ),
       ),
     );
   const desiredKeys = new Set(uniqueGaps.map(reconciliationKey));
-  const existingByKey = new Map(existing.map((row) => [reconciliationKey(row), row]));
+  const existingByKey = new Map(
+    existing
+      .filter((row) => row.snapshotId === detail.id)
+      .map((row) => [reconciliationKey(row), row]),
+  );
   for (const row of existing) {
-    if (desiredKeys.has(reconciliationKey(row)) || row.status === "resolved") continue;
+    if (
+      (row.snapshotId === detail.id && desiredKeys.has(reconciliationKey(row))) ||
+      row.status === "resolved"
+    )
+      continue;
     await tx
       .update(investmentReconciliationQuality)
       .set({ status: "resolved", resolvedAt: new Date() })

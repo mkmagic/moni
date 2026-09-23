@@ -740,7 +740,14 @@ export async function deriveInvestmentTaxLotsInTransaction(
     coverageBasis,
     completeness,
   };
-  if (!coverage) {
+  if (!hasEvidence && existingLots.length > 0 && coverage?.coverageBasis === "earliest_observed") {
+    // Reclassification can move every acquisition out of a former instrument
+    // (FX imported as shares). Its inferred coverage must disappear with its
+    // obsolete lots, rather than making the whole account's gains unknown.
+    await tx
+      .delete(investmentActivityCoverage)
+      .where(eq(investmentActivityCoverage.id, coverage.id));
+  } else if (!coverage) {
     await tx.insert(investmentActivityCoverage).values({
       ownerId: input.userId,
       accountId: input.accountId,

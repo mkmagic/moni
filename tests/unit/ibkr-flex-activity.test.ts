@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import Decimal from "decimal.js";
 import { describe, expect, it } from "vitest";
 
 import { normalizeIbkrFlexActivityXml, normalizeIbkrFlexXml } from "@/lib/investments";
@@ -19,6 +20,47 @@ function parseActivity() {
 }
 
 describe("IBKR Flex activity evidence", () => {
+  it("keeps a reverse FX trade internal and charges its commission in the reported currency", () => {
+    const source = `<FlexQueryResponse><FlexStatements><FlexStatement><Trades>
+      <Trade accountId="A" assetCategory="CASH" symbol="USD.ILS" levelOfDetail="EXECUTION" buySell="SELL" ibExecID="SELL-FX" tradeDate="20260105" quantity="-100" proceeds="400" currency="ILS" ibCommission="-7" ibCommissionCurrency="ILS" netCash="393" />
+      </Trades><CashTransactions><CashTransaction accountId="A" type="Deposits/Withdrawals" transactionID="W" dateTime="20260106" amount="-393" currency="ILS" /></CashTransactions></FlexStatement></FlexStatements></FlexQueryResponse>`;
+    const key = Buffer.from("reverse-fx-test");
+    try {
+      const { activities } = normalizeIbkrFlexActivityXml(source, key);
+      expect(activities.map((row) => [row.activityType, row.currency, row.netCashAmount])).toEqual([
+        ["other", "ILS", "400"],
+        ["other", "USD", "-100"],
+        ["fee", "ILS", "-7"],
+        ["withdrawal", "ILS", "-393"],
+      ]);
+      expect(activities.every((row) => !row.sourceSecurityId && !row.quantity)).toBe(true);
+    } finally {
+      key.fill(0);
+    }
+  });
+
+  it("reconciles three ILS deposits, FX conversions, VXUS purchases and a paid dividend", () => {
+    const fundingXml = readFileSync(
+      new URL("../fixtures/investments/ibkr-flex-ils-funding.xml", import.meta.url),
+      "utf8",
+    );
+    const key = Buffer.from("funding-test-key");
+    try {
+      const { activities } = normalizeIbkrFlexActivityXml(fundingXml, key);
+      const cash = (currency: string) =>
+        activities
+          .filter((row) => row.currency === currency)
+          .reduce((total, row) => total.plus(row.netCashAmount ?? "0"), new Decimal(0))
+          .toFixed();
+      expect.soft(activities.filter((row) => row.activityType === "buy")).toHaveLength(3);
+      expect.soft(cash("ILS")).toBe("0");
+      expect.soft(cash("USD")).toBe("8");
+      expect(activities.filter((row) => row.activityType === "dividend")).toHaveLength(1);
+    } finally {
+      key.fill(0);
+    }
+  });
+
   it("keeps execution identity, individual fills, signs, and correction evidence", () => {
     const { activities } = parseActivity();
     const trades = activities.filter((activity) => activity.rawType === "Trade");

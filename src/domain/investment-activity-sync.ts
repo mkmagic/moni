@@ -1,7 +1,12 @@
 import { and, eq, inArray, isNotNull } from "drizzle-orm";
 
 import { withUser } from "@/db/client";
-import { accounts, investmentActivityEvidence, investmentOpeningLotEvidence } from "@/db/schema";
+import {
+  accounts,
+  investmentActivityEvidence,
+  investmentOpeningLotEvidence,
+  investmentTaxLots,
+} from "@/db/schema";
 import type { IbkrFlexActivityEvidenceSet } from "@/lib/investments";
 import {
   ingestInvestmentActivityEvidence,
@@ -85,7 +90,16 @@ export async function deriveAndReconcileInvestmentActivity(input: {
       })
       .from(investmentOpeningLotEvidence)
       .where(inArray(investmentOpeningLotEvidence.accountId, accountIds));
-    return [...activityScopes, ...lotScopes].filter(
+    // Corrected activity can lose its former instrument (e.g. FX once treated
+    // as shares). Replay those old scopes too, so obsolete derived lots go away.
+    const derivedScopes = await tx
+      .select({
+        accountId: investmentTaxLots.accountId,
+        instrumentId: investmentTaxLots.instrumentId,
+      })
+      .from(investmentTaxLots)
+      .where(inArray(investmentTaxLots.accountId, accountIds));
+    return [...activityScopes, ...lotScopes, ...derivedScopes].filter(
       (scope): scope is { accountId: string; instrumentId: string } => scope.instrumentId !== null,
     );
   });

@@ -1,5 +1,5 @@
 import Decimal from "decimal.js";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or } from "drizzle-orm";
 
 import { withUser, type UserTransaction } from "@/db/client";
 import {
@@ -17,6 +17,7 @@ import {
 import type { Session } from "@/lib/auth/session-store";
 import { decText, encText } from "./fields";
 import { lockAcquisitionFx } from "./investment-fx";
+import { currentReconciliationSnapshot } from "./investment-valuation";
 import {
   deriveInvestmentTaxLotsInTransaction,
   type InvestmentTaxLotDerivationResult,
@@ -488,7 +489,21 @@ export function readInvestmentActivity(session: Session): Promise<InvestmentActi
     const pendingRows = await tx
       .select()
       .from(investmentDisposalResolutionQueue)
-      .where(eq(investmentDisposalResolutionQueue.status, "pending"))
+      .where(
+        and(
+          eq(investmentDisposalResolutionQueue.status, "pending"),
+          or(
+            isNull(investmentDisposalResolutionQueue.reconciliationQualityId),
+            inArray(
+              investmentDisposalResolutionQueue.reconciliationQualityId,
+              tx
+                .select({ id: investmentReconciliationQuality.id })
+                .from(investmentReconciliationQuality)
+                .where(currentReconciliationSnapshot()),
+            ),
+          ),
+        ),
+      )
       .orderBy(asc(investmentDisposalResolutionQueue.createdAt));
     const resolvedRows = await tx
       .select()

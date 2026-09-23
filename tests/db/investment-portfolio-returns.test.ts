@@ -283,6 +283,14 @@ describe("portfolio-aggregate investment returns", () => {
         .toFixed();
       expect(portfolio.dividendIncome.ils.amount).toBe(expectedIls);
       expect(portfolio.dividendIncome.bookedCashCount).toBe(2);
+      expect(portfolio.dividendIncome.events).toHaveLength(2);
+      expect(portfolio.dividendIncome.ilsAvailable).toBe(true);
+      expect(portfolio.dividendIncome.events.map((event) => event.accountId).sort()).toEqual(
+        [
+          ...a.dividendIncome.events.map((event) => event.accountId),
+          ...b.dividendIncome.events.map((event) => event.accountId),
+        ].sort(),
+      );
 
       // Native figures are grouped by currency, not blended.
       expect(portfolio.dividendIncome.native.map((figure) => figure.currency)).toEqual([

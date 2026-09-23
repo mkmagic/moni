@@ -16,9 +16,6 @@ import type {
 import type { PerformanceAccount, PerformanceView } from "./types";
 
 const BASIS_LABEL: Record<string, string> = {
-  ils_gain_includes_fx: "ILS gain · includes FX",
-  native_price_gain: "Native price gain",
-  booked_cash_income: "Booked cash income",
   time_weighted_return_ils: "Time-weighted return · ILS",
   money_weighted_return_ils_irr: "Money-weighted return · ILS · IRR",
 };
@@ -50,12 +47,22 @@ async function fetchView(accountId: string | null): Promise<PerformanceView> {
   return response.json() as Promise<PerformanceView>;
 }
 
-function CompletenessPill({ quality }: { quality: InvestmentMetricQuality }) {
+function CompletenessPill({
+  quality,
+  knownAmount = false,
+}: {
+  quality: InvestmentMetricQuality;
+  knownAmount?: boolean;
+}) {
   if (quality.completeness === "complete")
     return <Badge className="border-positive/30 text-positive">Complete</Badge>;
   if (quality.completeness === "partial")
     return <Badge className="border-primary/40 text-primary">Partial</Badge>;
-  return <Badge className="border-border text-muted-foreground">Not available</Badge>;
+  return (
+    <Badge className="border-border text-muted-foreground">
+      {knownAmount ? "History unknown" : "Not available"}
+    </Badge>
+  );
 }
 
 /** Provenance + valuation/FX dates, collapsed behind a native <details> so it
@@ -98,33 +105,34 @@ function MoneyMetric({
   figure,
   native,
   quality,
+  available,
 }: {
   label: string;
   figure: InvestmentMoneyFigure;
   native: InvestmentMoneyFigure[];
   quality: InvestmentMetricQuality;
+  available?: boolean;
 }) {
-  const unknown = quality.completeness === "unknown";
+  const hasAmount = available ?? quality.completeness !== "unknown";
   return (
     <div className="space-y-1">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <span className="text-sm text-muted-foreground">{label}</span>
         <div className="flex items-center gap-2">
-          {unknown ? (
+          {!hasAmount ? (
             <span className="text-sm text-muted-foreground">Not available</span>
           ) : (
             <Money value={figure} signColor className="text-base font-semibold" />
           )}
-          <CompletenessPill quality={quality} />
+          <CompletenessPill quality={quality} knownAmount={hasAmount} />
         </div>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <span className="text-xs text-muted-foreground">{BASIS_LABEL[figure.basis]}</span>
-        {quality.completeness === "partial" && !unknown && (
+        {quality.completeness === "partial" && hasAmount && (
           <span className="text-xs text-primary">from known data</span>
         )}
       </div>
-      {!unknown && <NativeLine figures={native} />}
+      <NativeLine figures={native} />
       <MetricDetails quality={quality} />
     </div>
   );
@@ -173,23 +181,25 @@ function InstrumentCell({
   figure,
   native,
   quality,
+  available,
 }: {
   figure: InvestmentMoneyFigure;
   native: InvestmentMoneyFigure[];
   quality: InvestmentMetricQuality;
+  available?: boolean;
 }) {
-  const unknown = quality.completeness === "unknown";
+  const hasAmount = available ?? quality.completeness !== "unknown";
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-end gap-2">
-        {unknown ? (
+        {!hasAmount ? (
           <span className="text-sm text-muted-foreground">Not available</span>
         ) : (
           <Money value={figure} signColor className="tabular-nums" />
         )}
-        <CompletenessPill quality={quality} />
+        <CompletenessPill quality={quality} knownAmount={hasAmount} />
       </div>
-      {!unknown && (
+      {native.length > 0 && (
         <div className="text-right">
           <NativeLine figures={native} />
         </div>
@@ -233,8 +243,7 @@ export function PerformanceScreen({
   return (
     <div className="flex flex-col gap-6">
       <p className="text-sm text-muted-foreground">
-        Gains, cash income, and two different return measures — each figure shows its basis and
-        whether the underlying history is complete.
+        Gains, dividends, and returns from your recorded investment activity.
       </p>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -301,11 +310,55 @@ export function PerformanceScreen({
             figure={summary.dividendIncome.ils}
             native={summary.dividendIncome.native}
             quality={summary.dividendIncome.quality}
+            available={
+              summary.dividendIncome.ilsAvailable &&
+              (summary.dividendIncome.bookedCashCount > 0 ||
+                summary.dividendIncome.quality.completeness === "complete")
+            }
           />
-          <p className="text-xs text-muted-foreground">
-            {summary.dividendIncome.bookedCashCount} booked cash event
-            {summary.dividendIncome.bookedCashCount === 1 ? "" : "s"}
-          </p>
+          <details className="text-xs text-muted-foreground">
+            <summary className="cursor-pointer hover:text-foreground">
+              {summary.dividendIncome.bookedCashCount} booked cash event
+              {summary.dividendIncome.bookedCashCount === 1 ? "" : "s"}
+            </summary>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr>
+                    <th className="border-b border-border py-2 text-left">Date</th>
+                    <th className="border-b border-border py-2 text-left">Account</th>
+                    <th className="border-b border-border py-2 text-left">Investment</th>
+                    <th className="border-b border-border py-2 text-right">Amount</th>
+                    <th className="border-b border-border py-2 text-right">ILS value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summary.dividendIncome.events.map((event) => (
+                    <tr key={event.id}>
+                      <td className="py-2 pr-4 tabular-nums">{event.date}</td>
+                      <td className="py-2 pr-4">{accountName.get(event.accountId) ?? "Account"}</td>
+                      <td className="py-2 pr-4">
+                        {instruments.find(
+                          (row) =>
+                            row.accountId === event.accountId &&
+                            row.instrumentId === event.instrumentId,
+                        )?.label ?? "—"}
+                      </td>
+                      <td className="py-2 pl-4 text-right">
+                        <Money value={event.native} />
+                      </td>
+                      <td className="py-2 pl-4 text-right">
+                        {event.ils ? <Money value={event.ils} /> : "Exchange rate unavailable"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {summary.dividendIncome.events.length === 0 && (
+                <p className="py-3">No recorded dividend payments.</p>
+              )}
+            </div>
+          </details>
         </Card>
       </div>
 
@@ -433,6 +486,11 @@ function InstrumentRows({
             figure={row.dividendIncome.ils}
             native={row.dividendIncome.native}
             quality={row.dividendIncome.quality}
+            available={
+              row.dividendIncome.ilsAvailable &&
+              (row.dividendIncome.bookedCashCount > 0 ||
+                row.dividendIncome.quality.completeness === "complete")
+            }
           />
         </td>
       </tr>

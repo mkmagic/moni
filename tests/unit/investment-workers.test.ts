@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   BOI_SDMX_URL,
   IBKR_FLEX_URL,
@@ -7,6 +8,8 @@ import {
   fetchIbkrFlexActivityEvidence,
   fetchIbkrFlexXml,
   incrementalIbkrActivityRange,
+  normalizeIbkrFlexActivityXml,
+  normalizeIbkrFlexXml,
   parseBoiSdmxCsv,
   parseTiingoRefreshCounts,
   readBoundedResponse,
@@ -22,6 +25,34 @@ import {
 } from "@/lib/connectors";
 
 describe("investment worker seams", () => {
+  it("caches historical trade and dividend FX before promoting an IBKR statement", async () => {
+    const xml = readFileSync(
+      new URL("../fixtures/investments/ibkr-flex-ils-funding.xml", import.meta.url),
+      "utf8",
+    );
+    const key = Buffer.from("funding-fx-key");
+    try {
+      const cacheBoi = vi.fn().mockResolvedValue(undefined);
+      await completeSourceRefresh({
+        envelope: normalizeIbkrFlexXml(xml),
+        activityEvidence: normalizeIbkrFlexActivityXml(xml, key),
+        cacheBoi,
+        promote: vi.fn().mockResolvedValue(undefined),
+      });
+      expect(cacheBoi).toHaveBeenCalledWith([
+        { currency: "USD", date: "2026-01-05" },
+        { currency: "USD", date: "2026-01-06" },
+        { currency: "USD", date: "2026-02-05" },
+        { currency: "USD", date: "2026-02-06" },
+        { currency: "USD", date: "2026-03-05" },
+        { currency: "USD", date: "2026-03-06" },
+        { currency: "USD", date: "2026-06-20" },
+        { currency: "USD", date: "2026-09-01" },
+      ]);
+    } finally {
+      key.fill(0);
+    }
+  });
   it("splits long inclusive IBKR ranges into non-overlapping 365-day windows", () => {
     expect(splitIbkrFlexDateRange("2024-01-01", "2026-01-02")).toEqual([
       { from: "2024-01-01", to: "2024-12-30" },

@@ -19,7 +19,11 @@ import {
 import { decText } from "./fields";
 import { usableIlsRate } from "./ils-rate";
 import { BROKER_ELSE_USER_POLICY_VERSION } from "./investment-lots";
-import { israelDate, valueInvestmentSnapshot } from "./investment-valuation";
+import {
+  currentReconciliationSnapshot,
+  israelDate,
+  valueInvestmentSnapshot,
+} from "./investment-valuation";
 
 type Tx = UserTransaction;
 export type InvestmentMetricCompleteness = "complete" | "partial" | "unknown";
@@ -64,7 +68,19 @@ export interface InvestmentDividendIncome {
   ils: InvestmentMoneyFigure;
   native: InvestmentMoneyFigure[];
   bookedCashCount: number;
+  /** Availability of the converted payments, independent of history coverage. */
+  ilsAvailable: boolean;
+  events: InvestmentDividendCashEvent[];
   quality: InvestmentMetricQuality;
+}
+
+export interface InvestmentDividendCashEvent {
+  id: string;
+  accountId: string;
+  instrumentId: string | null;
+  date: string;
+  native: InvestmentMoneyFigure;
+  ils: InvestmentMoneyFigure | null;
 }
 
 export interface InvestmentReturnsRead {
@@ -150,6 +166,7 @@ async function metricQuality(
       and(
         eq(investmentReconciliationQuality.accountId, input.accountId),
         eq(investmentReconciliationQuality.status, "pending"),
+        currentReconciliationSnapshot(),
       ),
     );
   const hasScopedCorporateAction = corporateActions.some(
@@ -662,7 +679,8 @@ async function dividendIncome(tx: Tx, input: RequiredInput): Promise<InvestmentD
         gte(investmentActivityEvidence.tradeDate, input.startDate ?? "0001-01-01"),
         lte(investmentActivityEvidence.tradeDate, input.endDate ?? "9999-12-31"),
       ),
-    );
+    )
+    .orderBy(asc(investmentActivityEvidence.tradeDate), asc(investmentActivityEvidence.id));
   if (input.instrumentId) rows = rows.filter((row) => row.instrumentId === input.instrumentId);
   const native = new Map<string, Decimal>();
   const provenance = new Set<string>();
@@ -670,6 +688,7 @@ async function dividendIncome(tx: Tx, input: RequiredInput): Promise<InvestmentD
   let ils = new Decimal(0);
   let incomplete = false;
   let count = 0;
+  const events: InvestmentDividendCashEvent[] = [];
   for (const row of rows) {
     const amountText = decText(
       input.dataKey,
@@ -689,6 +708,16 @@ async function dividendIncome(tx: Tx, input: RequiredInput): Promise<InvestmentD
       ils = ils.plus(amount.mul(rate.rate));
       fxDates.push(rate.date);
     } else incomplete = true;
+    events.push({
+      id: row.id,
+      accountId: row.accountId,
+      instrumentId: row.instrumentId,
+      date: row.tradeDate,
+      native: { amount: amount.toFixed(), currency: row.currency, basis: "booked_cash_income" },
+      ils: rate
+        ? { amount: amount.mul(rate.rate).toFixed(), currency: "ILS", basis: "booked_cash_income" }
+        : null,
+    });
     provenance.add(row.provenance);
     count += 1;
   }
@@ -696,6 +725,8 @@ async function dividendIncome(tx: Tx, input: RequiredInput): Promise<InvestmentD
     ils: { amount: ils.toFixed(), currency: "ILS", basis: "booked_cash_income" },
     native: nativeFigures(native, "booked_cash_income"),
     bookedCashCount: count,
+    ilsAvailable: !incomplete,
+    events,
     quality: await metricQuality(
       tx,
       input,
@@ -933,6 +964,10 @@ async function portfolioReturns(
         "booked_cash_income",
       ),
       bookedCashCount: dividends.reduce((total, d) => total + d.bookedCashCount, 0),
+      ilsAvailable: dividends.every((d) => d.ilsAvailable),
+      events: dividends
+        .flatMap((d) => d.events)
+        .sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id)),
       quality: mergeQuality(dividends.map((d) => d.quality)),
     },
   };

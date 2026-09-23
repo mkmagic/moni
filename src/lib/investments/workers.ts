@@ -420,6 +420,7 @@ export function normalizeIbkrPayload(xml: Buffer): InvestmentSyncEnvelope {
 
 export function requiredBoiPairs(
   envelope: InvestmentSyncEnvelope,
+  activityEvidence?: IbkrFlexActivityEvidenceSet,
 ): Array<{ currency: string; date: string }> {
   const pairs = new Set<string>();
   const calendarDate = (value: string): string => {
@@ -445,6 +446,10 @@ export function requiredBoiPairs(
       );
     for (const cash of account.cash) add(cash.currency, envelope.sourceAsOf.value);
   }
+  for (const activity of activityEvidence?.activities ?? []) {
+    if (activity.currency) add(activity.currency, activity.tradeDate);
+  }
+  for (const lot of activityEvidence?.openLots ?? []) add(lot.currency, lot.tradeDate);
   return [...pairs].sort().map((pair) => {
     const [currency, date] = pair.split("\u0000");
     return { currency, date };
@@ -454,10 +459,11 @@ export function requiredBoiPairs(
 /** The ordering seam used by source workers: BOI persistence completes before promotion. */
 export async function completeSourceRefresh<T>(input: {
   envelope: InvestmentSyncEnvelope;
+  activityEvidence?: IbkrFlexActivityEvidenceSet;
   cacheBoi: (pairs: Array<{ currency: string; date: string }>) => Promise<void>;
   promote: (envelope: InvestmentSyncEnvelope) => Promise<T>;
 }): Promise<T> {
-  await input.cacheBoi(requiredBoiPairs(input.envelope));
+  await input.cacheBoi(requiredBoiPairs(input.envelope, input.activityEvidence));
   return input.promote(input.envelope);
 }
 

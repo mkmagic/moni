@@ -84,6 +84,7 @@ async function main(): Promise<void> {
     });
     await completeSourceRefresh({
       envelope,
+      activityEvidence,
       cacheBoi,
       promote: (ready) =>
         promoteInvestmentSnapshot({
