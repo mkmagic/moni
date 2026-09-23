@@ -5,6 +5,7 @@ import { listConnections } from "@/domain/connections";
 import { listCredentialUnlockMethods } from "@/domain/credential-unlock";
 import { getLatestSyncRunByConnection } from "@/domain/sync-promotion";
 import { rpId } from "@/lib/auth/webauthn-config";
+import { syncTimeLabel } from "@/lib/sync-time-label";
 import { Button } from "@/components/ui/button";
 import { PasskeyManager } from "@/components/passkey-manager";
 import { SyncPreference } from "../sync-preference";
@@ -23,13 +24,9 @@ export default async function ConnectionsSettingsPage() {
   // client to render. Formatting there with `toLocaleString()` is a
   // hydration bug: SSR uses the server's locale/timezone and the browser
   // uses its own, React sees two different strings and throws. Doing it
-  // once here — explicit locale, so it's deterministic — also keeps the
+  // once here — explicit locale and sync timezone — also keeps the
   // client component free of date logic. "medium" is spelled-out month, so
   // it's unambiguous rather than dd/mm-vs-mm/dd.
-  const syncedAtFmt = new Intl.DateTimeFormat("en-GB", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
   // Import connections have no fetch time — their `lastSyncAt` is the date the
   // uploaded file is *as of* (see domain/connections.ts), a calendar date with
   // no meaningful clock time, so it reads "As of 30 Jun 2026" with no "00:00".
@@ -46,7 +43,7 @@ export default async function ConnectionsSettingsPage() {
       lastSyncLabel: c.lastSyncAt
         ? isImport
           ? `As of ${asOfFmt.format(c.lastSyncAt)}`
-          : `Last synced ${syncedAtFmt.format(c.lastSyncAt)}`
+          : syncTimeLabel(c.lastSyncAt)
         : isImport
           ? "No file uploaded"
           : "Never synced",
@@ -57,7 +54,7 @@ export default async function ConnectionsSettingsPage() {
     };
   });
 
-  // Same reason as `syncedAtFmt` above: formatted here, on the server.
+  // Same reason as sync labels above: formatted here, on the server.
   const addedAtFmt = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium" });
   const passkeyRows = passkeys.map((p) => ({
     id: p.id,
