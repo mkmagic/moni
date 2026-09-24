@@ -1,5 +1,6 @@
 /**
  * POC (throwaway): can we read Schwab holdings from SnapTrade instead of the manual CSV?
+ * And can its activity history rebuild tax lots, standing in for the paid tax-lot feature?
  *
  * Run:  SNAPTRADE_CLIENT_ID=... SNAPTRADE_CONSUMER_KEY=... npx tsx scripts/poc-snaptrade-holdings.mts
  * or put those two keys in .env.local and run:  npx tsx scripts/poc-snaptrade-holdings.mts
@@ -149,12 +150,87 @@ async function run(snaptrade: SnaptradeClient): Promise<void> {
       ].filter(Boolean);
       if (gaps.length) console.log(`     MISSING for Moni: ${gaps.join(", ")}`);
     }
+
+    await printActivities(snaptrade, id);
   }
 
   console.log(
     "\nNote: SnapTrade has no per-position market value — Moni's envelope wants sourceValue, " +
       "so it must be derived as units x price with the decimal library. See the write-up.",
   );
+}
+
+/**
+ * Can trade history stand in for the paid tax-lot feature? Pages through the account's whole
+ * activity history (SnapTrade's default range is everything it knows) and reports how far back
+ * it reaches and whether each BUY/SELL carries what a lot needs: date, units, price, currency.
+ */
+async function printActivities(snaptrade: SnaptradeClient, accountId: string): Promise<void> {
+  const activities: Json[] = [];
+  const limit = 1000;
+  try {
+    for (let offset = 0; ; offset += limit) {
+      const response = await snaptrade.accountInformation.getAccountActivities({
+        accountId,
+        offset,
+        limit,
+      });
+      const page = asRecord(parseJsonPreservingNumbers(response.data as unknown as string));
+      const rows = Array.isArray(page.data) ? page.data.map(asRecord) : [];
+      activities.push(...rows);
+      if (RAW) console.log(`--- activities offset=${offset} ---\n`, JSON.stringify(page, null, 2));
+      if (rows.length < limit) break;
+    }
+  } catch (error: unknown) {
+    // A plan that does not include activities should show up here, not abort the other accounts.
+    const response = asRecord(asRecord(error).response);
+    console.log(
+      `   activities: FAILED ${response.status ?? ""} ${String(response.data ?? asRecord(error).message ?? error)}`,
+    );
+    return;
+  }
+
+  const dates = activities
+    .map((activity) => str(activity.trade_date))
+    .filter((date): date is string => date !== undefined)
+    .sort();
+  console.log(
+    `   activities: ${activities.length}  first=${dates[0] ?? "?"}  last=${dates.at(-1) ?? "?"}`,
+  );
+  const byType = new Map<string, number>();
+  for (const activity of activities) {
+    const type = str(activity.type) ?? "?";
+    byType.set(type, (byType.get(type) ?? 0) + 1);
+  }
+  console.log(`   by type: ${[...byType].map(([type, n]) => `${type}=${n}`).join("  ")}`);
+
+  const trades = activities.filter((activity) =>
+    ["BUY", "SELL"].includes(str(activity.type) ?? ""),
+  );
+  for (const trade of trades) {
+    console.log(
+      [
+        `   - ${str(trade.trade_date) ?? "?"}`,
+        str(trade.type),
+        str(asRecord(trade.symbol).symbol) ?? "?",
+        `units=${str(trade.units) ?? "?"}`,
+        `price=${str(trade.price) ?? "?"}`,
+        `amount=${str(trade.amount) ?? "?"}`,
+        `fee=${str(trade.fee) ?? "-"}`,
+        `ccy=${str(asRecord(trade.currency).code) ?? "?"}`,
+        `fx=${str(trade.fx_rate) ?? "-"}`,
+      ].join("  "),
+    );
+    // Fields a tax lot cannot be built without:
+    const gaps = [
+      trade.trade_date == null ? "trade_date" : null,
+      trade.units === undefined ? "units" : null,
+      trade.price === undefined ? "price" : null,
+      asRecord(trade.currency).code === undefined ? "currency" : null,
+      asRecord(trade.symbol).symbol === undefined ? "symbol" : null,
+    ].filter(Boolean);
+    if (gaps.length) console.log(`     MISSING for a lot: ${gaps.join(", ")}`);
+  }
 }
 
 main();
