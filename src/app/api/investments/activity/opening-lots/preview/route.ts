@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getSessionFromRequest } from "@/domain/auth";
 import { OpeningLotImportError, previewOpeningLotImport } from "@/domain/investment-opening-lots";
+import { ensureBoiRates } from "@/lib/investments";
 import { OpeningLotCsvError, parseOpeningLotsCsv } from "@/lib/investments/opening-lots-csv";
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
@@ -15,6 +16,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "The CSV must be 10 MB or smaller." }, { status: 413 });
   try {
     const rows = parseOpeningLotsCsv(Buffer.from(await file.arrayBuffer()));
+    await ensureBoiRates(
+      rows
+        .filter((row) => row.currency !== "ILS")
+        .map((row) => ({ currency: row.currency, date: row.tradeDate })),
+    );
     const preview = await previewOpeningLotImport({
       userId: session.userId,
       dataKey: session.dataKey,

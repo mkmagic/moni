@@ -345,12 +345,13 @@ function dateDaysBefore(target: string, date: string): number {
 export function parseBoiSdmxCsv(
   csv: Buffer,
   required: Array<{ currency: string; date: string }>,
+  options: { skipMissing?: boolean } = {},
 ): Array<{ currency: string; date: string; rate: string }> {
   try {
     if (csv.length > MAX) throw new WorkerSourceError("source_too_large");
     const rows = parse(csv, { columns: true, skip_empty_lines: true, cast: false }) as BoiRow[];
-    return required.map(({ currency, date }) => {
-      if (currency === "ILS") return { currency, date, rate: "1" };
+    return required.flatMap(({ currency, date }) => {
+      if (currency === "ILS") return [{ currency, date, rate: "1" }];
       const candidates = rows.filter(
         (row) =>
           (row.BASE_CURRENCY === currency || row.CURRENCY === currency) &&
@@ -359,15 +360,21 @@ export function parseBoiSdmxCsv(
       );
       candidates.sort((a, b) => b.TIME_PERIOD.localeCompare(a.TIME_PERIOD));
       const row = candidates[0];
-      if (!row || dateDaysBefore(date, row.TIME_PERIOD) > 7)
+      if (!row || dateDaysBefore(date, row.TIME_PERIOD) > 7) {
+        // Opening lots may name dates or currencies BOI never published; one
+        // such row must not cost every other row its rate.
+        if (options.skipMissing) return [];
         throw new WorkerSourceError("missing_fx");
+      }
       if (!/^[+-]?\d+(?:\.\d+)?$/.test(row.OBS_VALUE) || !/^[+-]?\d+$/.test(row.UNIT_MULT))
         throw new WorkerSourceError("invalid_fx");
-      return {
-        currency,
-        date: row.TIME_PERIOD,
-        rate: new Decimal(row.OBS_VALUE).div(new Decimal(10).pow(row.UNIT_MULT)).toString(),
-      };
+      return [
+        {
+          currency,
+          date: row.TIME_PERIOD,
+          rate: new Decimal(row.OBS_VALUE).div(new Decimal(10).pow(row.UNIT_MULT)).toString(),
+        },
+      ];
     });
   } finally {
     csv.fill(0);
@@ -377,6 +384,7 @@ export function parseBoiSdmxCsv(
 export async function fetchBoiRates(
   required: Array<{ currency: string; date: string }>,
   fetcher: FetchAdapter,
+  options: { skipMissing?: boolean } = {},
 ): Promise<Array<{ currency: string; date: string; rate: string }>> {
   const foreign = required.filter(({ currency }) => currency !== "ILS");
   if (foreign.length === 0)
@@ -406,7 +414,7 @@ export async function fetchBoiRates(
   if (response.redirected) throw new WorkerSourceError("redirect_rejected");
   if (!response.ok) throw new WorkerSourceError("provider_rejected");
   const csv = await readBoundedResponse(response);
-  return parseBoiSdmxCsv(csv, required);
+  return parseBoiSdmxCsv(csv, required, options);
 }
 
 export function normalizeIbkrPayload(xml: Buffer): InvestmentSyncEnvelope {

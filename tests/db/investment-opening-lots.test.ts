@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { POST as importOpeningLots } from "@/app/api/investments/activity/opening-lots/import/route";
 import { POST as previewOpeningLots } from "@/app/api/investments/activity/opening-lots/preview/route";
@@ -15,6 +15,14 @@ import { decryptField, getDevUserDataKey } from "@/lib/crypto";
 import { createSession, destroySession } from "@/lib/auth/session-store";
 import { parseOpeningLotsCsv } from "@/lib/investments";
 import { cleanupFxRates, cleanupOwners, elevatedDb, elevatedPool } from "./helpers";
+
+// The routes cache BOI rates through a child process that calls the public
+// API; tests assert the wiring without touching the network.
+const ensureBoiRates = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock("@/lib/investments", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/investments")>()),
+  ensureBoiRates,
+}));
 
 const header =
   "account,isin,symbol,exchange,trade_date,quantity,remaining_quantity,unit_cost,total_cost,currency,fee,ils_fx_rate,broker_lot_id";
@@ -165,6 +173,7 @@ describe("opening-lot import", () => {
       rows: unknown[];
     };
     expect(payload.preview.ready).toBe(1);
+    expect(ensureBoiRates).toHaveBeenCalledWith([{ currency: "USD", date: "2021-01-02" }]);
     expect(payload.rows).toHaveLength(1);
 
     const promoted = await importOpeningLots(
@@ -188,6 +197,35 @@ describe("opening-lot import", () => {
     await expect(
       withKey((dataKey) => promoteOpeningLotImport({ userId, dataKey, rows: rows() })),
     ).resolves.toEqual({ inserted: 0, skipped: 3, unresolvedFx: 0 });
+  });
+
+  it("flags a user rate that differs from BoI beyond the user's own rounding", async () => {
+    // Its own currency: other files share XAA in the global fx_rates table and
+    // delete it on cleanup while this file runs in parallel.
+    await upsertBoiFxRate({ fromCurrency: "XOL", date: "2026-09-11", rate: "3.14159000" });
+    const xolRates = await elevatedDb
+      .select({ id: schema.fxRates.id })
+      .from(schema.fxRates)
+      .where(eq(schema.fxRates.fromCurrency, "XOL"));
+    const userRows = parseOpeningLotsCsv(
+      Buffer.from(
+        `${header}\n` +
+          `${accountRef},,ROUNDED,XTAE,2026-09-12,1,,,10,XOL,,3.14,ROUNDED-LOT\n` +
+          `${accountRef},,OFF,XTAE,2026-09-12,1,,,10,XOL,,3.2,OFF-LOT\n` +
+          `${accountRef},,NORATE,XTAE,1900-01-01,1,,,10,XZZ,,3.2,NORATE-LOT\n`,
+      ),
+    );
+    const preview = await withKey((dataKey) =>
+      previewOpeningLotImport({ userId, dataKey, rows: userRows }),
+    ).finally(() => cleanupFxRates(xolRates.map((row) => row.id)));
+    expect(preview.fxDifferences).toBe(1);
+    expect(
+      preview.rows.map((row) => [row.lockedFxRate, row.boiFxRate, row.boiFxDate, row.fxDiffers]),
+    ).toEqual([
+      ["3.14", "3.14159", "2026-09-11", false],
+      ["3.2", "3.14159", "2026-09-11", true],
+      ["3.2", null, null, false],
+    ]);
   });
 
   it("skips FX for ILS lots and rejects a non-positive user override", async () => {

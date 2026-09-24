@@ -19,6 +19,7 @@ import { decText, encText } from "./fields";
 import { lockAcquisitionFx } from "./investment-fx";
 import { currentReconciliationSnapshot } from "./investment-valuation";
 import {
+  BROKER_ELSE_USER_POLICY_VERSION,
   deriveInvestmentTaxLotsInTransaction,
   type InvestmentTaxLotDerivationResult,
 } from "./investment-lots";
@@ -106,12 +107,30 @@ export interface OpeningLotsAccountView {
   lastImportLabel: string | null;
 }
 
+export interface InvestmentLotView {
+  id: string;
+  accountId: string;
+  accountName: string;
+  instrumentLabel: string;
+  acquisitionDate: string;
+  acquisitionDateLabel: string;
+  quantity: string;
+  remainingQuantity: string;
+  totalCost: string;
+  pricePerShare: string;
+  currency: string;
+  /** Total cost at the locked acquisition FX; null when no rate was locked. */
+  totalCostIls: string | null;
+  pricePerShareIls: string | null;
+}
+
 export interface InvestmentActivityView {
   pending: InvestmentResolutionItemView[];
   recentlyResolved: InvestmentResolutionItemView[];
   pendingCount: number;
   counts: { sales: number; identity: number; historyGaps: number };
   openingLots: OpeningLotsAccountView[];
+  lots: InvestmentLotView[];
 }
 
 export interface DisposalAllocationInput {
@@ -484,6 +503,53 @@ async function openingLotSummary(tx: Tx, session: Session): Promise<OpeningLotsA
   });
 }
 
+async function lotList(
+  tx: Tx,
+  dataKey: Uint8Array,
+  accountsView: OpeningLotsAccountView[],
+): Promise<InvestmentLotView[]> {
+  const lots = await tx
+    .select()
+    .from(investmentTaxLots)
+    .where(eq(investmentTaxLots.policyVersion, BROKER_ELSE_USER_POLICY_VERSION))
+    .orderBy(asc(investmentTaxLots.tradeDate), asc(investmentTaxLots.id));
+  const instrumentIds = [...new Set(lots.map((lot) => lot.instrumentId))];
+  const instrumentById = new Map(
+    (instrumentIds.length
+      ? await tx.select().from(instruments).where(inArray(instruments.id, instrumentIds))
+      : []
+    ).map((row) => [row.id, row]),
+  );
+  const accountOrder = accountsView.map((account) => account.accountId);
+  return lots
+    .map((lot): InvestmentLotView => {
+      const quantity = text(dataKey, lot, lot.originalQuantityCt, "original_quantity_ct")!;
+      const totalCost = text(dataKey, lot, lot.costBasisCt, "cost_basis_ct")!;
+      const rate =
+        lot.costBasisCurrency === "ILS"
+          ? "1"
+          : text(dataKey, lot, lot.lockedFxRateCt, "locked_fx_rate_ct");
+      return {
+        id: lot.id,
+        accountId: lot.accountId,
+        accountName:
+          accountsView.find((account) => account.accountId === lot.accountId)?.accountName ??
+          "Investment account",
+        instrumentLabel: instrumentLabel(dataKey, instrumentById.get(lot.instrumentId)),
+        acquisitionDate: lot.tradeDate,
+        acquisitionDateLabel: dateLabel(lot.tradeDate)!,
+        quantity,
+        remainingQuantity: text(dataKey, lot, lot.remainingQuantityCt, "remaining_quantity_ct")!,
+        totalCost,
+        pricePerShare: new Decimal(totalCost).div(quantity).toString(),
+        currency: lot.costBasisCurrency,
+        totalCostIls: rate ? new Decimal(totalCost).mul(rate).toString() : null,
+        pricePerShareIls: rate ? new Decimal(totalCost).div(quantity).mul(rate).toString() : null,
+      };
+    })
+    .sort((a, b) => accountOrder.indexOf(a.accountId) - accountOrder.indexOf(b.accountId));
+}
+
 export function readInvestmentActivity(session: Session): Promise<InvestmentActivityView> {
   return withUser(session.userId, async (tx) => {
     const pendingRows = await tx
@@ -512,6 +578,7 @@ export function readInvestmentActivity(session: Session): Promise<InvestmentActi
       .orderBy(desc(investmentDisposalResolutionQueue.resolvedAt))
       .limit(12);
     const openingLots = await openingLotSummary(tx, session);
+    const lots = await lotList(tx, session.dataKey, openingLots);
     const rows = [...pendingRows, ...resolvedRows];
     const context = await readContext(tx, rows);
     const pending = pendingRows.map((row) => toItem(session.dataKey, row, context));
@@ -525,6 +592,7 @@ export function readInvestmentActivity(session: Session): Promise<InvestmentActi
         historyGaps: pending.filter((row) => row.kind === "reconciliation_gap").length,
       },
       openingLots,
+      lots,
     };
   });
 }

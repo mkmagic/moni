@@ -19,7 +19,9 @@ async function main(): Promise<void> {
       currencies: [...new Set(pairs.map((pair) => pair.currency))].sort().join(","),
       dates: [...new Set(pairs.map((pair) => pair.date))].sort().join(","),
     });
-    const rates = await fetchBoiRates(pairs, fetch);
+    const rates = await fetchBoiRates(pairs, fetch, {
+      skipMissing: decoded.metadata.skipMissing === true,
+    });
     for (const rate of rates)
       await upsertBoiFxRate({ fromCurrency: rate.currency, date: rate.date, rate: rate.rate });
     syncLog("boi.fetch.done", {

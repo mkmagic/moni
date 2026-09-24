@@ -103,6 +103,13 @@ export const TOUR_STEPS: TourStep[] = [
     body: "If an investment event needs your decision, its count appears here. Review the evidence and confirm changes before Moni updates your lot history.",
   },
   {
+    id: "investment-lots",
+    route: "/investments/activity",
+    anchor: '[data-tour="investments-lots"]',
+    title: "Lots",
+    body: "Every purchase you still hold or sold, with the price you paid and the shekel exchange rate on that day.",
+  },
+  {
     id: "investment-opening-lots",
     route: "/investments/activity",
     anchor: '[data-tour="investments-opening-lots"]',

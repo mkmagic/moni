@@ -157,6 +157,31 @@ describe("investment activity resolution", () => {
     }
   }
 
+  it("lists every tax lot with its purchase price and ILS cost at the locked FX", async () => {
+    const view = await withSession(readInvestmentActivity);
+    expect(view.lots).toEqual([
+      expect.objectContaining({
+        accountName: "Resolution account",
+        instrumentLabel: "EXACT",
+        acquisitionDate: "2026-09-01",
+        quantity: "3",
+        totalCost: "30",
+        pricePerShare: "10",
+        currency: "XAA",
+        totalCostIls: "90",
+        pricePerShareIls: "30",
+      }),
+      expect.objectContaining({
+        acquisitionDate: "2026-09-02",
+        quantity: "2",
+        totalCost: "40",
+        pricePerShare: "20",
+        totalCostIls: "120",
+        pricePerShareIls: "60",
+      }),
+    ]);
+  });
+
   it("blocks a partial allocation and leaves the sale pending", async () => {
     const view = await withSession(readInvestmentActivity);
     expect(view.pendingCount).toBe(1);

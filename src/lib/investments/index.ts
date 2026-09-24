@@ -61,6 +61,7 @@ export {
   type TiingoQuoteRefreshDependencies,
 } from "./tiingo-worker";
 export {
+  ensureBoiRates,
   parseTiingoRefreshCounts,
   runTiingoWorker,
   spawnInvestmentSyncWorker,

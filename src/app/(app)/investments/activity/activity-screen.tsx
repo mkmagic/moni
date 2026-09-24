@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { CheckCircle2, ChevronRight, FileUp, Plus, TriangleAlert } from "lucide-react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
+import { Money } from "@/components/money";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import type {
@@ -54,6 +55,8 @@ export function ActivityScreen({
     accountName: visible.find((item) => item.accountId === accountId)!.accountName,
     items: visible.filter((item) => item.accountId === accountId),
   }));
+  const multipleLotAccounts = new Set(view.lots.map((lot) => lot.accountId)).size > 1;
+  const hasOpeningLots = view.openingLots.some((account) => account.lotCount > 0);
   return (
     <div className="flex flex-col gap-6">
       <div data-tour="investments-activity">
@@ -165,6 +168,79 @@ export function ActivityScreen({
         </Card>
       )}
 
+      {view.lots.length > 0 && (
+        <Card data-tour="investments-lots" className="p-6 pt-7">
+          <h3 className="font-semibold">Lots</h3>
+          <div className="mt-5 overflow-x-auto">
+            <table className="w-full min-w-[620px] border-separate border-spacing-0 text-sm">
+              <thead className="text-left text-xs text-muted-foreground">
+                <tr>
+                  <th className="border-b border-border pb-3">Date</th>
+                  <th className="border-b border-border pb-3">Stock</th>
+                  <th className="border-b border-border pb-3 text-right">Shares</th>
+                  <th className="border-b border-border pb-3 text-right">Price</th>
+                  <th className="border-b border-border pb-3 text-right">Price (ILS)</th>
+                  <th className="border-b border-border pb-3 text-right">Total</th>
+                  <th className="border-b border-border pb-3 text-right">Total (ILS)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {view.lots.map((lot, index) => (
+                  <Fragment key={lot.id}>
+                    {multipleLotAccounts && lot.accountId !== view.lots[index - 1]?.accountId && (
+                      <tr>
+                        <td
+                          colSpan={7}
+                          className="border-b border-border/60 pb-2 pt-4 text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                        >
+                          {lot.accountName}
+                        </td>
+                      </tr>
+                    )}
+                    <tr>
+                      <td className="border-b border-border/60 py-3 tabular-nums text-muted-foreground">
+                        {lot.acquisitionDateLabel}
+                      </td>
+                      <td className="border-b border-border/60 py-3 font-medium">
+                        {lot.instrumentLabel}
+                      </td>
+                      <td className="border-b border-border/60 py-3 text-right tabular-nums">
+                        {lot.quantity}
+                        {lot.remainingQuantity !== lot.quantity && (
+                          <span className="text-muted-foreground">
+                            {` · ${lot.remainingQuantity} left`}
+                          </span>
+                        )}
+                      </td>
+                      <td className="border-b border-border/60 py-3 text-right">
+                        <Money value={{ amount: lot.pricePerShare, currency: lot.currency }} />
+                      </td>
+                      <td className="border-b border-border/60 py-3 text-right">
+                        {lot.pricePerShareIls ? (
+                          <Money value={{ amount: lot.pricePerShareIls, currency: "ILS" }} />
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="border-b border-border/60 py-3 text-right">
+                        <Money value={{ amount: lot.totalCost, currency: lot.currency }} />
+                      </td>
+                      <td className="border-b border-border/60 py-3 text-right">
+                        {lot.totalCostIls ? (
+                          <Money value={{ amount: lot.totalCostIls, currency: "ILS" }} />
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    </tr>
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
       <Card id="opening-lots" data-tour="investments-opening-lots" className="p-6 pt-7">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -182,43 +258,45 @@ export function ActivityScreen({
             </Link>
           </div>
         </div>
-        <div className="mt-5 overflow-x-auto">
-          <table className="w-full min-w-[620px] border-separate border-spacing-0 text-sm">
-            <thead className="text-left text-xs text-muted-foreground">
-              <tr>
-                <th className="border-b border-border pb-3">Account</th>
-                <th className="border-b border-border pb-3 text-right">Opening lots</th>
-                <th className="border-b border-border pb-3 text-right">Cost-basis coverage</th>
-                <th className="border-b border-border pb-3 text-right">Last import</th>
-              </tr>
-            </thead>
-            <tbody>
-              {view.openingLots.map((account) => (
-                <tr
-                  key={account.accountId}
-                  id={`opening-lots-${account.accountId}`}
-                  className={cn(
-                    highlightedAccountIds.includes(account.accountId) &&
-                      "outline outline-1 outline-positive/40",
-                  )}
-                >
-                  <td className="border-b border-border/60 py-3 font-medium">
-                    {account.accountName}
-                  </td>
-                  <td className="border-b border-border/60 py-3 text-right tabular-nums">
-                    {account.lotCount}
-                  </td>
-                  <td className="border-b border-border/60 py-3 text-right">
-                    <Completeness value={account.completeness} />
-                  </td>
-                  <td className="border-b border-border/60 py-3 text-right text-muted-foreground tabular-nums">
-                    {account.lastImportLabel ?? "—"}
-                  </td>
+        {hasOpeningLots && (
+          <div className="mt-5 overflow-x-auto">
+            <table className="w-full min-w-[620px] border-separate border-spacing-0 text-sm">
+              <thead className="text-left text-xs text-muted-foreground">
+                <tr>
+                  <th className="border-b border-border pb-3">Account</th>
+                  <th className="border-b border-border pb-3 text-right">Opening lots</th>
+                  <th className="border-b border-border pb-3 text-right">Cost-basis coverage</th>
+                  <th className="border-b border-border pb-3 text-right">Last import</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {view.openingLots.map((account) => (
+                  <tr
+                    key={account.accountId}
+                    id={`opening-lots-${account.accountId}`}
+                    className={cn(
+                      highlightedAccountIds.includes(account.accountId) &&
+                        "outline outline-1 outline-positive/40",
+                    )}
+                  >
+                    <td className="border-b border-border/60 py-3 font-medium">
+                      {account.accountName}
+                    </td>
+                    <td className="border-b border-border/60 py-3 text-right tabular-nums">
+                      {account.lotCount}
+                    </td>
+                    <td className="border-b border-border/60 py-3 text-right">
+                      <Completeness value={account.completeness} />
+                    </td>
+                    <td className="border-b border-border/60 py-3 text-right text-muted-foreground tabular-nums">
+                      {account.lastImportLabel ?? "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
 
       {view.recentlyResolved.length > 0 && (

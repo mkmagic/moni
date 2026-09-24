@@ -5,6 +5,7 @@ import { ArrowLeft, Check, Copy, Download, FileUp } from "lucide-react";
 import { useState } from "react";
 
 import { Money } from "@/components/money";
+import { PillButton } from "@/components/pill-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -26,6 +27,8 @@ export function OpeningLotImportScreen({ prompt, columns }: { prompt: string; co
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Per preview-row index: which rate to keep where the file disagrees with BoI.
+  const [fxChoice, setFxChoice] = useState<Record<number, "mine" | "boi">>({});
   const header = columns.join(",");
 
   async function copyPrompt() {
@@ -63,6 +66,7 @@ export function OpeningLotImportScreen({ prompt, columns }: { prompt: string; co
       };
       if (!response.ok) throw new Error(payload.error ?? "The CSV could not be validated.");
       setValidated(payload);
+      setFxChoice({});
       setStep(3);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The CSV could not be validated.");
@@ -79,7 +83,12 @@ export function OpeningLotImportScreen({ prompt, columns }: { prompt: string; co
       const response = await fetch("/api/investments/activity/opening-lots/import", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ rows: validated.rows }),
+        // Dropping the file's rate makes the server lock the BoI rate instead.
+        body: JSON.stringify({
+          rows: validated.rows.map((row, index) =>
+            fxChoice[index] === "boi" ? { ...row, ilsFxRate: undefined } : row,
+          ),
+        }),
       });
       const payload = (await response.json().catch(() => ({}))) as OpeningLotRefreshResult & {
         error?: string;
@@ -108,13 +117,20 @@ export function OpeningLotImportScreen({ prompt, columns }: { prompt: string; co
           key,
           account,
           identity,
-          rows: validated.preview.rows.filter(
-            (row) =>
-              row.account === account && (row.isin ?? `${row.symbol}@${row.exchange}`) === identity,
-          ),
+          rows: validated.preview.rows
+            .map((row, index) => ({ row, index }))
+            .filter(
+              ({ row }) =>
+                row.account === account &&
+                (row.isin ?? `${row.symbol}@${row.exchange}`) === identity,
+            ),
         };
       })
     : [];
+  const differing = validated
+    ? validated.preview.rows.flatMap((row, index) => (row.fxDiffers ? [index] : []))
+    : [];
+  const unchosen = differing.filter((index) => !fxChoice[index]).length;
 
   return (
     <div className="mx-auto w-full max-w-6xl">
@@ -205,6 +221,21 @@ export function OpeningLotImportScreen({ prompt, columns }: { prompt: string; co
                 </Badge>
               )}
             </div>
+            {differing.length > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius)] border border-primary/40 px-4 py-3 text-sm">
+                <p>
+                  {`${differing.length} ${differing.length === 1 ? "row has" : "rows have"} an FX rate that differs from the Bank of Israel rate for that day. Choose which rate to keep.`}
+                </p>
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    setFxChoice(Object.fromEntries(differing.map((index) => [index, "boi"])))
+                  }
+                >
+                  Use Bank of Israel for all
+                </Button>
+              </div>
+            )}
             {groups.map((group) => (
               <section key={group.key}>
                 <h3 className="border-b border-border bg-muted/40 px-3 py-2 text-sm font-medium">
@@ -229,8 +260,8 @@ export function OpeningLotImportScreen({ prompt, columns }: { prompt: string; co
                       </tr>
                     </thead>
                     <tbody>
-                      {group.rows.map((row, index) => (
-                        <tr key={`${row.tradeDate}:${row.brokerLotId ?? index}`}>
+                      {group.rows.map(({ row, index }) => (
+                        <tr key={index}>
                           <td className="border-b border-border/60 px-3 py-3 tabular-nums">
                             {row.tradeDate}
                           </td>
@@ -251,8 +282,28 @@ export function OpeningLotImportScreen({ prompt, columns }: { prompt: string; co
                             )}
                           </td>
                           <td className="border-b border-border/60 px-3 py-3 tabular-nums">
-                            {row.lockedFxRate ?? "Not available"} ·{" "}
-                            {row.lockedFxProvenance.replaceAll("_", " ")}
+                            {row.fxDiffers ? (
+                              <div className="flex flex-wrap gap-2">
+                                <PillButton
+                                  selected={fxChoice[index] === "mine"}
+                                  onClick={() => setFxChoice({ ...fxChoice, [index]: "mine" })}
+                                >
+                                  {`Yours ${row.lockedFxRate}`}
+                                </PillButton>
+                                <PillButton
+                                  selected={fxChoice[index] === "boi"}
+                                  onClick={() => setFxChoice({ ...fxChoice, [index]: "boi" })}
+                                  title={`Bank of Israel rate published ${row.boiFxDate}`}
+                                >
+                                  {`Bank of Israel ${row.boiFxRate}`}
+                                </PillButton>
+                              </div>
+                            ) : (
+                              <>
+                                {row.lockedFxRate ?? "Not available"} ·{" "}
+                                {row.lockedFxProvenance.replaceAll("_", " ")}
+                              </>
+                            )}
                           </td>
                           <td className="border-b border-border/60 px-3 py-3">
                             <Badge
@@ -306,7 +357,10 @@ export function OpeningLotImportScreen({ prompt, columns }: { prompt: string; co
               <FileUp className="h-4 w-4" /> Upload & validate
             </Button>
           ) : (
-            <Button onClick={() => void importLots()} disabled={!validated?.preview.ready || busy}>
+            <Button
+              onClick={() => void importLots()}
+              disabled={!validated?.preview.ready || unchosen > 0 || busy}
+            >
               Import {validated?.preview.ready ?? 0} opening lots
             </Button>
           )}

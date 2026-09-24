@@ -35,6 +35,11 @@ export interface OpeningLotPreviewRow extends OpeningLotImportRow {
   lockedFxConvention: string | null;
   lockedFxObservationDate: string | null;
   lockedFxProvenance: "boi_derived" | "user_entered" | "unresolved";
+  /** BoI rate for the trade date, shown beside a user-entered rate. */
+  boiFxRate: string | null;
+  boiFxDate: string | null;
+  /** A user-entered rate that disagrees with BoI beyond the user's own rounding. */
+  fxDiffers: boolean;
 }
 
 export interface OpeningLotImportPreview {
@@ -42,6 +47,7 @@ export interface OpeningLotImportPreview {
   ready: number;
   skipped: number;
   unresolvedFx: number;
+  fxDifferences: number;
 }
 
 export interface OpeningLotImportResult {
@@ -286,6 +292,32 @@ async function resolveFx(tx: Tx, row: OpeningLotImportRow): Promise<ResolvedFx> 
   };
 }
 
+/**
+ * Compares a user-entered rate with BoI at the precision the user wrote it in,
+ * so a spreadsheet's rounded 3.77 does not disagree with BoI's 3.773.
+ */
+async function boiComparison(
+  tx: Tx,
+  row: OpeningLotImportRow,
+): Promise<Pick<OpeningLotPreviewRow, "boiFxRate" | "boiFxDate" | "fxDiffers">> {
+  if (!row.ilsFxRate || row.currency === "ILS")
+    return { boiFxRate: null, boiFxDate: null, fxDiffers: false };
+  const boi = await lockAcquisitionFx(tx, {
+    tradeDate: row.tradeDate,
+    fromCurrency: row.currency,
+    toCurrency: "ILS",
+  });
+  if (!boi.rateString) return { boiFxRate: null, boiFxDate: null, fxDiffers: false };
+  const places = row.ilsFxRate.split(".")[1]?.length ?? 0;
+  return {
+    boiFxRate: boi.rateString,
+    boiFxDate: boi.observationDate,
+    fxDiffers: !new Decimal(boi.rateString)
+      .toDecimalPlaces(places, Decimal.ROUND_HALF_UP)
+      .equals(row.ilsFxRate),
+  };
+}
+
 async function preview(tx: Tx, input: OpeningLotImportInput): Promise<OpeningLotImportPreview> {
   const heldKeys: Uint8Array[] = (
     await tx
@@ -307,6 +339,7 @@ async function preview(tx: Tx, input: OpeningLotImportInput): Promise<OpeningLot
       lockedFxConvention: fx.convention,
       lockedFxObservationDate: fx.observationDate,
       lockedFxProvenance: fx.provenance,
+      ...(await boiComparison(tx, row)),
     });
   }
   return {
@@ -314,6 +347,7 @@ async function preview(tx: Tx, input: OpeningLotImportInput): Promise<OpeningLot
     ready: rows.filter((row) => row.status === "ready").length,
     skipped: rows.filter((row) => row.status === "skipped_duplicate").length,
     unresolvedFx: rows.filter((row) => row.lockedFxProvenance === "unresolved").length,
+    fxDifferences: rows.filter((row) => row.fxDiffers).length,
   };
 }
 

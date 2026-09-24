@@ -236,6 +236,23 @@ describe("investment worker seams", () => {
     );
   });
 
+  it("keeps the rates it found when asked to skip missing BOI observations", () => {
+    const csv = Buffer.from(
+      "BASE_CURRENCY,COUNTER_CURRENCY,TIME_PERIOD,OBS_VALUE,UNIT_MULT\nUSD,ILS,2024-09-23,3779,3\n",
+    );
+    expect(
+      parseBoiSdmxCsv(
+        csv,
+        [
+          { currency: "USD", date: "2024-09-24" },
+          { currency: "USD", date: "1990-01-01" },
+          { currency: "XZZ", date: "2024-09-24" },
+        ],
+        { skipMissing: true },
+      ),
+    ).toEqual([{ currency: "USD", date: "2024-09-23", rate: "3.779" }]);
+  });
+
   it("bounds BOI requests to the required currencies and seven-day date window", async () => {
     const fetcher = vi
       .fn()

@@ -42,6 +42,37 @@ new feedback lands.
 
 ## Feedback log (newest first — append, don't overwrite)
 
+### 2026-09-24 (later) — opening-lot import: a disagreement with BoI is the user's call
+
+- **The owner wanted the import to surface, not silently accept, a spreadsheet rate that disagrees
+  with the Bank of Israel.** The review step now shows an amber-outline notice ("N rows have an FX
+  rate that differs…") with a "Use Bank of Israel for all" outline button, and each differing row's
+  FX cell becomes two `PillButton`s — `Yours 3.70` / `Bank of Israel 3.779` (the BoI publication date
+  in the title). Import stays disabled until every differing row has a choice. Choosing BoI simply
+  drops that row's `ilsFxRate` from the import body, so the server locks BoI as usual.
+- **Compare at the user's own precision.** A spreadsheet's `3.78` against BoI's `3.779` is not a
+  disagreement; BoI is rounded to the user's decimals before comparing. Only a real difference asks.
+- **Verifying without the owner's account ref:** the CSV `account` column must match an encrypted
+  external ref the dev key cannot decrypt, so the real preview route returns `account not found`.
+  It still exercises the BoI fetch (rates are cached _before_ the account check — confirm in
+  `fx_rates`), and the choice UI was verified by stubbing `window.fetch` for preview/import and
+  setting the file input through `DataTransfer` + a bubbling `change` event.
+
+### 2026-09-24 — activity & lots: a Lots table, and an empty table is not shown
+
+- **The owner could not find their lots.** Derived tax lots were stored but no screen read them; the
+  only lot surface was a per-account opening-lot _count_. Activity & lots now leads (after the
+  pending queue) with a plain **Lots** table: Date · Stock · Shares · Price · Price (ILS) · Total · Total (ILS). The
+  owner asked for "pretty simplistic", no extra labels — no source or completeness column.
+  Price is `cost ÷ quantity` computed in the domain (includes commission). The owner wanted the
+  **ILS amount, not the FX rate** — Total (ILS) is total cost × the locked acquisition rate, `—` when
+  no rate was locked.
+- **Hide an empty table, keep its actions.** With zero opening lots the Opening lots card shows only
+  its heading and Add/Import buttons; missing history already surfaces as a History-gap item.
+- **One order can be several lots.** IBKR partial fills are separate executions at different prices,
+  so the owner's "three purchases" showed as four rows (1 + 99 shares on the same day). That is
+  correct lot accounting — explain it rather than merging rows.
+
 ### 2026-09-13 — activity & lots verified: identity stays evidence-only
 
 - **Identity ambiguity is deliberately read-only until ingestion retains both candidates.** The
