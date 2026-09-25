@@ -386,7 +386,14 @@ describe("opening cash", () => {
     await deriveAndReconcileInvestmentActivity(f);
     const [account] = await withUser(f.userId, (tx) => tx.select().from(schema.accounts));
     const returns = () =>
-      readInvestmentReturns({ userId: f.userId, accountId: account.id, dataKey: f.dataKey });
+      readInvestmentReturns({
+        userId: f.userId,
+        accountId: account.id,
+        dataKey: f.dataKey,
+        // Value on the snapshot's own day, whose rate the fixture seeds; "now"
+        // would depend on whatever recent rates the test DB happens to hold.
+        now: new Date("2026-08-01T12:00:00Z"),
+      });
 
     const before = await returns();
     expect(before.unrealizedGain.quality.completeness).not.toBe("partial");

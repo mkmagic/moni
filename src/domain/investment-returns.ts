@@ -655,19 +655,30 @@ async function computePerformance(tx: Tx, input: RequiredInput): Promise<Perform
  * Money-weighted return input: the value-series bookends (opening value out, the
  * closing value back in) with every external flow negated in between, matching
  * the sign convention `calculateMoneyWeightedReturn` expects.
+ *
+ * Flows are bounded to the valuation interval exactly as TWR bounds them
+ * (after the opening value, up to the closing one): capital that arrived before
+ * the first snapshot is already inside the opening value, and capital after the
+ * last one is outside the period. With fewer than two valuations there is no
+ * interval, so there is no series — not a same-day pair that solves to ~0%.
  */
-function datedFlowSeries(
+export function datedFlowSeries(
   valuations: Array<{ date: string; value: string }>,
   flowsIls: Array<{ date: string; amount: string }>,
 ): Array<{ date: string; amount: string }> {
-  if (!valuations.length) return [];
+  if (valuations.length < 2) return [];
+  const points = [...valuations].sort((left, right) => left.date.localeCompare(right.date));
+  const opening = points[0];
+  const closing = points.at(-1)!;
   return [
-    { date: valuations[0].date, amount: new Decimal(valuations[0].value).neg().toFixed() },
-    ...flowsIls.map((flow) => ({
-      date: flow.date,
-      amount: new Decimal(flow.amount).neg().toFixed(),
-    })),
-    { date: valuations.at(-1)!.date, amount: valuations.at(-1)!.value },
+    { date: opening.date, amount: new Decimal(opening.value).neg().toFixed() },
+    ...flowsIls
+      .filter((flow) => flow.date > opening.date && flow.date <= closing.date)
+      .map((flow) => ({
+        date: flow.date,
+        amount: new Decimal(flow.amount).neg().toFixed(),
+      })),
+    { date: closing.date, amount: closing.value },
   ];
 }
 

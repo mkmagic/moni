@@ -238,7 +238,7 @@ describe("opening-lot import", () => {
     expect(preview.unresolvedFx).toBe(0);
     expect(preview.rows[0]).toMatchObject({
       lockedFxRate: "1",
-      lockedFxConvention: null,
+      lockedFxConvention: "ILS_PER_ILS",
       lockedFxProvenance: "boi_derived",
     });
 
@@ -248,6 +248,27 @@ describe("opening-lot import", () => {
     await expect(
       withKey((dataKey) => previewOpeningLotImport({ userId, dataKey, rows: badRows })),
     ).rejects.toThrow("invalid_fx_override");
+  });
+
+  it("imports a shekel lot with the identity rate the FX constraint accepts", async () => {
+    const [row] = parseOpeningLotsCsv(
+      Buffer.from(`${header}\n${accountRef},,TASE1,XTAE,2025-01-05,10,,,1000,ILS,,,ILS-LOT\n`),
+    );
+    await expect(
+      withKey((dataKey) => promoteOpeningLotImport({ userId, dataKey, rows: [row] })),
+    ).resolves.toMatchObject({ inserted: 1 });
+    const stored = await withUser(userId, (tx) =>
+      tx
+        .select()
+        .from(schema.investmentOpeningLotEvidence)
+        .where(eq(schema.investmentOpeningLotEvidence.currency, "ILS")),
+    );
+    expect(stored).toHaveLength(1);
+    expect(stored[0]).toMatchObject({
+      lockedFxProvenance: "boi_derived",
+      lockedFxConvention: "ILS_PER_ILS",
+      lockedFxObservationDate: "2025-01-05",
+    });
   });
 
   it("rolls back the whole promotion when a later account cannot be resolved", async () => {

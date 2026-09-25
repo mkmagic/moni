@@ -255,10 +255,16 @@ async function resolveInstrumentId(
 
 async function resolveFx(tx: Tx, row: OpeningLotImportRow): Promise<ResolvedFx> {
   // An ILS acquisition needs no conversion; the rate is the definitional
-  // identity, so skip FX resolution and never emit a nonsensical ILS_PER_ILS
-  // convention label.
+  // identity. The FX check constraint (migration 0044) still requires a
+  // `boi_derived` rate to name its convention and date, so record the identity
+  // explicitly as observed on the trade date.
   if (row.currency === "ILS") {
-    return { rate: "1", convention: null, observationDate: null, provenance: "boi_derived" };
+    return {
+      rate: "1",
+      convention: "ILS_PER_ILS",
+      observationDate: row.tradeDate,
+      provenance: "boi_derived",
+    };
   }
   if (row.ilsFxRate) {
     // A user-entered override is persisted as locked evidence, so validate it is
