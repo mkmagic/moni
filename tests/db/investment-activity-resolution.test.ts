@@ -157,9 +157,17 @@ describe("investment activity resolution", () => {
     }
   }
 
-  it("lists every tax lot with its purchase price and ILS cost at the locked FX", async () => {
+  it("lists every tax lot, newest first, with its purchase price and ILS cost at the locked FX", async () => {
     const view = await withSession(readInvestmentActivity);
     expect(view.lots).toEqual([
+      expect.objectContaining({
+        acquisitionDate: "2026-09-02",
+        quantity: "2",
+        totalCost: "40",
+        pricePerShare: "20",
+        totalCostIls: "120",
+        pricePerShareIls: "60",
+      }),
       expect.objectContaining({
         accountName: "Resolution account",
         instrumentLabel: "EXACT",
@@ -170,14 +178,6 @@ describe("investment activity resolution", () => {
         currency: "XAA",
         totalCostIls: "90",
         pricePerShareIls: "30",
-      }),
-      expect.objectContaining({
-        acquisitionDate: "2026-09-02",
-        quantity: "2",
-        totalCost: "40",
-        pricePerShare: "20",
-        totalCostIls: "120",
-        pricePerShareIls: "60",
       }),
     ]);
   });

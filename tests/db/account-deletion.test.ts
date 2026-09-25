@@ -314,6 +314,13 @@ async function seedFullOwner(label: string): Promise<OwnerFixture> {
     lockedFxProvenance: "unresolved",
     provenance: "imported",
   });
+  await elevatedDb.insert(schema.investmentOpeningCashEvidence).values({
+    ownerId: userId,
+    accountId: investmentAccount.id,
+    currency: "USD",
+    amountCt: ct("250"),
+    provenance: "user_entered",
+  });
   await elevatedDb.insert(schema.investmentCorporateActionEvidence).values({
     ownerId: userId,
     connectionId: connection.id,

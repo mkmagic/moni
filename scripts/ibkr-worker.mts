@@ -12,10 +12,7 @@ import {
   WorkerSourceError,
 } from "@/lib/investments";
 import { promoteInvestmentSnapshot } from "@/domain/investment-promotion";
-import {
-  deriveAndReconcileInvestmentActivity,
-  ingestIbkrFlexActivity,
-} from "@/domain/investment-activity-sync";
+import { deriveAndReconcileInvestmentActivity } from "@/domain/investment-activity-sync";
 import { missingBoiFxPairs } from "@/domain/fx-rates";
 import { markSyncRunFailed } from "@/domain/sync-promotion";
 import { wipe } from "@/lib/crypto";
@@ -73,15 +70,6 @@ async function main(): Promise<void> {
       wipe(fingerprintKey);
     }
     const envelope = normalizeIbkrPayload(xml);
-    // Activity ingestion requires the run to be `running`, so it must precede
-    // promotion (which transitions the run to `succeeded`).
-    await ingestIbkrFlexActivity({
-      userId,
-      connectionId,
-      syncRunId,
-      dataKey: segments[0],
-      evidence: activityEvidence,
-    });
     await completeSourceRefresh({
       envelope,
       activityEvidence,
@@ -93,6 +81,7 @@ async function main(): Promise<void> {
           syncRunId,
           dataKey: segments[0],
           envelope: ready,
+          activityEvidence,
         }),
     });
     // Derivation and reconciliation need the freshly promoted snapshot.

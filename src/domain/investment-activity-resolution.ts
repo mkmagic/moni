@@ -10,6 +10,7 @@ import {
   investmentActivityEvidence,
   investmentDisposalResolutionQueue,
   investmentLotClosures,
+  investmentOpeningCashEvidence,
   investmentOpeningLotEvidence,
   investmentReconciliationQuality,
   investmentTaxLots,
@@ -96,6 +97,8 @@ export interface InvestmentResolutionItemView {
     currency: string | null;
     openingQuantity: string | null;
     canAddOpeningLot: boolean;
+    /** For a cash gap: the opening balance that would make activity match the snapshot. */
+    suggestedOpeningCash: string | null;
   };
 }
 
@@ -226,6 +229,7 @@ interface ReadContext {
   mappings: Array<typeof instrumentSourceMappings.$inferSelect>;
   lots: Array<typeof investmentTaxLots.$inferSelect>;
   closures: Array<typeof investmentLotClosures.$inferSelect>;
+  openingCash: Array<typeof investmentOpeningCashEvidence.$inferSelect>;
 }
 
 async function readContext(
@@ -279,6 +283,12 @@ async function readContext(
         .orderBy(asc(investmentTaxLots.tradeDate))
     : [];
   const closures = await tx.select().from(investmentLotClosures);
+  const openingCash = accountIds.length
+    ? await tx
+        .select()
+        .from(investmentOpeningCashEvidence)
+        .where(inArray(investmentOpeningCashEvidence.accountId, accountIds))
+    : [];
   return {
     accountById: new Map(accountRows.map((row) => [row.id, row])),
     activityById: new Map(activityRows.map((row) => [row.id, row])),
@@ -287,6 +297,7 @@ async function readContext(
     mappings,
     lots,
     closures,
+    openingCash,
   };
 }
 
@@ -393,6 +404,26 @@ function toItem(
     new Decimal(expected).gt(observed)
       ? new Decimal(expected).minus(observed).toString()
       : null;
+  // Observed cash already includes any opening cash recorded earlier, so the
+  // suggestion replaces that balance with one that closes the gap.
+  const recordedOpeningCash = context.openingCash.find(
+    (cash) => cash.accountId === quality?.accountId && cash.currency === quality?.currency,
+  );
+  const suggestedOpeningCash =
+    quality?.dimension === "cash_balance" &&
+    quality.currency &&
+    expected !== null &&
+    observed !== null
+      ? new Decimal(expected)
+          .minus(observed)
+          .plus(
+            recordedOpeningCash
+              ? text(dataKey, recordedOpeningCash, recordedOpeningCash.amountCt, "amount_ct")!
+              : "0",
+          )
+          .toString()
+      : null;
+  const cashGap = quality?.dimension === "cash_balance";
   return {
     id: row.id,
     kind: row.kind,
@@ -406,8 +437,10 @@ function toItem(
     instrumentLabel: instrumentLabel(dataKey, context.instrumentById.get(instrumentId ?? "")),
     eventDate: activity?.tradeDate ?? null,
     eventDateLabel: dateLabel(activity?.tradeDate ?? quality?.createdAt ?? null),
-    consequence: presentation.consequence,
-    affectedMetrics: presentation.metrics,
+    consequence: cashGap
+      ? "Activity history does not explain all of this cash, so returns stay partial until the cash held before the history began is recorded."
+      : presentation.consequence,
+    affectedMetrics: cashGap ? ["Returns"] : presentation.metrics,
     retainedDetails: row.detailsCt ? text(dataKey, row, row.detailsCt, "details_ct") : null,
     resolvedAtLabel: dateLabel(row.resolvedAt),
     sale:
@@ -463,6 +496,7 @@ function toItem(
             currency: quality.currency,
             openingQuantity,
             canAddOpeningLot: Boolean(openingQuantity && instrumentId),
+            suggestedOpeningCash,
           }
         : null,
   };
@@ -512,7 +546,8 @@ async function lotList(
     .select()
     .from(investmentTaxLots)
     .where(eq(investmentTaxLots.policyVersion, BROKER_ELSE_USER_POLICY_VERSION))
-    .orderBy(asc(investmentTaxLots.tradeDate), asc(investmentTaxLots.id));
+    // Newest first, across accounts; the screen filters by account.
+    .orderBy(desc(investmentTaxLots.tradeDate), desc(investmentTaxLots.id));
   const instrumentIds = [...new Set(lots.map((lot) => lot.instrumentId))];
   const instrumentById = new Map(
     (instrumentIds.length
@@ -520,34 +555,31 @@ async function lotList(
       : []
     ).map((row) => [row.id, row]),
   );
-  const accountOrder = accountsView.map((account) => account.accountId);
-  return lots
-    .map((lot): InvestmentLotView => {
-      const quantity = text(dataKey, lot, lot.originalQuantityCt, "original_quantity_ct")!;
-      const totalCost = text(dataKey, lot, lot.costBasisCt, "cost_basis_ct")!;
-      const rate =
-        lot.costBasisCurrency === "ILS"
-          ? "1"
-          : text(dataKey, lot, lot.lockedFxRateCt, "locked_fx_rate_ct");
-      return {
-        id: lot.id,
-        accountId: lot.accountId,
-        accountName:
-          accountsView.find((account) => account.accountId === lot.accountId)?.accountName ??
-          "Investment account",
-        instrumentLabel: instrumentLabel(dataKey, instrumentById.get(lot.instrumentId)),
-        acquisitionDate: lot.tradeDate,
-        acquisitionDateLabel: dateLabel(lot.tradeDate)!,
-        quantity,
-        remainingQuantity: text(dataKey, lot, lot.remainingQuantityCt, "remaining_quantity_ct")!,
-        totalCost,
-        pricePerShare: new Decimal(totalCost).div(quantity).toString(),
-        currency: lot.costBasisCurrency,
-        totalCostIls: rate ? new Decimal(totalCost).mul(rate).toString() : null,
-        pricePerShareIls: rate ? new Decimal(totalCost).div(quantity).mul(rate).toString() : null,
-      };
-    })
-    .sort((a, b) => accountOrder.indexOf(a.accountId) - accountOrder.indexOf(b.accountId));
+  return lots.map((lot): InvestmentLotView => {
+    const quantity = text(dataKey, lot, lot.originalQuantityCt, "original_quantity_ct")!;
+    const totalCost = text(dataKey, lot, lot.costBasisCt, "cost_basis_ct")!;
+    const rate =
+      lot.costBasisCurrency === "ILS"
+        ? "1"
+        : text(dataKey, lot, lot.lockedFxRateCt, "locked_fx_rate_ct");
+    return {
+      id: lot.id,
+      accountId: lot.accountId,
+      accountName:
+        accountsView.find((account) => account.accountId === lot.accountId)?.accountName ??
+        "Investment account",
+      instrumentLabel: instrumentLabel(dataKey, instrumentById.get(lot.instrumentId)),
+      acquisitionDate: lot.tradeDate,
+      acquisitionDateLabel: dateLabel(lot.tradeDate)!,
+      quantity,
+      remainingQuantity: text(dataKey, lot, lot.remainingQuantityCt, "remaining_quantity_ct")!,
+      totalCost,
+      pricePerShare: new Decimal(totalCost).div(quantity).toString(),
+      currency: lot.costBasisCurrency,
+      totalCostIls: rate ? new Decimal(totalCost).mul(rate).toString() : null,
+      pricePerShareIls: rate ? new Decimal(totalCost).div(quantity).mul(rate).toString() : null,
+    };
+  });
 }
 
 export function readInvestmentActivity(session: Session): Promise<InvestmentActivityView> {

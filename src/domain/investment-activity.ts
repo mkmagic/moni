@@ -78,7 +78,7 @@ async function validateSync(tx: Tx, input: InvestmentActivityIngestionInput): Pr
   const [run] = await tx.select().from(syncRuns).where(eq(syncRuns.id, input.syncRunId)).limit(1);
   if (
     !connection ||
-    connection.connectorId !== "ibkr_flex" ||
+    (connection.connectorId !== "ibkr_flex" && connection.connectorId !== "snaptrade") ||
     !run ||
     run.connectionId !== input.connectionId ||
     run.status !== "running"
@@ -116,6 +116,7 @@ async function resolveAccount(
 async function resolveInstrument(
   tx: Tx,
   input: InvestmentActivityIngestionInput,
+  provider: InvestmentActivityEvidence["source"],
   sourceSecurityId: string | undefined,
   sourceSecurityIdKind: string | undefined,
   currency: string | undefined,
@@ -124,7 +125,7 @@ async function resolveInstrument(
   const mappings = await tx
     .select()
     .from(instrumentSourceMappings)
-    .where(eq(instrumentSourceMappings.provider, "ibkr_flex"));
+    .where(eq(instrumentSourceMappings.provider, provider));
   for (const mapping of mappings) {
     if (mapping.identifierKind !== sourceSecurityIdKind) continue;
     const identifier = decText(
@@ -150,7 +151,7 @@ async function resolveInstrument(
     id: mappingId,
     ownerId: input.userId,
     instrumentId,
-    provider: "ibkr_flex",
+    provider,
     identifierKind: sourceSecurityIdKind,
     providerIdentifierCt: encText(
       input.dataKey,
@@ -345,6 +346,7 @@ async function ingestActivity(
   const instrumentId = await resolveInstrument(
     tx,
     input,
+    evidence.source,
     evidence.sourceSecurityId,
     evidence.sourceSecurityIdKind,
     evidence.currency,
@@ -449,6 +451,7 @@ async function ingestOpeningLot(
   const instrumentId = await resolveInstrument(
     tx,
     input,
+    evidence.source === "opening_lot_import" ? "ibkr_flex" : evidence.source,
     evidence.sourceSecurityId,
     evidence.sourceSecurityIdKind,
     evidence.currency,
@@ -524,6 +527,7 @@ async function ingestCorporateAction(
   const instrumentId = await resolveInstrument(
     tx,
     input,
+    evidence.source,
     evidence.sourceSecurityId,
     evidence.sourceSecurityIdKind,
     evidence.currency,
@@ -602,6 +606,18 @@ async function ingest(
     // links them so the evidence is ready when an accruals table is introduced.
   }
   return result;
+}
+
+/**
+ * The same ingestion inside a caller's transaction. Snapshot promotion uses it
+ * so a connection's first sync can attach activity to the account rows it has
+ * only just created, before it marks the run `succeeded`.
+ */
+export function ingestInvestmentActivityEvidenceInTransaction(
+  tx: Tx,
+  input: InvestmentActivityIngestionInput,
+): Promise<InvestmentActivityIngestionResult> {
+  return ingest(tx, input);
 }
 
 /** Persists normalized activity evidence atomically under the owner's RLS scope. */

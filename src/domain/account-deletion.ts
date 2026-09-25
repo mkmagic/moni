@@ -58,6 +58,7 @@ import {
   investmentDisposalResolutionQueue,
   investmentLotClosures,
   investmentMarketQuotes,
+  investmentOpeningCashEvidence,
   investmentOpeningLotEvidence,
   investmentReconciliationQuality,
   investmentSnapshotCashBalances,
@@ -126,6 +127,9 @@ export async function deleteAccount(
     await tx
       .delete(investmentOpeningLotEvidence)
       .where(eq(investmentOpeningLotEvidence.ownerId, userId));
+    await tx
+      .delete(investmentOpeningCashEvidence)
+      .where(eq(investmentOpeningCashEvidence.ownerId, userId));
     await tx
       .delete(investmentActivityEvidence)
       .where(eq(investmentActivityEvidence.ownerId, userId));

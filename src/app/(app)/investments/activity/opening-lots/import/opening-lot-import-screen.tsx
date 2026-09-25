@@ -306,19 +306,12 @@ export function OpeningLotImportScreen({ prompt, columns }: { prompt: string; co
                             )}
                           </td>
                           <td className="border-b border-border/60 px-3 py-3">
-                            <Badge
-                              className={
-                                row.lockedFxProvenance === "unresolved"
-                                  ? "border-primary/40 text-primary"
-                                  : "border-positive/30 text-positive"
-                              }
-                            >
-                              {row.status === "skipped_duplicate"
-                                ? "Duplicate"
-                                : row.lockedFxProvenance === "unresolved"
-                                  ? "Partial"
-                                  : "Complete"}
-                            </Badge>
+                            {(row.status === "skipped_duplicate" ||
+                              row.lockedFxProvenance === "unresolved") && (
+                              <Badge className="border-primary/40 text-primary">
+                                {row.status === "skipped_duplicate" ? "Duplicate" : "Partial"}
+                              </Badge>
+                            )}
                           </td>
                         </tr>
                       ))}

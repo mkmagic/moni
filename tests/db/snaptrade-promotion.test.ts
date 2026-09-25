@@ -6,9 +6,14 @@ import { eq } from "drizzle-orm";
 import { withUser } from "@/db/client";
 import * as schema from "@/db/schema";
 import { promoteInvestmentSnapshot } from "@/domain/investment-promotion";
+import { deriveAndReconcileInvestmentActivity } from "@/domain/investment-activity-sync";
+import { readInvestmentResolutionItem } from "@/domain/investment-activity-resolution";
+import { recordOpeningCashForGap } from "@/domain/investment-opening-cash";
+import { readInvestmentReturns } from "@/domain/investment-returns";
 import { listTiingoQuoteTargetsForUser } from "@/domain/investment-valuation";
 import { createUser } from "@/domain/registration";
 import {
+  normalizeSnaptradeActivity,
   normalizeSnaptradeHoldings,
   parseJsonPreservingNumbers,
   type InvestmentSyncEnvelope,
@@ -83,6 +88,7 @@ function snaptradeEnvelope(): InvestmentSyncEnvelope {
       },
       balances: [{ currency: { code: "USD" }, cash: "252.18" }],
       positions,
+      activities: [],
     },
   ]);
 }
@@ -216,5 +222,238 @@ describe("snaptrade instrument metadata", () => {
     await promoteInvestmentSnapshot({ ...f, syncRunId, envelope: fresh });
     const targets = await listTiingoQuoteTargetsForUser(f.userId, f.dataKey);
     expect(targets.map((target) => target.symbol)).toEqual(["VTI"]);
+  });
+});
+
+function fixtureActivities(): SnaptradeAccountPayload["activities"] {
+  return (
+    parseJsonPreservingNumbers(
+      readFileSync(
+        join(process.cwd(), "tests/fixtures/investments/snaptrade-activities.json"),
+        "utf8",
+      ),
+    ) as { data: SnaptradeAccountPayload["activities"] }
+  ).data;
+}
+
+function activityEvidence(activities: SnaptradeAccountPayload["activities"]) {
+  return normalizeSnaptradeActivity([
+    {
+      account: {
+        id: "c925331b-52b8-47ff-95f0-aefacc4236a8",
+        institution_account_id: "EB5AE622BC903C53DD86B729D2C920AB0089806D7849F5414B170F6FB372EE23",
+        sync_status: {
+          holdings: { last_successful_sync: "2026-08-01T00:00:00Z", initial_sync_completed: true },
+        },
+        balance: { total: { amount: "0", currency: "USD" } },
+      },
+      balances: [],
+      positions: { results: [], data_freshness: { as_of: "2026-08-01T00:00:00Z" } },
+      activities,
+    },
+  ]);
+}
+
+async function nextRun(f: Awaited<ReturnType<typeof fixture>>): Promise<string> {
+  const syncRunId = randomUUID();
+  await withUser(f.userId, (tx) =>
+    tx.insert(schema.syncRuns).values({
+      id: syncRunId,
+      ownerId: f.userId,
+      connectionId: f.connectionId,
+      status: "running",
+    }),
+  );
+  return syncRunId;
+}
+
+// The worker's order: promote the snapshot together with its activity, then
+// derive lots and reconcile against it.
+describe("snaptrade activity sync", () => {
+  afterAll(async () => cleanupOwners(users));
+
+  it("brings in lots and dividends on the first sync, on the snapshot's own instrument", async () => {
+    const f = await fixture();
+    await promoteInvestmentSnapshot({
+      ...f,
+      envelope: snaptradeEnvelope(),
+      activityEvidence: activityEvidence(fixtureActivities()),
+    });
+    await deriveAndReconcileInvestmentActivity(f);
+
+    await withUser(f.userId, async (tx) => {
+      const [position] = await tx.select().from(schema.investmentSnapshotPositions);
+      const activities = await tx.select().from(schema.investmentActivityEvidence);
+      expect(activities).toHaveLength(5);
+      const lots = await tx.select().from(schema.investmentTaxLots);
+      expect(lots).toHaveLength(2);
+      expect(new Set(lots.map((lot) => lot.instrumentId))).toEqual(
+        new Set([position.instrumentId]),
+      );
+      const dividends = activities.filter((row) => row.activityType === "dividend");
+      expect(dividends.map((row) => row.instrumentId)).toEqual([position.instrumentId]);
+      // 10.358 derived shares against 518.4274 held: the pre-history shares
+      // surface as a gap rather than being invented.
+      const gaps = await tx.select().from(schema.investmentReconciliationQuality);
+      expect(gaps.map((gap) => gap.dimension)).toContain("unexplained_opening_quantity");
+    });
+
+    // SnapTrade re-serves the whole history every sync; it must not double.
+    const replayRun = await nextRun(f);
+    await promoteInvestmentSnapshot({
+      ...f,
+      syncRunId: replayRun,
+      envelope: snaptradeEnvelope(),
+      activityEvidence: activityEvidence(fixtureActivities()),
+    });
+    await deriveAndReconcileInvestmentActivity(f);
+    await withUser(f.userId, async (tx) => {
+      expect(await tx.select().from(schema.investmentActivityEvidence)).toHaveLength(5);
+      expect(await tx.select().from(schema.investmentTaxLots)).toHaveLength(2);
+    });
+  });
+
+  it("completes an instrument that activity created before the snapshot held it", async () => {
+    // Bought and sold out between two syncs: only activity knows the security,
+    // so ingestion creates a bare generic instrument. When it is bought again
+    // and held, the snapshot reports it as an ETF.
+    const f = await fixture();
+    const [, , buy] = fixtureActivities();
+    const newBuy = {
+      ...buy,
+      id: "00000000-0000-4000-8000-0000000000aa",
+      symbol: { symbol: "VXUS", figi_code: "BBG002N7Q4X4" },
+    };
+    await promoteInvestmentSnapshot({
+      ...f,
+      envelope: snaptradeEnvelope(),
+      activityEvidence: activityEvidence([newBuy]),
+    });
+    const envelope = snaptradeEnvelope();
+    envelope.accounts[0].positions.push({
+      ...envelope.accounts[0].positions[0],
+      sourceSecurityId: "BBG002N7Q4X4",
+      symbol: "VXUS",
+      name: "Vanguard Total International Stock ETF",
+      quantity: "0.358",
+    });
+    const result = await promoteInvestmentSnapshot({ ...f, syncRunId: await nextRun(f), envelope });
+    expect(result).toMatchObject({ outcome: "promoted", positions: 2 });
+    await withUser(f.userId, async (tx) => {
+      const [activity] = await tx.select().from(schema.investmentActivityEvidence);
+      const [instrument] = await tx
+        .select()
+        .from(schema.instruments)
+        .where(eq(schema.instruments.id, activity.instrumentId!));
+      expect(instrument.kind).toBe("etf");
+      const positions = await tx.select().from(schema.investmentSnapshotPositions);
+      expect(positions.map((position) => position.instrumentId)).toContain(instrument.id);
+    });
+  });
+});
+
+// SnapTrade's Schwab history starts after the account was funded, so activity
+// can never explain all of the snapshot's cash.
+describe("opening cash", () => {
+  afterAll(async () => cleanupOwners(users));
+
+  it("limits a cash gap to returns, and closes it once opening cash is recorded", async () => {
+    const f = await fixture();
+    // Every share is explained by activity; only cash is not: 252.18 held
+    // against 201.65 the history accounts for.
+    // Rates for the fixture's buy dates, so the lots' acquisition FX locks
+    // and the only thing left unexplained is cash.
+    await elevatedDb
+      .insert(schema.fxRates)
+      .values(
+        ["2024-10-01", "2025-03-18"].map((date) => ({
+          id: randomUUID(),
+          fromCurrency: "USD",
+          toCurrency: "ILS",
+          date,
+          rate: "3.7",
+          source: "boi",
+        })),
+      )
+      .onConflictDoNothing();
+    const envelope = snaptradeEnvelope();
+    envelope.accounts[0].positions[0].quantity = "10.358";
+    await promoteInvestmentSnapshot({
+      ...f,
+      envelope,
+      activityEvidence: activityEvidence(fixtureActivities()),
+    });
+    await deriveAndReconcileInvestmentActivity(f);
+    const [account] = await withUser(f.userId, (tx) => tx.select().from(schema.accounts));
+    const returns = () =>
+      readInvestmentReturns({ userId: f.userId, accountId: account.id, dataKey: f.dataKey });
+
+    const before = await returns();
+    expect(before.unrealizedGain.quality.completeness).not.toBe("partial");
+    expect(before.dividendIncome.quality.completeness).not.toBe("partial");
+
+    const [item] = await withUser(f.userId, (tx) =>
+      tx
+        .select()
+        .from(schema.investmentDisposalResolutionQueue)
+        .where(eq(schema.investmentDisposalResolutionQueue.status, "pending")),
+    );
+    const session = {
+      id: "opening-cash-test",
+      userId: f.userId,
+      dataKey: Buffer.from(f.dataKey),
+      baseCurrency: "ILS",
+      syncPromptDismissed: false,
+      expiresAt: Date.now() + 60_000,
+    };
+    const view = await readInvestmentResolutionItem(session, item.id);
+    expect(view?.gap).toMatchObject({ currency: "USD", suggestedOpeningCash: "50.53" });
+    expect(view?.affectedMetrics).toEqual(["Returns"]);
+
+    expect(
+      await recordOpeningCashForGap({ ...f, queueId: item.id, amount: "50.53" }),
+    ).toMatchObject({ accountId: account.id, gaps: 0 });
+    await withUser(f.userId, async (tx) => {
+      const [resolved] = await tx
+        .select()
+        .from(schema.investmentDisposalResolutionQueue)
+        .where(eq(schema.investmentDisposalResolutionQueue.id, item.id));
+      expect(resolved.status).toBe("resolved");
+      // Opening cash seeds reconciliation only; it is never a deposit.
+      expect(
+        (await tx.select().from(schema.investmentActivityEvidence)).filter(
+          (row) => row.activityType === "deposit",
+        ),
+      ).toHaveLength(1);
+    });
+  });
+
+  it("refuses to record opening cash against a gap that is not about cash", async () => {
+    const f = await fixture();
+    await promoteInvestmentSnapshot({
+      ...f,
+      envelope: snaptradeEnvelope(),
+      activityEvidence: activityEvidence(fixtureActivities()),
+    });
+    await deriveAndReconcileInvestmentActivity(f);
+    const items = await withUser(f.userId, (tx) =>
+      tx
+        .select({
+          id: schema.investmentDisposalResolutionQueue.id,
+          dimension: schema.investmentReconciliationQuality.dimension,
+        })
+        .from(schema.investmentDisposalResolutionQueue)
+        .innerJoin(
+          schema.investmentReconciliationQuality,
+          eq(
+            schema.investmentReconciliationQuality.id,
+            schema.investmentDisposalResolutionQueue.reconciliationQualityId,
+          ),
+        ),
+    );
+    const quantityGap = items.find((row) => row.dimension !== "cash_balance")!;
+    await expect(
+      recordOpeningCashForGap({ ...f, queueId: quantityGap.id, amount: "1" }),
+    ).rejects.toMatchObject({ code: "not_a_cash_gap" });
   });
 });

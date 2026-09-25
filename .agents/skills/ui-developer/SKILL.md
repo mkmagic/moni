@@ -42,6 +42,23 @@ new feedback lands.
 
 ## Feedback log (newest first — append, don't overwrite)
 
+### 2026-09-25 — investment connections: no backfill picker; cash gaps get a way out
+
+- **The "how far back" picker misled on investment connections.** It only ever reached bank
+  scrapes; IBKR/SnapTrade fetch whatever history the broker offers. The owner asked to hide it for
+  `kind: "investment"` connectors (and a leftover "Nothing for now" must not skip their first sync).
+- **A gap with no in-app fix reads as a bug.** A `cash_balance` gap told the owner to "re-import a
+  corrected statement" that cannot exist (SnapTrade's history is capped). Cash gaps now offer an
+  inline "Record opening cash" field prefilled with the amount that closes the gap, and name only
+  "Returns" as affected — an account-wide cash gap no longer marks every figure partial.
+- **Label problems only.** The owner asked to drop "Complete" and "History unknown" badges: no
+  label when nothing is wrong. Only `Partial` (and `Duplicate` on import) render. "Unknown" is not a
+  problem signal — dividends/TWR/MWR never record coverage, so it showed on every account.
+- **The Lots table follows the transactions table.** Scrolls inside its card (`max-h-[60vh]`,
+  sticky header, `border-separate`), newest lot first, with the performance screen's
+  "Whole portfolio / account" pill filter instead of per-account group rows; an Account column
+  appears only in the whole-portfolio view.
+
 ### 2026-09-24 (later) — opening-lot import: a disagreement with BoI is the user's call
 
 - **The owner wanted the import to surface, not silently accept, a spreadsheet rate that disagrees

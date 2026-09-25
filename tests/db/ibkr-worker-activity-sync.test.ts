@@ -5,10 +5,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { withUser } from "@/db/client";
 import * as schema from "@/db/schema";
 import { encText } from "@/domain/fields";
-import {
-  deriveAndReconcileInvestmentActivity,
-  ingestIbkrFlexActivity,
-} from "@/domain/investment-activity-sync";
+import { ingestInvestmentActivityEvidence } from "@/domain/investment-activity";
+import { deriveAndReconcileInvestmentActivity } from "@/domain/investment-activity-sync";
 import { getDevUserDataKey } from "@/lib/crypto";
 import { normalizeIbkrFlexActivityXml, type IbkrFlexActivityEvidenceSet } from "@/lib/investments";
 import { cleanupOwners, elevatedDb, elevatedPool } from "./helpers";
@@ -86,15 +84,14 @@ describe("ibkr worker activity sync wiring", () => {
   it("ingests activity and derives tax lots from the same statement the worker fetches", async () => {
     const dataKey = getDevUserDataKey(userId);
     try {
-      const ingested = await ingestIbkrFlexActivity({
+      const ingested = await ingestInvestmentActivityEvidence({
         userId,
         connectionId,
         syncRunId,
         dataKey,
         evidence: parse(),
       });
-      expect(ingested).not.toBeNull();
-      expect(ingested!.activitiesInserted).toBeGreaterThan(0);
+      expect(ingested.activitiesInserted).toBeGreaterThan(0);
 
       await deriveAndReconcileInvestmentActivity({ userId, connectionId, dataKey });
     } finally {
@@ -107,34 +104,5 @@ describe("ibkr worker activity sync wiring", () => {
     }));
     expect(counts.activities).toBeGreaterThan(0);
     expect(counts.lots).toBeGreaterThan(0);
-  });
-
-  it("skips activity ingestion when the connection has no account yet (first sync)", async () => {
-    const [connection] = await elevatedDb
-      .insert(schema.connections)
-      .values({
-        ownerId: userId,
-        connectorId: "ibkr_flex",
-        credentialsCt: Buffer.from("test-only"),
-        status: "active",
-      })
-      .returning({ id: schema.connections.id });
-    const [run] = await elevatedDb
-      .insert(schema.syncRuns)
-      .values({ ownerId: userId, connectionId: connection.id, status: "running" })
-      .returning({ id: schema.syncRuns.id });
-    const dataKey = getDevUserDataKey(userId);
-    try {
-      const ingested = await ingestIbkrFlexActivity({
-        userId,
-        connectionId: connection.id,
-        syncRunId: run.id,
-        dataKey,
-        evidence: parse(),
-      });
-      expect(ingested).toBeNull();
-    } finally {
-      dataKey.fill(0);
-    }
   });
 });

@@ -45,6 +45,7 @@ export {
 export {
   SNAPTRADE_API_ORIGIN,
   fetchSnaptradeHoldings,
+  normalizeSnaptradeActivity,
   normalizeSnaptradeHoldings,
   parseJsonPreservingNumbers,
   type SnaptradeAccountPayload,

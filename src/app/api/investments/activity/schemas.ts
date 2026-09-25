@@ -58,3 +58,12 @@ export const singleOpeningLotBody = z
     ilsFxRate: decimal.optional(),
   })
   .strict();
+
+export const openingCashBody = z
+  .object({
+    amount: z
+      .string()
+      .regex(/^-?\d+(?:\.\d+)?$/)
+      .max(200),
+  })
+  .strict();

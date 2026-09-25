@@ -28,6 +28,64 @@ async function post<T>(url: string, body: unknown): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+/**
+ * A cash gap the broker's history cannot explain (it starts after the account
+ * was funded) closes with the cash held before that history began.
+ */
+function OpeningCashForm({
+  item,
+  suggested,
+  currency,
+}: {
+  item: InvestmentResolutionItemView;
+  suggested: string;
+  currency: string;
+}) {
+  const [amount, setAmount] = useState(suggested);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const valid = /^-?\d+(?:\.\d+)?$/.test(amount.trim());
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      await post(`/api/investments/activity/resolutions/${item.id}/opening-cash`, {
+        amount: amount.trim(),
+      });
+      window.location.assign(`/investments/activity?resolved=${encodeURIComponent(item.id)}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The opening cash could not be saved.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="grid gap-3 border-t border-border pt-4 text-sm">
+      <p className="text-muted-foreground">
+        The broker&apos;s history starts after this account already held cash. Record the cash it
+        held before the history began; the suggested amount is what makes the two agree.
+      </p>
+      <div className="flex flex-wrap items-center justify-end gap-3">
+        <label className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">Opening cash ({currency})</span>
+          <Input
+            aria-label={`Opening cash in ${currency}`}
+            inputMode="decimal"
+            value={amount}
+            onChange={(event) => setAmount(event.target.value)}
+            className="max-w-36 text-right tabular-nums"
+          />
+        </label>
+        <Button onClick={() => void save()} disabled={!valid || busy}>
+          Record opening cash
+        </Button>
+      </div>
+      {error && <p className="text-right text-negative">{error}</p>}
+    </div>
+  );
+}
+
 function Evidence({ item }: { item: InvestmentResolutionItemView }) {
   return (
     <div className="grid gap-3 text-sm sm:grid-cols-2">
@@ -279,15 +337,11 @@ function SaleWizard({ item }: { item: InvestmentResolutionItemView }) {
                         </span>
                       </td>
                       <td className="border-b border-border/60 py-3">
-                        <Badge
-                          className={
-                            lot.completeness === "complete"
-                              ? "border-positive/30 text-positive"
-                              : "border-primary/40 text-primary"
-                          }
-                        >
-                          {lot.completeness}
-                        </Badge>
+                        {lot.completeness !== "complete" && (
+                          <Badge className="border-primary/40 text-primary">
+                            {lot.completeness}
+                          </Badge>
+                        )}
                       </td>
                       <td className="border-b border-border/60 py-3 pl-4">
                         <Input
@@ -458,6 +512,12 @@ export function ResolutionScreen({ item }: { item: InvestmentResolutionItemView 
                   Add the missing opening lot
                 </Link>
               </div>
+            ) : item.gap.suggestedOpeningCash !== null && item.gap.currency ? (
+              <OpeningCashForm
+                item={item}
+                suggested={item.gap.suggestedOpeningCash}
+                currency={item.gap.currency}
+              />
             ) : (
               <div className="rounded-[var(--radius)] border border-border p-4 text-sm text-muted-foreground">
                 This gap needs source evidence Moni cannot create. Re-import a corrected broker

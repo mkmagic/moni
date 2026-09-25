@@ -160,7 +160,10 @@ async function metricQuality(
     .from(investmentCorporateActionEvidence)
     .where(eq(investmentCorporateActionEvidence.accountId, input.accountId));
   const reconciliation = await tx
-    .select({ instrumentId: investmentReconciliationQuality.instrumentId })
+    .select({
+      instrumentId: investmentReconciliationQuality.instrumentId,
+      dimension: investmentReconciliationQuality.dimension,
+    })
     .from(investmentReconciliationQuality)
     .where(
       and(
@@ -175,7 +178,11 @@ async function metricQuality(
   );
   const hasScopedReconciliation = reconciliation.some(
     (row) =>
-      !input.instrumentId || row.instrumentId === null || row.instrumentId === input.instrumentId,
+      // Unexplained cash leaves the account's external flows uncertain, so it
+      // qualifies only the flow-based returns — not a security's cost basis,
+      // gains, or dividends, which it cannot change.
+      (row.dimension !== "cash_balance" || metric === "twr" || metric === "mwr") &&
+      (!input.instrumentId || row.instrumentId === null || row.instrumentId === input.instrumentId),
   );
   const unresolvedDisposal = pending.some((row) => row.kind === "unresolved_disposal");
   if (

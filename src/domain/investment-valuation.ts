@@ -12,6 +12,7 @@ import {
   investmentActivityEvidence,
   investmentCorporateActionEvidence,
   investmentDisposalResolutionQueue,
+  investmentOpeningCashEvidence,
   investmentReconciliationQuality,
   investmentSnapshotCashBalances,
   investmentSnapshotDetails,
@@ -813,6 +814,10 @@ async function reconcileInvestmentActivityInTransaction(
     .select()
     .from(investmentActivityEvidence)
     .where(eq(investmentActivityEvidence.accountId, input.accountId));
+  const openingCash = await tx
+    .select()
+    .from(investmentOpeningCashEvidence)
+    .where(eq(investmentOpeningCashEvidence.accountId, input.accountId));
   const coverage = await tx
     .select()
     .from(investmentActivityCoverage)
@@ -899,6 +904,13 @@ async function reconcileInvestmentActivityInTransaction(
     );
   }
   const observedCash = new Map<string, Decimal>();
+  // Cash held before the history began, as the owner recorded it.
+  for (const row of openingCash) {
+    observedCash.set(
+      row.currency,
+      new Decimal(decText(input.dataKey, row.amountCt, row.id, "amount_ct", row.version)!),
+    );
+  }
   for (const row of activities) {
     if (!row.currency || !row.netCashAmountCt) continue;
     const amount = decText(

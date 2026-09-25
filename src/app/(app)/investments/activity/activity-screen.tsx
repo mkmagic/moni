@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { CheckCircle2, ChevronRight, FileUp, Plus, TriangleAlert } from "lucide-react";
-import { Fragment, useState } from "react";
+import { useState } from "react";
 
 import { Money } from "@/components/money";
 import { Badge } from "@/components/ui/badge";
@@ -21,20 +21,10 @@ const FILTERS: Array<{ kind: InvestmentResolutionKind; label: string }> = [
 const linkButton =
   "inline-flex items-center justify-center gap-2 rounded-[var(--radius)] border border-border px-4 py-2 text-sm font-medium text-foreground transition hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring";
 
+/** Only a known problem earns a label; complete and unknown stay quiet. */
 function Completeness({ value }: { value: "complete" | "partial" | "unknown" }) {
-  return (
-    <Badge
-      className={
-        value === "complete"
-          ? "border-positive/30 text-positive"
-          : value === "partial"
-            ? "border-primary/40 text-primary"
-            : "text-muted-foreground"
-      }
-    >
-      {value === "unknown" ? "Not available" : value[0].toUpperCase() + value.slice(1)}
-    </Badge>
-  );
+  if (value !== "partial") return null;
+  return <Badge className="border-primary/40 text-primary">Partial</Badge>;
 }
 
 export function ActivityScreen({
@@ -55,7 +45,14 @@ export function ActivityScreen({
     accountName: visible.find((item) => item.accountId === accountId)!.accountName,
     items: visible.filter((item) => item.accountId === accountId),
   }));
-  const multipleLotAccounts = new Set(view.lots.map((lot) => lot.accountId)).size > 1;
+  const lotAccounts = [
+    ...new Map(view.lots.map((lot) => [lot.accountId, lot.accountName] as const)),
+  ].map(([id, name]) => ({ id, name }));
+  const [lotAccount, setLotAccount] = useState<string | null>(null);
+  const shownLots = lotAccount
+    ? view.lots.filter((lot) => lot.accountId === lotAccount)
+    : view.lots;
+  const lotOptions = [{ id: null, name: "Whole portfolio" }, ...lotAccounts];
   const hasOpeningLots = view.openingLots.some((account) => account.lotCount > 0);
   return (
     <div className="flex flex-col gap-6">
@@ -169,71 +166,101 @@ export function ActivityScreen({
       )}
 
       {view.lots.length > 0 && (
-        <Card data-tour="investments-lots" className="p-6 pt-7">
-          <h3 className="font-semibold">Lots</h3>
-          <div className="mt-5 overflow-x-auto">
+        <Card data-tour="investments-lots" className="overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3 p-6 pb-4 pt-7">
+            <h3 className="font-semibold">Lots</h3>
+            {lotAccounts.length > 1 && (
+              <div className="flex flex-wrap items-center gap-2">
+                {lotOptions.map((option) => (
+                  <button
+                    key={option.id ?? "portfolio"}
+                    type="button"
+                    onClick={() => setLotAccount(option.id)}
+                    className={cn(
+                      "rounded-full border px-3 py-1 text-xs transition",
+                      option.id === lotAccount
+                        ? "border-primary/60 bg-primary/10 text-foreground"
+                        : "border-border bg-card text-muted-foreground hover:border-primary/50 hover:bg-muted",
+                    )}
+                  >
+                    {option.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {/* Scrolls inside the card like the transactions table; border-separate
+              keeps the sticky header's rule attached while rows move under it. */}
+          <div className="max-h-[60vh] overflow-auto">
             <table className="w-full min-w-[620px] border-separate border-spacing-0 text-sm">
               <thead className="text-left text-xs text-muted-foreground">
                 <tr>
-                  <th className="border-b border-border pb-3">Date</th>
-                  <th className="border-b border-border pb-3">Stock</th>
-                  <th className="border-b border-border pb-3 text-right">Shares</th>
-                  <th className="border-b border-border pb-3 text-right">Price</th>
-                  <th className="border-b border-border pb-3 text-right">Price (ILS)</th>
-                  <th className="border-b border-border pb-3 text-right">Total</th>
-                  <th className="border-b border-border pb-3 text-right">Total (ILS)</th>
+                  {[
+                    ["Date", ""],
+                    ["Stock", ""],
+                    ...(lotAccount === null && lotAccounts.length > 1 ? [["Account", ""]] : []),
+                    ["Shares", "text-right"],
+                    ["Price", "text-right"],
+                    ["Price (ILS)", "text-right"],
+                    ["Total", "text-right"],
+                    ["Total (ILS)", "text-right"],
+                  ].map(([label, align]) => (
+                    <th
+                      key={label}
+                      scope="col"
+                      className={cn(
+                        "sticky top-0 z-10 border-b border-border bg-card px-3 py-3 font-medium first:pl-6 last:pr-6",
+                        align,
+                      )}
+                    >
+                      {label}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {view.lots.map((lot, index) => (
-                  <Fragment key={lot.id}>
-                    {multipleLotAccounts && lot.accountId !== view.lots[index - 1]?.accountId && (
-                      <tr>
-                        <td
-                          colSpan={7}
-                          className="border-b border-border/60 pb-2 pt-4 text-xs font-medium uppercase tracking-wide text-muted-foreground"
-                        >
-                          {lot.accountName}
-                        </td>
-                      </tr>
+                {shownLots.map((lot) => (
+                  <tr key={lot.id}>
+                    <td className="border-b border-border/60 py-3 pl-6 pr-3 tabular-nums text-muted-foreground">
+                      {lot.acquisitionDateLabel}
+                    </td>
+                    <td className="border-b border-border/60 px-3 py-3 font-medium">
+                      {lot.instrumentLabel}
+                    </td>
+                    {lotAccount === null && lotAccounts.length > 1 && (
+                      <td className="border-b border-border/60 px-3 py-3 text-muted-foreground">
+                        {lot.accountName}
+                      </td>
                     )}
-                    <tr>
-                      <td className="border-b border-border/60 py-3 tabular-nums text-muted-foreground">
-                        {lot.acquisitionDateLabel}
-                      </td>
-                      <td className="border-b border-border/60 py-3 font-medium">
-                        {lot.instrumentLabel}
-                      </td>
-                      <td className="border-b border-border/60 py-3 text-right tabular-nums">
-                        {lot.quantity}
-                        {lot.remainingQuantity !== lot.quantity && (
-                          <span className="text-muted-foreground">
-                            {` · ${lot.remainingQuantity} left`}
-                          </span>
-                        )}
-                      </td>
-                      <td className="border-b border-border/60 py-3 text-right">
-                        <Money value={{ amount: lot.pricePerShare, currency: lot.currency }} />
-                      </td>
-                      <td className="border-b border-border/60 py-3 text-right">
-                        {lot.pricePerShareIls ? (
-                          <Money value={{ amount: lot.pricePerShareIls, currency: "ILS" }} />
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td className="border-b border-border/60 py-3 text-right">
-                        <Money value={{ amount: lot.totalCost, currency: lot.currency }} />
-                      </td>
-                      <td className="border-b border-border/60 py-3 text-right">
-                        {lot.totalCostIls ? (
-                          <Money value={{ amount: lot.totalCostIls, currency: "ILS" }} />
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                    </tr>
-                  </Fragment>
+                    <td className="border-b border-border/60 px-3 py-3 text-right tabular-nums">
+                      {lot.quantity}
+                      {lot.remainingQuantity !== lot.quantity && (
+                        <span className="text-muted-foreground">
+                          {` · ${lot.remainingQuantity} left`}
+                        </span>
+                      )}
+                    </td>
+                    <td className="border-b border-border/60 px-3 py-3 text-right">
+                      <Money value={{ amount: lot.pricePerShare, currency: lot.currency }} />
+                    </td>
+                    <td className="border-b border-border/60 px-3 py-3 text-right">
+                      {lot.pricePerShareIls ? (
+                        <Money value={{ amount: lot.pricePerShareIls, currency: "ILS" }} />
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="border-b border-border/60 px-3 py-3 text-right">
+                      <Money value={{ amount: lot.totalCost, currency: lot.currency }} />
+                    </td>
+                    <td className="border-b border-border/60 py-3 pl-3 pr-6 text-right">
+                      {lot.totalCostIls ? (
+                        <Money value={{ amount: lot.totalCostIls, currency: "ILS" }} />
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                  </tr>
                 ))}
               </tbody>
             </table>

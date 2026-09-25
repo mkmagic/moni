@@ -6,10 +6,8 @@ import { afterAll, describe, expect, it } from "vitest";
 import { withUser } from "@/db/client";
 import * as schema from "@/db/schema";
 import { decText } from "@/domain/fields";
-import {
-  ingestIbkrFlexActivity,
-  deriveAndReconcileInvestmentActivity,
-} from "@/domain/investment-activity-sync";
+import { ingestInvestmentActivityEvidence } from "@/domain/investment-activity";
+import { deriveAndReconcileInvestmentActivity } from "@/domain/investment-activity-sync";
 import { promoteInvestmentSnapshot } from "@/domain/investment-promotion";
 import { readInvestmentDividendIncome } from "@/domain/investment-returns";
 import { readInvestmentActivity } from "@/domain/investment-activity-resolution";
@@ -88,13 +86,13 @@ describe("IBKR funding replay", () => {
         xml.replaceAll('assetCategory="CASH"', 'assetCategory="STK"'),
         key,
       );
-      await ingestIbkrFlexActivity({ ...input, syncRunId, evidence: legacy });
+      await ingestInvestmentActivityEvidence({ ...input, syncRunId, evidence: legacy });
       await deriveAndReconcileInvestmentActivity(input);
       expect(
         await withUser(user.id, (tx) => tx.select().from(schema.investmentTaxLots)),
       ).toHaveLength(6);
 
-      await ingestIbkrFlexActivity({ ...input, syncRunId, evidence });
+      await ingestInvestmentActivityEvidence({ ...input, syncRunId, evidence });
       // A later sync promotes a NEW snapshot. Old warnings must not remain in
       // the current review queue when its corrected activity reconciles.
       await promoteInvestmentSnapshot({
@@ -170,7 +168,7 @@ describe("IBKR funding replay", () => {
         expiresAt: Date.now() + 60_000,
       });
       expect(currentActivity.pendingCount).toBe(0);
-      await ingestIbkrFlexActivity({ ...input, syncRunId, evidence });
+      await ingestInvestmentActivityEvidence({ ...input, syncRunId, evidence });
       await deriveAndReconcileInvestmentActivity(input);
       const replay = await read();
       expect(replay.lots).toEqual(stored.lots);
@@ -189,7 +187,7 @@ describe("IBKR funding replay", () => {
         grossAmount: "5",
         netCashAmount: "5",
       };
-      await ingestIbkrFlexActivity({
+      await ingestInvestmentActivityEvidence({
         ...input,
         syncRunId,
         evidence: { ...evidence, activities: [missingFx] },

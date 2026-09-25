@@ -7,50 +7,8 @@ import {
   investmentOpeningLotEvidence,
   investmentTaxLots,
 } from "@/db/schema";
-import type { IbkrFlexActivityEvidenceSet } from "@/lib/investments";
-import {
-  ingestInvestmentActivityEvidence,
-  type InvestmentActivityIngestionResult,
-} from "./investment-activity";
 import { deriveInvestmentTaxLots } from "./investment-lots";
 import { reconcileInvestmentActivity } from "./investment-valuation";
-
-/**
- * Persists parsed IBKR Flex activity evidence for a still-running sync. Skips
- * silently (returns null) when the connection has no investment account yet:
- * the account is created by snapshot promotion, so a connection's very first
- * sync has nothing for activity to attach to. IBKR Flex re-serves an
- * overlapping window each run, so the next sync ingests it once the account
- * exists. Must run BEFORE snapshot promotion, which transitions the run to
- * `succeeded`; activity ingestion requires the run to be `running`.
- */
-export async function ingestIbkrFlexActivity(input: {
-  userId: string;
-  connectionId: string;
-  syncRunId: string;
-  /** Tier-1 data key. The caller owns its lifetime and wiping. */
-  dataKey: Uint8Array;
-  evidence: IbkrFlexActivityEvidenceSet;
-}): Promise<InvestmentActivityIngestionResult | null> {
-  const hasAccount = await withUser(input.userId, async (tx) => {
-    const rows = await tx
-      .select({ id: accounts.id })
-      .from(accounts)
-      .where(
-        and(eq(accounts.connectionId, input.connectionId), eq(accounts.accountType, "investment")),
-      )
-      .limit(1);
-    return rows.length > 0;
-  });
-  if (!hasAccount) return null;
-  return ingestInvestmentActivityEvidence({
-    userId: input.userId,
-    connectionId: input.connectionId,
-    syncRunId: input.syncRunId,
-    dataKey: input.dataKey,
-    evidence: input.evidence,
-  });
-}
 
 /**
  * Derives tax lots for every (account, instrument) the connection has activity

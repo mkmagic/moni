@@ -101,6 +101,7 @@ export const OWNER_SCOPED_TABLES_DELETE_ORDER = [
   "investment_activity_coverage",
   "investment_corporate_action_evidence",
   "investment_opening_lot_evidence",
+  "investment_opening_cash_evidence",
   "investment_activity_evidence",
   "investment_market_quotes",
   "investment_snapshot_cash_balances",

@@ -468,6 +468,41 @@ export const investmentOpeningLotEvidence = pgTable(
   ],
 );
 
+/**
+ * Cash an account already held before its activity history begins — the cash
+ * counterpart of an opening lot. User-entered to close a `cash_balance` gap
+ * that no broker can explain (SnapTrade's Schwab history stops ~2 years back).
+ * It only seeds cash reconciliation; it is not an external flow, so returns
+ * never count it as a deposit.
+ */
+export const investmentOpeningCashEvidence = pgTable(
+  "investment_opening_cash_evidence",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => users.id),
+    accountId: uuid("account_id").notNull(),
+    currency: text("currency").notNull(),
+    amountCt: bytea("amount_ct").notNull(),
+    provenance: investmentEvidenceProvenanceEnum("provenance").notNull(),
+    version: integer("version").notNull().default(1),
+    ...timestamps,
+  },
+  (table) => [
+    unique("investment_opening_cash_evidence_owner_id_id_unique").on(table.ownerId, table.id),
+    unique("investment_opening_cash_evidence_account_currency_unique").on(
+      table.ownerId,
+      table.accountId,
+      table.currency,
+    ),
+    foreignKey({
+      columns: [table.ownerId, table.accountId],
+      foreignColumns: [accounts.ownerId, accounts.id],
+    }),
+  ],
+);
+
 export const investmentCorporateActionEvidence = pgTable(
   "investment_corporate_action_evidence",
   {

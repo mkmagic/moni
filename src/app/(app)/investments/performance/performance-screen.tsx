@@ -47,22 +47,12 @@ async function fetchView(accountId: string | null): Promise<PerformanceView> {
   return response.json() as Promise<PerformanceView>;
 }
 
-function CompletenessPill({
-  quality,
-  knownAmount = false,
-}: {
-  quality: InvestmentMetricQuality;
-  knownAmount?: boolean;
-}) {
-  if (quality.completeness === "complete")
-    return <Badge className="border-positive/30 text-positive">Complete</Badge>;
-  if (quality.completeness === "partial")
-    return <Badge className="border-primary/40 text-primary">Partial</Badge>;
-  return (
-    <Badge className="border-border text-muted-foreground">
-      {knownAmount ? "History unknown" : "Not available"}
-    </Badge>
-  );
+/** Flags only a known problem. "Unknown" is not one: dividends and returns
+ * never record history coverage, so they would read unknown on every account;
+ * an unavailable figure already says so in place of its amount. */
+function CompletenessPill({ quality }: { quality: InvestmentMetricQuality }) {
+  if (quality.completeness !== "partial") return null;
+  return <Badge className="border-primary/40 text-primary">Partial</Badge>;
 }
 
 /** Provenance + valuation/FX dates, collapsed behind a native <details> so it
@@ -124,7 +114,7 @@ function MoneyMetric({
           ) : (
             <Money value={figure} signColor className="text-base font-semibold" />
           )}
-          <CompletenessPill quality={quality} knownAmount={hasAmount} />
+          <CompletenessPill quality={quality} />
         </div>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
@@ -197,7 +187,7 @@ function InstrumentCell({
         ) : (
           <Money value={figure} signColor className="tabular-nums" />
         )}
-        <CompletenessPill quality={quality} knownAmount={hasAmount} />
+        <CompletenessPill quality={quality} />
       </div>
       {native.length > 0 && (
         <div className="text-right">

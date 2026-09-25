@@ -21,6 +21,12 @@ the position arose and whether cost-basis and return figures are complete.
 - `src/domain/investment-lots.ts` — later-wave deterministic derivation seam.
 - `src/domain/investment-valuation.ts` — later-wave snapshot reconciliation seam.
 
-IBKR is implemented first. SnapTrade follows only after the IBKR path works end to
-end. Corporate-action evidence is retained but is deliberately not applied in v1,
+IBKR and SnapTrade (Schwab) both feed activity through the same seam: the worker
+passes parsed activity to snapshot promotion, which ingests it in the same
+transaction, so a connection's first sync already brings lots and dividends.
+SnapTrade reports no lots and its Schwab history stops about two years back, so
+holdings older than that arrive as opening lots, and cash held before it as
+opening cash (`investment_opening_cash_evidence`, entered from the cash gap's
+resolution screen). Opening cash only seeds cash reconciliation; it is never an
+external flow. Corporate-action evidence is retained but is deliberately not applied in v1,
 and no path renders tax advice or permits AI writes.
