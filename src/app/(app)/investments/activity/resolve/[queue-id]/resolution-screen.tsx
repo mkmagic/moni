@@ -395,7 +395,7 @@ function SaleWizard({ item }: { item: InvestmentResolutionItemView }) {
               />
             </div>
             <div>
-              <p className="text-xs text-muted-foreground">ILS gain · includes FX</p>
+              <p className="text-xs text-muted-foreground">Nominal ILS gain · includes FX</p>
               {preview.ilsGainIncludesFx ? (
                 <Money value={{ amount: preview.ilsGainIncludesFx, currency: "ILS" }} signColor />
               ) : (

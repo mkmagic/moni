@@ -16,6 +16,10 @@ import type {
 import type { PerformanceAccount, PerformanceView } from "./types";
 
 const BASIS_LABEL: Record<string, string> = {
+  // Value at today's rate minus cost at each purchase date's rate. Israel
+  // indexes a foreign-currency security to the exchange rate, so this nominal
+  // figure is not the taxable real gain — the label must not suggest it is.
+  ils_gain_includes_fx: "Nominal ILS gain · includes currency moves · not the taxable gain",
   time_weighted_return_ils: "Time-weighted return · ILS",
   money_weighted_return_ils_irr: "Money-weighted return · ILS · IRR",
 };
@@ -118,6 +122,9 @@ function MoneyMetric({
         </div>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        {BASIS_LABEL[figure.basis] && (
+          <span className="text-xs text-muted-foreground">{BASIS_LABEL[figure.basis]}</span>
+        )}
         {quality.completeness === "partial" && hasAmount && (
           <span className="text-xs text-primary">from known data</span>
         )}

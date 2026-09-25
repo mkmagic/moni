@@ -618,7 +618,9 @@ export async function buildAgentMcpServer(
         "provenance, valuation date, and FX date. Defaults to the combined portfolio; pass " +
         "account_id for one account and optionally instrument_id to scope gains and dividends. " +
         "TWR and IRR remain account-level when instrument_id is supplied because Moni has no " +
-        "per-instrument value series. Exact-decimal domain output; do not recompute. Read-only.",
+        "per-instrument value series. ILS gains are NOMINAL (value at today's BoI rate minus " +
+        "cost at each lot's purchase-date rate); they are not the taxable real gain, so never " +
+        "present them as tax owed. Exact-decimal domain output; do not recompute. Read-only.",
       inputSchema: {
         account_id: z.string().uuid().optional(),
         instrument_id: z.string().uuid().optional(),

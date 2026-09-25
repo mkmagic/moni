@@ -367,6 +367,21 @@ export async function deriveInvestmentTaxLotsInTransaction(
   const lots: PlainLot[] = [];
   let coverageGap = false;
 
+  // IBKR reports every still-open buy a second time, as an OpenPosition lot
+  // naming its opening transaction. The parser drops that lot only when the buy
+  // is in the same statement; once a rolling window has moved past the buy, a
+  // later statement's lot is the same shares again. Match against every stored
+  // buy, in either arrival order, so the holding is counted once.
+  const storedAcquisitionIds = new Set(
+    activities
+      .filter((row) => row.activityType === "buy")
+      .flatMap((row) => [
+        text(input.dataKey, row, row.providerActivityIdCt, "provider_activity_id_ct"),
+        text(input.dataKey, row, row.providerTradeIdCt, "provider_trade_id_ct"),
+      ])
+      .filter((id): id is string => Boolean(id)),
+  );
+
   for (const row of openings) {
     const key = derivedKey(input.dataKey, "opening", row.id);
     const current = currentByKey.get(key.toString("hex")) ?? null;
@@ -382,8 +397,15 @@ export async function deriveInvestmentTaxLotsInTransaction(
       row.remainingQuantityCt,
       "remaining_quantity_ct",
     )!;
-    const costBasis = text(input.dataKey, row, row.totalCostCt, "total_cost_ct")!;
     const brokerLotId = text(input.dataKey, row, row.brokerLotIdCt, "broker_lot_id_ct");
+    if (brokerLotId && storedAcquisitionIds.has(brokerLotId)) continue;
+    const totalCost = text(input.dataKey, row, row.totalCostCt, "total_cost_ct")!;
+    const fees = text(input.dataKey, row, row.feesCt, "fees_ct");
+    // A separately stated fee is part of the acquisition cost, as it is for buys.
+    const costBasis = decimal(totalCost)
+      .abs()
+      .plus(fees ? decimal(fees).abs() : new Decimal("0"))
+      .toString();
     lots.push({
       id: current?.id ?? randomUUID(),
       current,
