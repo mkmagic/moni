@@ -26,11 +26,16 @@ export async function usableIlsRate(
     .select()
     .from(fxRates)
     .where(
-      and(eq(fxRates.fromCurrency, currency), eq(fxRates.toCurrency, "ILS"), lte(fxRates.date, at)),
+      and(
+        eq(fxRates.fromCurrency, currency),
+        eq(fxRates.toCurrency, "ILS"),
+        eq(fxRates.source, "boi"),
+        lte(fxRates.date, at),
+      ),
     )
     .orderBy(desc(fxRates.date))
     .limit(1);
-  if (!row || row.source !== "boi") return null;
+  if (!row) return null;
   const age =
     (new Date(`${at}T00:00:00Z`).getTime() - new Date(`${row.date}T00:00:00Z`).getTime()) /
     86_400_000;

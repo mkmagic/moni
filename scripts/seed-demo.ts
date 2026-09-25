@@ -19,10 +19,15 @@ import Decimal from "decimal.js";
 import { withUser } from "@/db/client";
 import * as schema from "@/db/schema";
 import { encryptField, decryptField, wipe, type AadContext } from "@/lib/crypto";
+import { encText } from "@/domain/fields";
 import { normalizeDescription } from "@/lib/categorization/normalize";
 import { multiply } from "@/lib/money";
 import { createConnection } from "@/domain/connections";
+import { ingestInvestmentActivityEvidence } from "@/domain/investment-activity";
 import { promoteInvestmentSnapshot } from "@/domain/investment-promotion";
+import { deriveInvestmentTaxLots, BROKER_ELSE_USER_POLICY_VERSION } from "@/domain/investment-lots";
+import { readPortfolioInvestmentReturns } from "@/domain/investment-returns";
+import { reconcileInvestmentActivity } from "@/domain/investment-valuation";
 import { createUser } from "@/domain/registration";
 import { startSyncRun } from "@/domain/sync-promotion";
 
@@ -861,9 +866,428 @@ async function seedUser(plan: UserPlan, counts: SeedCounts): Promise<SeededUser>
     counts.accountBalanceSnapshots += promoted.accounts;
     counts.investmentPositions += promoted.positions;
     counts.investmentCashBalances += promoted.cashBalances;
+
+    // Give the investment demo user the "tricky states" the #135 activity/lots
+    // work needs to show: realized closures, booked dividends, and one genuine
+    // row of each resolution-queue kind — all produced by the REAL pipeline
+    // (ingest / derive / reconcile) over crafted fixtures, plus a partial and
+    // an unknown completeness metric. See seedInvestmentActivityStates.
+    await seedInvestmentActivityStates(userId, dataKey);
   }
 
   return { plan, userId, dataKey };
+}
+
+// ---------------------------------------------------------------------------
+// 3b. Investment "tricky states" for the demo (#135). Everything a genuine
+//     activity/lot history exercises: a realized closure, a booked dividend,
+//     and one real row of each resolution-queue kind. The three queue rows are
+//     produced by the actual domain pipeline (deriveInvestmentTaxLots →
+//     unresolved_disposal, reconcileInvestmentActivity → reconciliation_gap,
+//     ingestInvestmentActivityEvidence fingerprint collision →
+//     identity_ambiguity), never inserted directly. Idempotent with the seed's
+//     wipe (users TRUNCATE ... CASCADE drops all of it).
+// ---------------------------------------------------------------------------
+
+/** The Sunday on or before `date`, the week_start snapshots are constrained to. */
+function weekStartSunday(date: string): string {
+  const at = new Date(`${date}T00:00:00Z`);
+  at.setUTCDate(at.getUTCDate() - at.getUTCDay());
+  return at.toISOString().slice(0, 10);
+}
+
+async function seedInvestmentActivityStates(userId: string, dataKey: Uint8Array): Promise<void> {
+  const accountId = randomUUID();
+  const aapl = randomUUID();
+  const vti = randomUUID();
+  const zgap = randomUUID();
+
+  const { connectionId, syncRunId } = await withUser(userId, async (tx) => {
+    const [connection] = await tx
+      .insert(schema.connections)
+      .values({
+        ownerId: userId,
+        connectorId: "ibkr_flex",
+        credentialsCt: Buffer.from("seed-only"),
+        status: "active",
+        displayName: "Interactive Brokers",
+      })
+      .returning({ id: schema.connections.id });
+    const [run] = await tx
+      .insert(schema.syncRuns)
+      .values({ ownerId: userId, connectionId: connection.id, status: "running" })
+      .returning({ id: schema.syncRuns.id });
+    await tx.insert(schema.accounts).values({
+      id: accountId,
+      ownerId: userId,
+      connectionId: connection.id,
+      accountType: "investment",
+      classification: "asset",
+      nameCt: encText(dataKey, "Interactive Brokers", accountId, "name_ct", 1),
+      externalAccountRefCt: encText(dataKey, "DEMO-IBKR", accountId, "external_account_ref_ct", 1),
+      currency: "USD",
+      status: "active",
+    });
+    for (const [id, kind, symbol, name] of [
+      [aapl, "stock", "AAPL", "Apple Inc."],
+      [vti, "etf", "VTI", "Vanguard Total Stock Market ETF"],
+      [zgap, "etf", "ZGAP", "Zenith Gap Fund ETF"],
+    ] as const) {
+      await tx.insert(schema.instruments).values({
+        id,
+        ownerId: userId,
+        kind,
+        canonicalSymbolCt: encText(dataKey, symbol, id, "canonical_symbol_ct", 1),
+        canonicalNameCt: encText(dataKey, name, id, "canonical_name_ct", 1),
+      });
+    }
+    return { connectionId: connection.id, syncRunId: run.id };
+  });
+
+  // --- Realized closure + booked dividend on AAPL (feeds the real gain and
+  //     dividend READ paths; the closure carries its own locked FX). ---
+  await withUser(userId, async (tx) => {
+    const openingId = randomUUID();
+    await tx.insert(schema.investmentOpeningLotEvidence).values({
+      id: openingId,
+      ownerId: userId,
+      accountId,
+      instrumentId: aapl,
+      idempotencyKey: Buffer.from("demo-aapl-opening"),
+      tradeDate: "2026-05-01",
+      originalQuantityCt: encText(dataKey, "10", openingId, "original_quantity_ct", 1),
+      remainingQuantityCt: encText(dataKey, "6", openingId, "remaining_quantity_ct", 1),
+      quantityUnit: "shares",
+      totalCostCt: encText(dataKey, "1500", openingId, "total_cost_ct", 1),
+      currency: "USD",
+      lockedFxRateCt: encText(dataKey, "3.70", openingId, "locked_fx_rate_ct", 1),
+      lockedFxConvention: "ILS_PER_USD",
+      lockedFxObservationDate: "2026-05-01",
+      lockedFxProvenance: "boi_derived",
+      provenance: "user_entered",
+    });
+    const lotId = randomUUID();
+    await tx.insert(schema.investmentTaxLots).values({
+      id: lotId,
+      ownerId: userId,
+      accountId,
+      instrumentId: aapl,
+      openingLotEvidenceId: openingId,
+      derivationKey: Buffer.from("demo-aapl-lot"),
+      policyVersion: BROKER_ELSE_USER_POLICY_VERSION,
+      tradeDate: "2026-05-01",
+      originalQuantityCt: encText(dataKey, "10", lotId, "original_quantity_ct", 1),
+      remainingQuantityCt: encText(dataKey, "6", lotId, "remaining_quantity_ct", 1),
+      quantityUnit: "shares",
+      costBasisCt: encText(dataKey, "1500", lotId, "cost_basis_ct", 1),
+      costBasisCurrency: "USD",
+      lockedFxRateCt: encText(dataKey, "3.70", lotId, "locked_fx_rate_ct", 1),
+      lockedFxConvention: "ILS_PER_USD",
+      lockedFxObservationDate: "2026-05-01",
+      lockedFxProvenance: "boi_derived",
+      completeness: "complete",
+    });
+    const saleId = randomUUID();
+    await tx.insert(schema.investmentActivityEvidence).values({
+      id: saleId,
+      ownerId: userId,
+      connectionId,
+      syncRunId,
+      accountId,
+      instrumentId: aapl,
+      source: "ibkr_flex",
+      activityType: "sell",
+      idempotencyKey: Buffer.from("demo-aapl-sell"),
+      tradeDate: "2026-06-15",
+      quantityCt: encText(dataKey, "-4", saleId, "quantity_ct", 1),
+      quantityUnit: "shares",
+      grossAmountCt: encText(dataKey, "760", saleId, "gross_amount_ct", 1),
+      netCashAmountCt: encText(dataKey, "760", saleId, "net_cash_amount_ct", 1),
+      currency: "USD",
+      rawTypeCt: encText(dataKey, "Trade", saleId, "raw_type_ct", 1),
+      provenance: "broker_reported",
+    });
+    const closureId = randomUUID();
+    await tx.insert(schema.investmentLotClosures).values({
+      id: closureId,
+      ownerId: userId,
+      sellActivityEvidenceId: saleId,
+      closedTaxLotId: lotId,
+      closedQuantityCt: encText(dataKey, "4", closureId, "closed_quantity_ct", 1),
+      proceedsCt: encText(dataKey, "760", closureId, "proceeds_ct", 1),
+      realizedCostBasisCt: encText(dataKey, "600", closureId, "realized_cost_basis_ct", 1),
+      lockedFxRateCt: encText(dataKey, "3.71", closureId, "locked_fx_rate_ct", 1),
+      lockedFxConvention: "ILS_PER_USD",
+      lockedFxObservationDate: "2026-06-15",
+      lockedFxProvenance: "boi_derived",
+      allocationProvenance: "broker_reported",
+    });
+    // AAPL cost basis is known (partial — the account still has an unresolved
+    // disposal), so realized reads Partial rather than unknown.
+    await tx.insert(schema.investmentActivityCoverage).values({
+      ownerId: userId,
+      accountId,
+      instrumentId: aapl,
+      source: "ibkr_flex",
+      metric: "cost_basis",
+      completeness: "partial",
+    });
+    // Booked dividend — no "dividends" coverage row, so the dividend metric
+    // reads unknown ("Not available") while the cash event is still counted.
+    const divId = randomUUID();
+    await tx.insert(schema.investmentActivityEvidence).values({
+      id: divId,
+      ownerId: userId,
+      connectionId,
+      syncRunId,
+      accountId,
+      instrumentId: aapl,
+      source: "ibkr_flex",
+      activityType: "dividend",
+      idempotencyKey: Buffer.from("demo-aapl-dividend"),
+      tradeDate: "2026-07-15",
+      grossAmountCt: encText(dataKey, "12", divId, "gross_amount_ct", 1),
+      netCashAmountCt: encText(dataKey, "12", divId, "net_cash_amount_ct", 1),
+      currency: "USD",
+      rawTypeCt: encText(dataKey, "Dividends", divId, "raw_type_ct", 1),
+      provenance: "broker_reported",
+    });
+    // --- Unresolved disposal fixture: a ZGAP sale with no lot to close. ---
+    const zgapSaleId = randomUUID();
+    await tx.insert(schema.investmentActivityEvidence).values({
+      id: zgapSaleId,
+      ownerId: userId,
+      connectionId,
+      syncRunId,
+      accountId,
+      instrumentId: zgap,
+      source: "ibkr_flex",
+      activityType: "sell",
+      idempotencyKey: Buffer.from("demo-zgap-sell"),
+      tradeDate: "2026-07-01",
+      quantityCt: encText(dataKey, "-5", zgapSaleId, "quantity_ct", 1),
+      quantityUnit: "shares",
+      grossAmountCt: encText(dataKey, "400", zgapSaleId, "gross_amount_ct", 1),
+      netCashAmountCt: encText(dataKey, "400", zgapSaleId, "net_cash_amount_ct", 1),
+      currency: "USD",
+      rawTypeCt: encText(dataKey, "Trade", zgapSaleId, "raw_type_ct", 1),
+      provenance: "broker_reported",
+    });
+  });
+
+  // Genuine unresolved_disposal: derive replays the ZGAP scope and finds a sale
+  // with no complete lot allocation.
+  await deriveInvestmentTaxLots({ userId, accountId, instrumentId: zgap, dataKey });
+
+  // --- Reconciliation gap fixture on VTI: a snapshot position (100) that
+  //     exceeds the activity-derived lot quantity (60). ---
+  const snapshotId = await withUser(userId, async (tx) => {
+    const openingId = randomUUID();
+    await tx.insert(schema.investmentOpeningLotEvidence).values({
+      id: openingId,
+      ownerId: userId,
+      accountId,
+      instrumentId: vti,
+      idempotencyKey: Buffer.from("demo-vti-opening"),
+      tradeDate: "2026-05-01",
+      originalQuantityCt: encText(dataKey, "60", openingId, "original_quantity_ct", 1),
+      remainingQuantityCt: encText(dataKey, "60", openingId, "remaining_quantity_ct", 1),
+      quantityUnit: "shares",
+      totalCostCt: encText(dataKey, "12000", openingId, "total_cost_ct", 1),
+      currency: "USD",
+      lockedFxProvenance: "unresolved",
+      provenance: "user_entered",
+    });
+    const lotId = randomUUID();
+    await tx.insert(schema.investmentTaxLots).values({
+      id: lotId,
+      ownerId: userId,
+      accountId,
+      instrumentId: vti,
+      openingLotEvidenceId: openingId,
+      derivationKey: Buffer.from("demo-vti-lot"),
+      policyVersion: BROKER_ELSE_USER_POLICY_VERSION,
+      tradeDate: "2026-05-01",
+      originalQuantityCt: encText(dataKey, "60", lotId, "original_quantity_ct", 1),
+      remainingQuantityCt: encText(dataKey, "60", lotId, "remaining_quantity_ct", 1),
+      quantityUnit: "shares",
+      costBasisCt: encText(dataKey, "12000", lotId, "cost_basis_ct", 1),
+      costBasisCurrency: "USD",
+      lockedFxProvenance: "unresolved",
+      completeness: "complete",
+    });
+    await tx.insert(schema.investmentActivityCoverage).values({
+      ownerId: userId,
+      accountId,
+      instrumentId: vti,
+      source: "ibkr_flex",
+      metric: "cost_basis",
+      completeness: "complete",
+    });
+    const balanceSnapshotId = randomUUID();
+    const detailId = randomUUID();
+    await tx.insert(schema.accountBalanceSnapshots).values({
+      id: balanceSnapshotId,
+      ownerId: userId,
+      accountId,
+      date: "2026-07-24",
+      source: "investment",
+    });
+    await tx.insert(schema.investmentSnapshotDetails).values({
+      id: detailId,
+      ownerId: userId,
+      accountBalanceSnapshotId: balanceSnapshotId,
+      accountId,
+      connectionId,
+      syncRunId,
+      weekStart: weekStartSunday("2026-07-24"),
+      source: "ibkr_flex",
+      sourceAsOf: new Date("2026-07-24T12:00:00Z"),
+      sourceAsOfPrecision: "timestamp",
+      brokerTotalCt: encText(dataKey, "21140", detailId, "broker_total_ct", 1),
+      brokerTotalCurrency: "USD",
+      reconciliationState: "matched",
+      validationVersion: 1,
+    });
+    // VTI position (100) exceeds the derived lot (60) — the reconciliation gap.
+    // AAPL (6) matches its lot remaining, so it does NOT create a spurious gap.
+    for (const [instrumentId, quantity, value] of [
+      [vti, "100", "20000"],
+      [aapl, "6", "1140"],
+    ] as const) {
+      const positionId = randomUUID();
+      await tx.insert(schema.investmentSnapshotPositions).values({
+        id: positionId,
+        ownerId: userId,
+        snapshotId: detailId,
+        instrumentId,
+        quantityCt: encText(dataKey, quantity, positionId, "quantity_ct", 1),
+        quantityUnit: "shares",
+        currency: "USD",
+        sourceValueCt: encText(dataKey, value, positionId, "source_value_ct", 1),
+        sourceValueCurrency: "USD",
+        sourceAsOf: new Date("2026-07-24T12:00:00Z"),
+        brokerValuationBasis: "market_value",
+      });
+    }
+    return detailId;
+  });
+
+  // Genuine reconciliation_gap: snapshot qty (100) > lot-derived qty (60).
+  await reconcileInvestmentActivity({ userId, accountId, snapshotId, dataKey });
+
+  // --- Genuine identity_ambiguity: a fingerprint-keyed activity re-fetched with
+  //     non-identical content is queued, not silently merged. ---
+  const fingerprintActivity = {
+    source: "ibkr_flex" as const,
+    sourceAccountRef: "DEMO-IBKR",
+    idempotencyKey: "DEMO-IBKR:fp:AMBIG-1",
+    sourceSecurityId: "MSFT",
+    sourceSecurityIdKind: "ibkr_conid",
+    activityType: "dividend" as const,
+    tradeDate: "2026-07-10",
+    grossAmount: "30",
+    netCashAmount: "30",
+    currency: "USD",
+    rawType: "Dividends",
+    rawDescription: "MSFT dividend",
+    provenance: "broker_reported" as const,
+  };
+  const evidenceSet = (netCashAmount: string) => ({
+    activities: [{ ...fingerprintActivity, netCashAmount, grossAmount: netCashAmount }],
+    openLots: [],
+    dividendAccruals: [],
+    corporateActions: [],
+  });
+  await ingestInvestmentActivityEvidence({
+    userId,
+    connectionId,
+    syncRunId,
+    dataKey,
+    evidence: evidenceSet("30"),
+  });
+  await ingestInvestmentActivityEvidence({
+    userId,
+    connectionId,
+    syncRunId,
+    dataKey,
+    evidence: evidenceSet("31"),
+  });
+
+  // The sync is finished; leave no perpetually-"running" run behind.
+  await withUser(userId, async (tx) => {
+    await tx
+      .update(schema.syncRuns)
+      .set({ status: "succeeded" })
+      .where(eq(schema.syncRuns.id, syncRunId));
+  });
+
+  // Assert the pipeline actually produced every state, so a regression fails
+  // the seed loudly instead of shipping an empty demo.
+  await withUser(userId, async (tx) => {
+    const queue = await tx
+      .select({ kind: schema.investmentDisposalResolutionQueue.kind })
+      .from(schema.investmentDisposalResolutionQueue)
+      .where(eq(schema.investmentDisposalResolutionQueue.accountId, accountId));
+    for (const kind of [
+      "unresolved_disposal",
+      "identity_ambiguity",
+      "reconciliation_gap",
+    ] as const) {
+      if (!queue.some((row) => row.kind === kind))
+        throw new Error(`seed: expected a ${kind} queue row for the investment demo`);
+    }
+    console.log(
+      `  investment activity states: ${queue.length} queue rows (${[
+        ...new Set(queue.map((row) => row.kind)),
+      ].join(", ")})`,
+    );
+  });
+
+  // The Schwab snapshot account (created earlier) has positions but no derived
+  // cost basis; a partial cost_basis coverage row makes the portfolio Gains
+  // figure read "Partial from known data" rather than merging down to unknown.
+  await withUser(userId, async (tx) => {
+    const others = await tx
+      .select({ id: schema.accounts.id })
+      .from(schema.accounts)
+      .where(
+        and(eq(schema.accounts.ownerId, userId), eq(schema.accounts.accountType, "investment")),
+      );
+    for (const other of others) {
+      if (other.id === accountId) continue;
+      await tx.insert(schema.investmentActivityCoverage).values({
+        ownerId: userId,
+        accountId: other.id,
+        source: "schwab_positions_csv",
+        metric: "cost_basis",
+        completeness: "partial",
+      });
+    }
+  });
+
+  // And that Performance now has at least one partial and one unknown metric to
+  // render, plus a realized closure and a booked dividend.
+  const portfolio = await readPortfolioInvestmentReturns({ userId, dataKey });
+  const completeness = [
+    portfolio.realizedGain.quality.completeness,
+    portfolio.unrealizedGain.quality.completeness,
+    portfolio.performance.twr.quality.completeness,
+    portfolio.performance.mwr.quality.completeness,
+    portfolio.dividendIncome.quality.completeness,
+  ];
+  if (!completeness.includes("partial"))
+    throw new Error("seed: expected at least one partial completeness metric");
+  if (!completeness.includes("unknown"))
+    throw new Error("seed: expected at least one unknown completeness metric");
+  if (portfolio.realizedGain.closureCount < 1)
+    throw new Error("seed: expected a realized closure for the investment demo");
+  if (portfolio.dividendIncome.bookedCashCount < 1)
+    throw new Error("seed: expected a booked dividend for the investment demo");
+  console.log(
+    `  performance metrics: realized ${portfolio.realizedGain.ils.amount} ILS (${portfolio.realizedGain.quality.completeness}), ` +
+      `dividends count ${portfolio.dividendIncome.bookedCashCount} (${portfolio.dividendIncome.quality.completeness})`,
+  );
 }
 
 // ---------------------------------------------------------------------------

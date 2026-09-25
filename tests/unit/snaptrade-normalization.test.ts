@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   InvestmentNormalizationError,
+  normalizeSnaptradeActivity,
   normalizeSnaptradeHoldings,
   parseJsonPreservingNumbers,
   type SnaptradeAccountPayload,
@@ -13,6 +14,11 @@ import { signSnaptradeRequest } from "@/lib/investments/snaptrade";
 
 const POSITIONS_JSON = readFileSync(
   join(process.cwd(), "tests/fixtures/investments/snaptrade-positions.json"),
+  "utf8",
+);
+
+const ACTIVITIES_JSON = readFileSync(
+  join(process.cwd(), "tests/fixtures/investments/snaptrade-activities.json"),
   "utf8",
 );
 
@@ -34,6 +40,8 @@ function payload(overrides: Partial<SnaptradeAccountPayload> = {}): SnaptradeAcc
     account: ACCOUNT,
     balances: [{ currency: { code: "USD" }, cash: "252.18" }],
     positions: parseJsonPreservingNumbers(POSITIONS_JSON) as SnaptradeAccountPayload["positions"],
+    activities: (parseJsonPreservingNumbers(ACTIVITIES_JSON) as { data: unknown[] })
+      .data as SnaptradeAccountPayload["activities"],
     ...overrides,
   } as SnaptradeAccountPayload;
 }
@@ -200,5 +208,101 @@ describe("exchange translation", () => {
       payload({ positions } as Partial<SnaptradeAccountPayload>),
     ]);
     expect(envelope.accounts[0].positions[0].exchange).toBe("XTAE");
+  });
+});
+
+describe("normalizeSnaptradeActivity", () => {
+  const byId = (suffix: string) =>
+    normalizeSnaptradeActivity([payload()]).activities.find(
+      (activity) => activity.sourceActivityId === `00000000-0000-4000-8000-00000000000${suffix}`,
+    )!;
+
+  it("maps a buy onto the same FIGI identity the holdings snapshot uses", () => {
+    const [position] = normalizeSnaptradeHoldings([payload()]).accounts[0].positions;
+    const buy = byId("5");
+    expect(buy).toMatchObject({
+      source: "snaptrade",
+      sourceAccountRef: ACCOUNT.institution_account_id,
+      idempotencyKey: `${ACCOUNT.institution_account_id}:activity:00000000-0000-4000-8000-000000000005`,
+      sourceSecurityId: position.sourceSecurityId,
+      sourceSecurityIdKind: position.sourceSecurityIdKind,
+      activityType: "buy",
+      tradeDate: "2025-03-18",
+      settlementDate: "2025-03-19",
+      quantity: "10",
+      quantityUnit: "shares",
+      price: "280",
+      grossAmount: "-2800",
+      netCashAmount: "-2800",
+      currency: "USD",
+      rawType: "BUY",
+    });
+    expect(buy.feeAmount).toBeUndefined();
+  });
+
+  it("keeps a dividend's cash and ties it to the security", () => {
+    expect(byId("2")).toMatchObject({
+      activityType: "dividend",
+      sourceSecurityId: "BBG000HRBDF4",
+      grossAmount: "100.25",
+      netCashAmount: "100.25",
+    });
+    expect(byId("2").quantity).toBeUndefined();
+    expect(byId("2").price).toBeUndefined();
+  });
+
+  it("treats interest and a cash wire as cash, not as the sweep placeholder security", () => {
+    expect(byId("1")).toMatchObject({ activityType: "interest", netCashAmount: "1.65" });
+    expect(byId("1").sourceSecurityId).toBeUndefined();
+    expect(byId("4")).toMatchObject({
+      activityType: "deposit",
+      rawType: "TRANSFER",
+      netCashAmount: "3000",
+    });
+    expect(byId("4").sourceSecurityId).toBeUndefined();
+  });
+
+  it("classifies an outgoing cash transfer as a withdrawal and a share transfer as a transfer", () => {
+    const [row] = payload().activities;
+    const activities = normalizeSnaptradeActivity([
+      payload({
+        activities: [
+          { ...row, id: "out", type: "TRANSFER", amount: "-50", units: "0" },
+          {
+            ...row,
+            id: "shares",
+            type: "EXTERNAL_ASSET_TRANSFER_IN",
+            amount: "0",
+            units: "5",
+            symbol: { symbol: "VTI", figi_code: "BBG000HRBDF4" },
+          },
+        ],
+      }),
+    ]).activities;
+    expect(activities.map((activity) => activity.activityType)).toEqual(["withdrawal", "transfer"]);
+    expect(activities[1]).toMatchObject({ quantity: "5", sourceSecurityId: "BBG000HRBDF4" });
+  });
+
+  it("backs a fee out of the settled amount so the lot basis counts it once", () => {
+    const buy = payload().activities[4];
+    const [activity] = normalizeSnaptradeActivity([
+      payload({ activities: [{ ...buy, amount: "-2804.95", fee: "4.95" }] }),
+    ]).activities;
+    expect(activity).toMatchObject({
+      grossAmount: "-2800",
+      feeAmount: "-4.95",
+      netCashAmount: "-2804.95",
+    });
+  });
+
+  it("reports no opening lots — SnapTrade has none to give", () => {
+    expect(normalizeSnaptradeActivity([payload()]).openLots).toEqual([]);
+  });
+
+  it("rejects a non-decimal amount", () => {
+    const [row] = payload().activities;
+    expect(() =>
+      normalizeSnaptradeActivity([payload({ activities: [{ ...row, amount: "1e3" }] })]),
+    ).toThrow(InvestmentNormalizationError);
   });
 });

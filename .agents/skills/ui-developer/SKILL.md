@@ -42,6 +42,80 @@ new feedback lands.
 
 ## Feedback log (newest first — append, don't overwrite)
 
+### 2026-09-25 — investment connections: no backfill picker; cash gaps get a way out
+
+- **The "how far back" picker misled on investment connections.** It only ever reached bank
+  scrapes; IBKR/SnapTrade fetch whatever history the broker offers. The owner asked to hide it for
+  `kind: "investment"` connectors (and a leftover "Nothing for now" must not skip their first sync).
+- **A gap with no in-app fix reads as a bug.** A `cash_balance` gap told the owner to "re-import a
+  corrected statement" that cannot exist (SnapTrade's history is capped). Cash gaps now offer an
+  inline "Record opening cash" field prefilled with the amount that closes the gap, and name only
+  "Returns" as affected — an account-wide cash gap no longer marks every figure partial.
+- **Label problems only.** The owner asked to drop "Complete" and "History unknown" badges: no
+  label when nothing is wrong. Only `Partial` (and `Duplicate` on import) render. "Unknown" is not a
+  problem signal — dividends/TWR/MWR never record coverage, so it showed on every account.
+- **The Lots table follows the transactions table.** Scrolls inside its card (`max-h-[60vh]`,
+  sticky header, `border-separate`), newest lot first, with the performance screen's
+  "Whole portfolio / account" pill filter instead of per-account group rows; an Account column
+  appears only in the whole-portfolio view.
+
+### 2026-09-24 (later) — opening-lot import: a disagreement with BoI is the user's call
+
+- **The owner wanted the import to surface, not silently accept, a spreadsheet rate that disagrees
+  with the Bank of Israel.** The review step now shows an amber-outline notice ("N rows have an FX
+  rate that differs…") with a "Use Bank of Israel for all" outline button, and each differing row's
+  FX cell becomes two `PillButton`s — `Yours 3.70` / `Bank of Israel 3.779` (the BoI publication date
+  in the title). Import stays disabled until every differing row has a choice. Choosing BoI simply
+  drops that row's `ilsFxRate` from the import body, so the server locks BoI as usual.
+- **Compare at the user's own precision.** A spreadsheet's `3.78` against BoI's `3.779` is not a
+  disagreement; BoI is rounded to the user's decimals before comparing. Only a real difference asks.
+- **Verifying without the owner's account ref:** the CSV `account` column must match an encrypted
+  external ref the dev key cannot decrypt, so the real preview route returns `account not found`.
+  It still exercises the BoI fetch (rates are cached _before_ the account check — confirm in
+  `fx_rates`), and the choice UI was verified by stubbing `window.fetch` for preview/import and
+  setting the file input through `DataTransfer` + a bubbling `change` event.
+
+### 2026-09-24 — activity & lots: a Lots table, and an empty table is not shown
+
+- **The owner could not find their lots.** Derived tax lots were stored but no screen read them; the
+  only lot surface was a per-account opening-lot _count_. Activity & lots now leads (after the
+  pending queue) with a plain **Lots** table: Date · Stock · Shares · Price · Price (ILS) · Total · Total (ILS). The
+  owner asked for "pretty simplistic", no extra labels — no source or completeness column.
+  Price is `cost ÷ quantity` computed in the domain (includes commission). The owner wanted the
+  **ILS amount, not the FX rate** — Total (ILS) is total cost × the locked acquisition rate, `—` when
+  no rate was locked.
+- **Hide an empty table, keep its actions.** With zero opening lots the Opening lots card shows only
+  its heading and Add/Import buttons; missing history already surfaces as a History-gap item.
+- **One order can be several lots.** IBKR partial fills are separate executions at different prices,
+  so the owner's "three purchases" showed as four rows (1 + 99 shares on the same day). That is
+  correct lot accounting — explain it rather than merging rows.
+
+### 2026-09-13 — activity & lots verified: identity stays evidence-only
+
+- **Identity ambiguity is deliberately read-only until ingestion retains both candidates.** The
+  Understand view shows the activity and durable identifier evidence Moni does have, says plainly
+  that the conflicting candidate was not stored, and directs the user to re-import corrected source
+  data. It has no Choose, Review, commit, edit, or reopen affordance.
+- **Verified the audit-first hierarchy in Chrome at desktop width.** The conditional tab count,
+  grouped filters, opening-lot summary, exact missing-quantity prefill, sale allocation running total,
+  named final confirms, and immutable Recently resolved view all stayed compact and legible. The
+  opening-lot controls remain visually secondary to the pending queue.
+- **The full CSV prompt and canonical header remain visible and selectable before upload.** Chrome's
+  extension did not have file-URL access, so the native file chooser could not attach a local test
+  file; invalid-row reporting and valid preview/import were instead exercised against the same live
+  endpoints while the in-browser preparation and copy states were verified separately.
+
+### 2026-09-13 — activity & lots pre-work: audit-only resolution and a conditional queue
+
+- **The owner approved an audit-only resolution model for Wave 6.** Resolution gets immutable
+  evidence, local choices, and a named Review-step commit, followed by a permanent Recently resolved
+  record with View resolution. There is no reopen or edit-after-commit affordance.
+- **Pending work is conditional, but opening-lot management is persistent.** Activity & lots shows a
+  compact grouped queue only while items are pending; when it is empty, the Opening lots Card leads.
+  Overview and the Activity & lots tab likewise omit their attention signal entirely at zero.
+- **Partial figures remain visible but unmistakably qualified.** Known amounts keep their basis label,
+  an amber-outline Partial pill, and a “from known data” caveat; unknown remains “Not available”.
+
 ### 2026-09-04 — dashboard forecast fixes: the spending trend comes back out, and net worth starts at the join month
 
 - **The owner reversed the 2026-08-09 `expenseTrend` decision — a like-for-like comparison the domain worked hard for still read wrong to a real user.** Even day-span-vs-day-span, a first partial month against a near-empty prior period produced figures like "up 7,000%", and the owner's verdict was the `projectedSpend` one again: _"I don't think it really means anything… it currently shows crazy values."_ Both surfaces are gone — the Expenses tile's little up/down icon (`this-month-card.tsx`) and the insight-panel "Spending down X% vs last month" row (`dashboard/page.tsx`'s `spendingItem`) — and with them the whole `expenseTrend` field and its domain computation (`priorSamePeriodExpenses`, the same-day-span bucketing in `dashboard.ts`). **A number that needs a footnote to be trustworthy is a number to delete, not to reword — the second time this exact lesson landed.** `netWorthTrend` (now vs six months ago) stayed; only the spending trend was the problem.

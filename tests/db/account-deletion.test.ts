@@ -260,6 +260,138 @@ async function seedFullOwner(label: string): Promise<OwnerFixture> {
     .values({ ownerId: userId, connectionId: connection.id, status: "succeeded" })
     .returning({ id: schema.syncRuns.id });
 
+  const [activity] = await elevatedDb
+    .insert(schema.investmentActivityEvidence)
+    .values({
+      ownerId: userId,
+      connectionId: connection.id,
+      syncRunId: syncRun.id,
+      accountId: investmentAccount.id,
+      instrumentId: instrument.id,
+      source: "ibkr_flex",
+      activityType: "buy",
+      idempotencyKey: ct(`${label}-activity-key`),
+      tradeDate: "2026-01-15",
+      quantityCt: ct("1"),
+      quantityUnit: "shares",
+      priceCt: ct("100"),
+      currency: "USD",
+      rawTypeCt: ct("Trade"),
+      provenance: "broker_reported",
+    })
+    .returning({ id: schema.investmentActivityEvidence.id });
+  const [sale] = await elevatedDb
+    .insert(schema.investmentActivityEvidence)
+    .values({
+      ownerId: userId,
+      connectionId: connection.id,
+      syncRunId: syncRun.id,
+      accountId: investmentAccount.id,
+      instrumentId: instrument.id,
+      source: "ibkr_flex",
+      activityType: "sell",
+      idempotencyKey: ct(`${label}-sale-key`),
+      tradeDate: "2026-01-16",
+      quantityCt: ct("-1"),
+      quantityUnit: "shares",
+      priceCt: ct("110"),
+      currency: "USD",
+      rawTypeCt: ct("Trade"),
+      provenance: "broker_reported",
+    })
+    .returning({ id: schema.investmentActivityEvidence.id });
+  await elevatedDb.insert(schema.investmentOpeningLotEvidence).values({
+    ownerId: userId,
+    accountId: investmentAccount.id,
+    instrumentId: instrument.id,
+    idempotencyKey: ct(`${label}-opening-key`),
+    tradeDate: "2020-01-02",
+    originalQuantityCt: ct("1"),
+    remainingQuantityCt: ct("1"),
+    quantityUnit: "shares",
+    totalCostCt: ct("80"),
+    currency: "USD",
+    lockedFxProvenance: "unresolved",
+    provenance: "imported",
+  });
+  await elevatedDb.insert(schema.investmentOpeningCashEvidence).values({
+    ownerId: userId,
+    accountId: investmentAccount.id,
+    currency: "USD",
+    amountCt: ct("250"),
+    provenance: "user_entered",
+  });
+  await elevatedDb.insert(schema.investmentCorporateActionEvidence).values({
+    ownerId: userId,
+    connectionId: connection.id,
+    syncRunId: syncRun.id,
+    accountId: investmentAccount.id,
+    instrumentId: instrument.id,
+    source: "ibkr_flex",
+    idempotencyKey: ct(`${label}-corporate-action-key`),
+    actionDate: "2026-01-20",
+    rawTypeCt: ct("FS"),
+    provenance: "broker_reported",
+  });
+  await elevatedDb.insert(schema.investmentActivityCoverage).values({
+    ownerId: userId,
+    accountId: investmentAccount.id,
+    source: "ibkr_flex",
+    metric: "dividends",
+    coverageStart: "2026-01-01",
+    coverageBasis: "provider_declared",
+    completeness: "complete",
+  });
+  const [taxLot] = await elevatedDb
+    .insert(schema.investmentTaxLots)
+    .values({
+      ownerId: userId,
+      accountId: investmentAccount.id,
+      instrumentId: instrument.id,
+      acquisitionActivityId: activity.id,
+      derivationKey: ct(`${label}-derivation-key`),
+      policyVersion: "broker-reported-else-user-selected/v1",
+      tradeDate: "2026-01-15",
+      originalQuantityCt: ct("1"),
+      remainingQuantityCt: ct("1"),
+      quantityUnit: "shares",
+      costBasisCt: ct("100"),
+      costBasisCurrency: "USD",
+      lockedFxProvenance: "unresolved",
+      completeness: "partial",
+    })
+    .returning({ id: schema.investmentTaxLots.id });
+  await elevatedDb.insert(schema.investmentLotClosures).values({
+    ownerId: userId,
+    sellActivityEvidenceId: sale.id,
+    closedTaxLotId: taxLot.id,
+    closedQuantityCt: ct("1"),
+    proceedsCt: ct("110"),
+    realizedCostBasisCt: ct("100"),
+    lockedFxConvention: "ILS_PER_USD",
+    lockedFxProvenance: "unresolved",
+    allocationProvenance: "broker_reported",
+  });
+  const [quality] = await elevatedDb
+    .insert(schema.investmentReconciliationQuality)
+    .values({
+      ownerId: userId,
+      accountId: investmentAccount.id,
+      instrumentId: instrument.id,
+      dimension: "unexplained_opening_quantity",
+      expectedValueCt: ct("1"),
+      observedValueCt: ct("0"),
+      completeness: "partial",
+    })
+    .returning({ id: schema.investmentReconciliationQuality.id });
+  await elevatedDb.insert(schema.investmentDisposalResolutionQueue).values({
+    ownerId: userId,
+    accountId: investmentAccount.id,
+    reconciliationQualityId: quality.id,
+    kind: "reconciliation_gap",
+    policyVersion: "broker-reported-else-user-selected/v1",
+  });
+
   await elevatedDb.transaction(async (tx) => {
     const [snapshot] = await tx
       .insert(schema.accountBalanceSnapshots)

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { missingBoiFxPairs } from "@/domain/fx-rates";
 import { markSyncRunFailed } from "@/domain/sync-promotion";
 import { encodeBinaryChildFrame } from "@/lib/connectors";
 import { errorLabel, syncLog, syncLogEnabled } from "@/lib/sync-log";
@@ -164,6 +165,42 @@ export async function runTiingoWorker(input: {
         error: errorLabel(error),
       });
       done(false);
+    });
+  });
+}
+
+const BOI_TIMEOUT_MS = 30_000;
+
+/**
+ * Caches the public BOI rates a user-entered lot needs, fetching only what is
+ * missing. A BOI outage is not an error here: the lots stay FX-incomplete and
+ * the preview already reports that.
+ */
+export async function ensureBoiRates(
+  required: Array<{ currency: string; date: string }>,
+): Promise<void> {
+  const missing = await missingBoiFxPairs(required);
+  if (missing.length === 0) return;
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = start(
+      "boi-worker.mts",
+      encodeBinaryChildFrame({ required: missing, skipMissing: true }, []),
+    );
+  } catch {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const term = setTimeout(() => child.kill("SIGKILL"), BOI_TIMEOUT_MS);
+    child.once("close", (code, signal) => {
+      clearTimeout(term);
+      syncLog("worker.exit", { script: "boi-worker.mts", code, signal });
+      resolve();
+    });
+    child.once("error", (error) => {
+      clearTimeout(term);
+      syncLog("worker.exit", { script: "boi-worker.mts", error: errorLabel(error) });
+      resolve();
     });
   });
 }

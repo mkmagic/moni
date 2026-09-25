@@ -2,6 +2,7 @@
 
 import Decimal from "decimal.js";
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   ChevronDown,
@@ -134,9 +135,11 @@ function quoteNotice(result: QuoteRefreshResult): string {
 export function InvestmentsScreen({
   initialOverview,
   connections,
+  activityAttention,
 }: {
   initialOverview: PortfolioOverview;
   connections: ConnectionView[];
+  activityAttention: null | { sales: number; identity: number; historyGaps: number };
 }) {
   const [overview, setOverview] = useState(initialOverview);
   const [rows, setRows] = useState<PortfolioPage | null>(null);
@@ -356,12 +359,26 @@ export function InvestmentsScreen({
     );
   return (
     <div className="flex flex-col gap-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Investments</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          What you own now and how its value evolved.
-        </p>
-      </header>
+      {/* The page title + sub-navigation live in the shared layout now; this
+          screen keeps only its own subtitle and content. */}
+      <p className="text-sm text-muted-foreground">What you own now and how its value evolved.</p>
+      {activityAttention && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius)] border border-primary/30 px-4 py-3 text-sm">
+          <div>
+            <span className="font-medium">
+              {activityAttention.sales + activityAttention.identity + activityAttention.historyGaps}{" "}
+              investment items need you
+            </span>
+            <span className="ml-2 text-xs text-muted-foreground">
+              {activityAttention.sales} sales · {activityAttention.identity} identity ·{" "}
+              {activityAttention.historyGaps} history gaps
+            </span>
+          </div>
+          <Link href="/investments/activity" className="font-medium text-primary hover:underline">
+            Review
+          </Link>
+        </div>
+      )}
       {error && <Notice tone="error">{error}</Notice>}
       {notice && <Notice>{notice}</Notice>}
       <Card className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -400,7 +417,11 @@ export function InvestmentsScreen({
             {overview.metadata.fxAsOf ?? "unavailable"}
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button onClick={() => void refreshAll()} disabled={busy}>
+            <Button
+              variant={activityAttention ? "outline" : "primary"}
+              onClick={() => void refreshAll()}
+              disabled={busy}
+            >
               <RefreshCw className={cn("h-4 w-4", busy && "animate-spin")} />
               Refresh all
             </Button>

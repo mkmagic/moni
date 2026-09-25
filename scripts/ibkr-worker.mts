@@ -1,15 +1,18 @@
 import "dotenv/config";
+import { createHmac } from "node:crypto";
 import { spawn } from "node:child_process";
 import { decodeBinaryChildFrame, encodeBinaryChildFrame, readChildStdin } from "@/lib/connectors";
 import {
   completeSourceRefresh,
   fetchIbkrFlexXml,
   InvestmentNormalizationError,
+  normalizeIbkrFlexActivityXml,
   normalizeIbkrPayload,
   refreshBoiWithFallback,
   WorkerSourceError,
 } from "@/lib/investments";
 import { promoteInvestmentSnapshot } from "@/domain/investment-promotion";
+import { deriveAndReconcileInvestmentActivity } from "@/domain/investment-activity-sync";
 import { missingBoiFxPairs } from "@/domain/fx-rates";
 import { markSyncRunFailed } from "@/domain/sync-promotion";
 import { wipe } from "@/lib/crypto";
@@ -53,9 +56,23 @@ async function main(): Promise<void> {
       throw new Error("invalid_frame");
     run = { userId, syncRunId };
     const xml = await fetchIbkrFlexXml(segments[1], segments[2], fetch);
+    // Parse activity from the SAME statement before normalizeIbkrPayload wipes
+    // the buffer. The fingerprint key only backs rows lacking a stable provider
+    // id; deriving it from the data key keeps it stable across syncs (so
+    // idempotency holds) without persisting a new secret.
+    const fingerprintKey = createHmac("sha256", segments[0])
+      .update("ibkr_flex:activity:fingerprint")
+      .digest();
+    let activityEvidence;
+    try {
+      activityEvidence = normalizeIbkrFlexActivityXml(xml.toString("utf8"), fingerprintKey);
+    } finally {
+      wipe(fingerprintKey);
+    }
     const envelope = normalizeIbkrPayload(xml);
     await completeSourceRefresh({
       envelope,
+      activityEvidence,
       cacheBoi,
       promote: (ready) =>
         promoteInvestmentSnapshot({
@@ -64,8 +81,11 @@ async function main(): Promise<void> {
           syncRunId,
           dataKey: segments[0],
           envelope: ready,
+          activityEvidence,
         }),
     });
+    // Derivation and reconciliation need the freshly promoted snapshot.
+    await deriveAndReconcileInvestmentActivity({ userId, connectionId, dataKey: segments[0] });
   } catch (error) {
     if (run) {
       const safe =

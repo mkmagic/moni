@@ -1,7 +1,13 @@
 import Decimal from "decimal.js";
 import { parse } from "csv-parse/sync";
 import { XMLParser } from "fast-xml-parser";
-import { normalizeIbkrFlexXml, normalizeSchwabPositionsCsv, type InvestmentSyncEnvelope } from ".";
+import {
+  normalizeIbkrFlexActivityXml,
+  normalizeIbkrFlexXml,
+  normalizeSchwabPositionsCsv,
+  type IbkrFlexActivityEvidenceSet,
+  type InvestmentSyncEnvelope,
+} from ".";
 import { errorLabel, logFetch, syncLog } from "@/lib/sync-log";
 
 export const IBKR_FLEX_URL =
@@ -29,6 +35,12 @@ const IBKR_RETRYABLE_REPORT_CODES = new Set([
 
 export type FetchAdapter = (input: string, init?: RequestInit) => Promise<Response>;
 type SleepAdapter = (milliseconds: number) => Promise<void>;
+export interface IbkrFlexDateWindow {
+  from: string;
+  to: string;
+}
+
+export const DEFAULT_IBKR_ACTIVITY_OVERLAP_DAYS = 30;
 export class WorkerSourceError extends Error {
   constructor(readonly code: string) {
     super(code);
@@ -133,12 +145,23 @@ export async function fetchIbkrFlexXml(
   queryId: Buffer,
   fetcher: FetchAdapter,
   wait: SleepAdapter = sleep,
+  window?: IbkrFlexDateWindow,
 ): Promise<Buffer> {
   try {
+    // IBKR's Flex API is GET-only, so the Tier-0 token and query id must be
+    // materialized as interned (unwipeable) JS strings on the query string —
+    // the same unavoidable, transient, worker-lifetime String exposure ADR 0009
+    // accepts for the Tiingo token. Containment is the mitigation: these strings
+    // and the assembled URL are never logged (only the endpoint is), fetch runs
+    // with redirect:"error", and nothing here stringifies the full URL.
     const sendUrl = new URL(`${IBKR_FLEX_URL}/SendRequest`);
     sendUrl.searchParams.set("t", token.toString("ascii"));
     sendUrl.searchParams.set("q", queryId.toString("ascii"));
     sendUrl.searchParams.set("v", "3");
+    if (window) {
+      sendUrl.searchParams.set("fd", window.from.replaceAll("-", ""));
+      sendUrl.searchParams.set("td", window.to.replaceAll("-", ""));
+    }
     // The query id and token live in the URL, so only the endpoint is logged.
     const sendBody = await logFetch("ibkr.send.fetch", {}, () =>
       fetchIbkrResponse(sendUrl, fetcher),
@@ -196,6 +219,112 @@ export async function fetchIbkrFlexXml(
   }
 }
 
+const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+function calendarDate(value: string): Date {
+  if (!isoDatePattern.test(value)) throw new WorkerSourceError("invalid_date_range");
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value)
+    throw new WorkerSourceError("invalid_date_range");
+  return date;
+}
+
+function addDays(value: Date, days: number): Date {
+  const result = new Date(value);
+  result.setUTCDate(result.getUTCDate() + days);
+  return result;
+}
+
+function dateText(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+/** Splits an inclusive range into non-overlapping Flex windows of at most 365 days. */
+export function splitIbkrFlexDateRange(from: string, to: string): IbkrFlexDateWindow[] {
+  const first = calendarDate(from);
+  const last = calendarDate(to);
+  if (first > last) throw new WorkerSourceError("invalid_date_range");
+  const windows: IbkrFlexDateWindow[] = [];
+  for (let start = first; start <= last; start = addDays(start, 365)) {
+    const candidateEnd = addDays(start, 364);
+    windows.push({
+      from: dateText(start),
+      to: dateText(candidateEnd < last ? candidateEnd : last),
+    });
+  }
+  return windows;
+}
+
+/** Applies the intentionally repeated tail used to pick up late and corrected activity. */
+export function incrementalIbkrActivityRange(input: {
+  initialFrom: string;
+  syncedThrough?: string;
+  to: string;
+  overlapDays?: number;
+}): IbkrFlexDateWindow {
+  const initial = calendarDate(input.initialFrom);
+  const end = calendarDate(input.to);
+  const overlapDays = input.overlapDays ?? DEFAULT_IBKR_ACTIVITY_OVERLAP_DAYS;
+  if (!Number.isSafeInteger(overlapDays) || overlapDays < 1)
+    throw new WorkerSourceError("invalid_overlap_window");
+  const start = input.syncedThrough
+    ? new Date(
+        Math.max(
+          initial.getTime(),
+          addDays(calendarDate(input.syncedThrough), -(overlapDays - 1)).getTime(),
+        ),
+      )
+    : initial;
+  if (start > end) throw new WorkerSourceError("invalid_date_range");
+  return { from: dateText(start), to: dateText(end) };
+}
+
+/**
+ * Fetches and parses every activity window before moving to the next one. Raw XML is wiped and
+ * never appears in the returned value. The token and query id are caller-owned and wiped here.
+ */
+export async function fetchIbkrFlexActivityEvidence(input: {
+  token: Buffer;
+  queryId: Buffer;
+  fingerprintKey: Uint8Array;
+  from: string;
+  to: string;
+  syncedThrough?: string;
+  overlapDays?: number;
+  fetcher: FetchAdapter;
+  wait?: SleepAdapter;
+}): Promise<Array<{ window: IbkrFlexDateWindow; evidence: IbkrFlexActivityEvidenceSet }>> {
+  try {
+    const results: Array<{
+      window: IbkrFlexDateWindow;
+      evidence: IbkrFlexActivityEvidenceSet;
+    }> = [];
+    const range = incrementalIbkrActivityRange({
+      initialFrom: input.from,
+      syncedThrough: input.syncedThrough,
+      to: input.to,
+      overlapDays: input.overlapDays,
+    });
+    for (const window of splitIbkrFlexDateRange(range.from, range.to)) {
+      const token = Buffer.from(input.token);
+      const queryId = Buffer.from(input.queryId);
+      const xml = await fetchIbkrFlexXml(token, queryId, input.fetcher, input.wait, window);
+      try {
+        results.push({
+          window,
+          evidence: normalizeIbkrFlexActivityXml(xml.toString("utf8"), input.fingerprintKey),
+        });
+      } finally {
+        xml.fill(0);
+      }
+    }
+    return results;
+  } finally {
+    input.token.fill(0);
+    input.queryId.fill(0);
+  }
+}
+
 export function importSchwabCsv(csv: Buffer, valuationCurrency: string): InvestmentSyncEnvelope {
   try {
     if (csv.length > MAX) throw new WorkerSourceError("source_too_large");
@@ -216,12 +345,13 @@ function dateDaysBefore(target: string, date: string): number {
 export function parseBoiSdmxCsv(
   csv: Buffer,
   required: Array<{ currency: string; date: string }>,
+  options: { skipMissing?: boolean } = {},
 ): Array<{ currency: string; date: string; rate: string }> {
   try {
     if (csv.length > MAX) throw new WorkerSourceError("source_too_large");
     const rows = parse(csv, { columns: true, skip_empty_lines: true, cast: false }) as BoiRow[];
-    return required.map(({ currency, date }) => {
-      if (currency === "ILS") return { currency, date, rate: "1" };
+    return required.flatMap(({ currency, date }) => {
+      if (currency === "ILS") return [{ currency, date, rate: "1" }];
       const candidates = rows.filter(
         (row) =>
           (row.BASE_CURRENCY === currency || row.CURRENCY === currency) &&
@@ -230,15 +360,21 @@ export function parseBoiSdmxCsv(
       );
       candidates.sort((a, b) => b.TIME_PERIOD.localeCompare(a.TIME_PERIOD));
       const row = candidates[0];
-      if (!row || dateDaysBefore(date, row.TIME_PERIOD) > 7)
+      if (!row || dateDaysBefore(date, row.TIME_PERIOD) > 7) {
+        // Opening lots may name dates or currencies BOI never published; one
+        // such row must not cost every other row its rate.
+        if (options.skipMissing) return [];
         throw new WorkerSourceError("missing_fx");
+      }
       if (!/^[+-]?\d+(?:\.\d+)?$/.test(row.OBS_VALUE) || !/^[+-]?\d+$/.test(row.UNIT_MULT))
         throw new WorkerSourceError("invalid_fx");
-      return {
-        currency,
-        date: row.TIME_PERIOD,
-        rate: new Decimal(row.OBS_VALUE).div(new Decimal(10).pow(row.UNIT_MULT)).toString(),
-      };
+      return [
+        {
+          currency,
+          date: row.TIME_PERIOD,
+          rate: new Decimal(row.OBS_VALUE).div(new Decimal(10).pow(row.UNIT_MULT)).toString(),
+        },
+      ];
     });
   } finally {
     csv.fill(0);
@@ -248,6 +384,7 @@ export function parseBoiSdmxCsv(
 export async function fetchBoiRates(
   required: Array<{ currency: string; date: string }>,
   fetcher: FetchAdapter,
+  options: { skipMissing?: boolean } = {},
 ): Promise<Array<{ currency: string; date: string; rate: string }>> {
   const foreign = required.filter(({ currency }) => currency !== "ILS");
   if (foreign.length === 0)
@@ -277,7 +414,7 @@ export async function fetchBoiRates(
   if (response.redirected) throw new WorkerSourceError("redirect_rejected");
   if (!response.ok) throw new WorkerSourceError("provider_rejected");
   const csv = await readBoundedResponse(response);
-  return parseBoiSdmxCsv(csv, required);
+  return parseBoiSdmxCsv(csv, required, options);
 }
 
 export function normalizeIbkrPayload(xml: Buffer): InvestmentSyncEnvelope {
@@ -291,6 +428,7 @@ export function normalizeIbkrPayload(xml: Buffer): InvestmentSyncEnvelope {
 
 export function requiredBoiPairs(
   envelope: InvestmentSyncEnvelope,
+  activityEvidence?: IbkrFlexActivityEvidenceSet,
 ): Array<{ currency: string; date: string }> {
   const pairs = new Set<string>();
   const calendarDate = (value: string): string => {
@@ -316,6 +454,10 @@ export function requiredBoiPairs(
       );
     for (const cash of account.cash) add(cash.currency, envelope.sourceAsOf.value);
   }
+  for (const activity of activityEvidence?.activities ?? []) {
+    if (activity.currency) add(activity.currency, activity.tradeDate);
+  }
+  for (const lot of activityEvidence?.openLots ?? []) add(lot.currency, lot.tradeDate);
   return [...pairs].sort().map((pair) => {
     const [currency, date] = pair.split("\u0000");
     return { currency, date };
@@ -325,10 +467,11 @@ export function requiredBoiPairs(
 /** The ordering seam used by source workers: BOI persistence completes before promotion. */
 export async function completeSourceRefresh<T>(input: {
   envelope: InvestmentSyncEnvelope;
+  activityEvidence?: IbkrFlexActivityEvidenceSet;
   cacheBoi: (pairs: Array<{ currency: string; date: string }>) => Promise<void>;
   promote: (envelope: InvestmentSyncEnvelope) => Promise<T>;
 }): Promise<T> {
-  await input.cacheBoi(requiredBoiPairs(input.envelope));
+  await input.cacheBoi(requiredBoiPairs(input.envelope, input.activityEvidence));
   return input.promote(input.envelope);
 }
 

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Redacted Flex Activity report: account identifiers and holder PII were replaced. -->
+<FlexQueryResponse queryName="Moni" type="AF">
+  <FlexStatements count="1">
+    <FlexStatement accountId="REDACTED-ACCOUNT" fromDate="20250101" toDate="20251231" period="Last365CalendarDays">
+      <AccountInformation accountId="REDACTED-ACCOUNT" currency="USD" />
+      <Trades>
+        <Trade accountId="REDACTED-ACCOUNT" buySell="BUY" conid="265598" symbol="AAPL" ibOrderID="ORDER-1" ibExecID="EXEC-1" tradeID="TRADE-1" transactionID="ACTIVITY-1" tradeDate="20250310" tradeTime="153000" settleDateTarget="20250312" quantity="5.0000" tradePrice="200.0000" proceeds="-1000.0000" ibCommission="-1.0000" taxes="0" netCash="-1001.0000" currency="USD" levelOfDetail="EXECUTION" />
+        <Trade accountId="REDACTED-ACCOUNT" buySell="BUY" conid="265598" symbol="AAPL" ibOrderID="ORDER-1" ibExecID="EXEC-2" tradeID="TRADE-2" transactionID="ACTIVITY-2" tradeDate="20250310" tradeTime="153001" settleDateTarget="20250312" quantity="5.0000" tradePrice="201.0000" proceeds="-1005.0000" ibCommission="-1.0000" taxes="0" netCash="-1006.0000" currency="USD" levelOfDetail="EXECUTION" />
+        <Trade accountId="REDACTED-ACCOUNT" buySell="SELL" conid="265598" symbol="AAPL" ibOrderID="ORDER-2" ibExecID="EXEC-3" tradeID="TRADE-3" transactionID="ACTIVITY-3" origTradeID="TRADE-OLD" openDateTime="20250310;153000" tradeDate="20250401" tradeTime="101500" settleDateTarget="20250403" quantity="-1.0000" tradePrice="210.0000" proceeds="210.0000" ibCommission="-1.0000" taxes="-0.2500" netCash="208.7500" currency="USD" levelOfDetail="EXECUTION" notes="Corrected trade" code="C;Ca" />
+        <Trade accountId="REDACTED-ACCOUNT" buySell="BUY" conid="265598" tradeID="SUMMARY-IGNORED" tradeDate="20250310" quantity="10" currency="USD" levelOfDetail="SUMMARY" />
+      </Trades>
+      <OpenPositions>
+        <OpenPosition accountId="REDACTED-ACCOUNT" conid="265598" symbol="AAPL" currency="USD" reportDate="20251231" position="9" markPrice="220" positionValue="1980" levelOfDetail="SUMMARY" />
+        <OpenPosition accountId="REDACTED-ACCOUNT" conid="265598" symbol="AAPL" currency="USD" reportDate="20251231" position="4.0000" openDateTime="20250310;153000" costBasisMoney="800.8000" costBasisPrice="200.2000" side="Long" originatingTransactionID="LOT-1" levelOfDetail="LOT" />
+        <OpenPosition accountId="REDACTED-ACCOUNT" conid="265598" symbol="AAPL" currency="USD" reportDate="20251231" position="5.0000" openDateTime="20250310;153001" costBasisMoney="1006.0000" costBasisPrice="201.2000" side="Long" levelOfDetail="LOT" />
+      </OpenPositions>
+      <CashTransactions>
+        <CashTransaction accountId="REDACTED-ACCOUNT" conid="265598" symbol="AAPL" currency="USD" dateTime="20250515" amount="23.0000" type="Dividends" tradeID="CASH-1" description="AAPL dividend" code="Po" />
+        <CashTransaction accountId="REDACTED-ACCOUNT" conid="265598" symbol="AAPL" currency="USD" dateTime="20250515" amount="-3.4500" type="Withholding Tax" tradeID="CASH-2" description="AAPL withholding" />
+        <CashTransaction accountId="REDACTED-ACCOUNT" conid="265598" symbol="AAPL" currency="USD" dateTime="20250615" amount="1.2500" type="Payment In Lieu Of Dividends" tradeID="CASH-3" />
+        <CashTransaction accountId="REDACTED-ACCOUNT" currency="USD" dateTime="20250701" amount="2.5000" type="Broker Interest Received" tradeID="CASH-4" />
+        <CashTransaction accountId="REDACTED-ACCOUNT" currency="USD" dateTime="20250702" amount="-1.0000" type="Other Fees" tradeID="CASH-5" />
+        <CashTransaction accountId="REDACTED-ACCOUNT" currency="USD" dateTime="20250703" amount="500.0000" type="Contribution" tradeID="CASH-6" />
+        <CashTransaction accountId="REDACTED-ACCOUNT" currency="USD" dateTime="20250704" amount="-100.0000" type="Withdrawal" description="Redacted transfer" />
+      </CashTransactions>
+      <ChangeInDividendAccruals>
+        <ChangeInDividendAccrual accountId="REDACTED-ACCOUNT" conid="265598" symbol="AAPL" currency="USD" exDate="20250501" payDate="20250515" quantity="10.0000" grossRate="2.3000" grossAmount="23.0000" tax="3.4500" fee="0" netAmount="19.5500" code="Po" />
+      </ChangeInDividendAccruals>
+      <CorporateActions>
+        <CorporateAction accountId="REDACTED-ACCOUNT" conid="265598" symbol="AAPL" currency="USD" dateTime="20250601" type="FS" code="FS" quantity="10.0000" proceeds="0" transactionID="CORP-1" description="Forward split" />
+      </CorporateActions>
+      <CashReport>
+        <CashReportCurrency accountId="REDACTED-ACCOUNT" currency="USD" endingCash="922.3000" />
+      </CashReport>
+      <EquitySummaryInBase>
+        <EquitySummaryByReportDateInBase accountId="REDACTED-ACCOUNT" reportDate="20251231" total="2902.3000" />
+      </EquitySummaryInBase>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>

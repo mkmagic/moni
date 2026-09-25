@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<!-- Synthetic round-trip: ILS 50,000 + 25,000 + 25,000, three FX conversions,
+     three VXUS buys, USD 20 dividend less USD 3 withholding. FX rate 4 ILS/USD. -->
+<FlexQueryResponse><FlexStatements><FlexStatement accountId="FUNDING" fromDate="20260101" toDate="20260901">
+  <AccountInformation accountId="FUNDING" currency="USD" />
+  <Trades>
+    <Trade accountId="FUNDING" assetCategory="CASH" symbol="USD.ILS" conid="FX" levelOfDetail="EXECUTION" buySell="BUY" ibExecID="FX-1" tradeDate="20260105" quantity="12500" tradePrice="4" proceeds="-50000" ibCommission="-2" ibCommissionCurrency="USD" currency="ILS" />
+    <Trade accountId="FUNDING" assetCategory="CASH" symbol="USD.ILS" conid="FX" levelOfDetail="EXECUTION" buySell="BUY" ibExecID="FX-2" tradeDate="20260205" quantity="6250" tradePrice="4" proceeds="-25000" ibCommission="-2" ibCommissionCurrency="USD" currency="ILS" />
+    <Trade accountId="FUNDING" assetCategory="CASH" symbol="USD.ILS" conid="FX" levelOfDetail="EXECUTION" buySell="BUY" ibExecID="FX-3" tradeDate="20260305" quantity="6250" tradePrice="4" proceeds="-25000" ibCommission="-2" ibCommissionCurrency="USD" currency="ILS" />
+    <Trade accountId="FUNDING" assetCategory="STK" symbol="VXUS" conid="VXUS" levelOfDetail="EXECUTION" buySell="BUY" ibExecID="BUY-1" transactionID="BUY-TXN-1" tradeDate="20260106" quantity="100" tradePrice="125" proceeds="-12500" ibCommission="-1" ibCommissionCurrency="USD" netCash="-12501" currency="USD" />
+    <Trade accountId="FUNDING" assetCategory="STK" symbol="VXUS" conid="VXUS" levelOfDetail="EXECUTION" buySell="BUY" ibExecID="BUY-2" transactionID="BUY-TXN-2" tradeDate="20260206" quantity="50" tradePrice="125" proceeds="-6250" ibCommission="-1" ibCommissionCurrency="USD" netCash="-6251" currency="USD" />
+    <Trade accountId="FUNDING" assetCategory="STK" symbol="VXUS" conid="VXUS" levelOfDetail="EXECUTION" buySell="BUY" ibExecID="BUY-3" transactionID="BUY-TXN-3" tradeDate="20260306" quantity="50" tradePrice="125" proceeds="-6250" ibCommission="-1" ibCommissionCurrency="USD" netCash="-6251" currency="USD" />
+  </Trades>
+  <CashTransactions>
+    <CashTransaction accountId="FUNDING" type="Deposits/Withdrawals" transactionID="DEP-1" dateTime="20260104" amount="50000" currency="ILS" />
+    <CashTransaction accountId="FUNDING" type="Deposits/Withdrawals" transactionID="DEP-2" dateTime="20260204" amount="25000" currency="ILS" />
+    <CashTransaction accountId="FUNDING" type="Deposits/Withdrawals" transactionID="DEP-3" dateTime="20260304" amount="25000" currency="ILS" />
+    <CashTransaction accountId="FUNDING" conid="VXUS" type="Dividends" transactionID="DIV-1" dateTime="20260620" amount="20" currency="USD" />
+    <CashTransaction accountId="FUNDING" conid="VXUS" type="Withholding Tax" transactionID="TAX-1" dateTime="20260620" amount="-3" currency="USD" />
+  </CashTransactions>
+  <OpenPositions><OpenPosition accountId="FUNDING" assetCategory="STK" conid="VXUS" symbol="VXUS" currency="USD" reportDate="20260901" position="200" markPrice="130" positionValue="26000" levelOfDetail="SUMMARY" /></OpenPositions>
+  <CashReport><CashReportCurrency accountId="FUNDING" currency="ILS" endingCash="0" /><CashReportCurrency accountId="FUNDING" currency="USD" endingCash="8" /></CashReport>
+  <EquitySummaryInBase><EquitySummaryByReportDateInBase accountId="FUNDING" reportDate="20260901" total="26008" /></EquitySummaryInBase>
+</FlexStatement></FlexStatements></FlexQueryResponse>
