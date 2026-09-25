@@ -61,7 +61,7 @@ Moni is **self-hosted by one technical owner** and **multi-user** (family). Secu
 
 ### Dependencies & auth hygiene
 26. **Minimize and audit the surface that touches plaintext credentials** (the worker). Pin dependencies; keep credential-handling code small and reviewed. `israeli-bank-scrapers` + its Puppeteer stack is untrusted supply chain.
-27. **Passkeys/WebAuthn as primary auth**; where passwords exist, add TOTP + brute-force protection. Standard secure-session, CSP, and security headers.
+27. **Passkeys/WebAuthn as primary auth**; where passwords exist, add TOTP + brute-force protection. Standard secure-session, CSP, and security headers. The lean v1 password gate keeps a two-request Argon2 admission cap, a short-refill global token bucket, and source-scoped exponential backoff in process (appropriate only to the single-instance deployment). Unknown accounts pay one bounded dummy Argon2 derivation, and throttle logs contain a reason only — never an email, password, or source address. A multi-instance deployment must replace this with a shared atomic limiter.
 28. **Fail scrapes safely** — never partial-write a corrupt balance; surface breakage to the user; keep every connector behind the generic interface.
 
 ## Sanity checks

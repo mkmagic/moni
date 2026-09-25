@@ -20,5 +20,9 @@ cp -a deploy drizzle node_modules scripts src "$STAGE/app/"
 cp -a drizzle.config.ts next.config.ts package.json package-lock.json tsconfig.json "$STAGE/app/"
 [ ! -d patches ] || cp -a patches "$STAGE/app/"
 printf '%s\n' "$SHA" > "$STAGE/app/.moni-release-sha"
+# shellcheck disable=SC1091
+source deploy/chrome-for-testing.env
+printf '%s\n' "$CHROME_VERSION" > "$STAGE/app/.moni-chrome-version"
+printf '%s\n' "$CHROME_SHA256" > "$STAGE/app/.moni-chrome-sha256"
 
 tar -C "$STAGE/app" -czf "$OUT" .
