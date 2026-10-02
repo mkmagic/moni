@@ -1,0 +1,1 @@
+ALTER TYPE "public"."investment_provider" ADD VALUE 'opening_lot_import';

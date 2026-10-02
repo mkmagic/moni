@@ -5,11 +5,13 @@ import {
   completeSourceRefresh,
   fetchSnaptradeHoldings,
   InvestmentNormalizationError,
+  normalizeSnaptradeActivity,
   normalizeSnaptradeHoldings,
   refreshBoiWithFallback,
   WorkerSourceError,
 } from "@/lib/investments";
 import { promoteInvestmentSnapshot } from "@/domain/investment-promotion";
+import { deriveAndReconcileInvestmentActivity } from "@/domain/investment-activity-sync";
 import { missingBoiFxPairs } from "@/domain/fx-rates";
 import { markSyncRunFailed } from "@/domain/sync-promotion";
 import { wipe } from "@/lib/crypto";
@@ -55,8 +57,10 @@ async function main(): Promise<void> {
     run = { userId, syncRunId };
     const payloads = await fetchSnaptradeHoldings(segments[1], segments[2], fetch);
     const envelope = normalizeSnaptradeHoldings(payloads);
+    const activityEvidence = normalizeSnaptradeActivity(payloads);
     await completeSourceRefresh({
       envelope,
+      activityEvidence,
       cacheBoi,
       promote: (ready) =>
         promoteInvestmentSnapshot({
@@ -65,8 +69,11 @@ async function main(): Promise<void> {
           syncRunId,
           dataKey: segments[0],
           envelope: ready,
+          activityEvidence,
         }),
     });
+    // Derivation and reconciliation need the freshly promoted snapshot.
+    await deriveAndReconcileInvestmentActivity({ userId, connectionId, dataKey: segments[0] });
   } catch (error) {
     if (run) {
       const safe =

@@ -21,6 +21,7 @@ import { createCategory, listCategoryTree, listRules, upsertRule } from "@/domai
 import { listAccountsGrouped } from "@/domain/accounts";
 import { getBudgetMonth, getBudgetHistory, currentMonth, setCeiling } from "@/domain/budget";
 import { getPortfolioOverview, listPortfolioHoldings } from "@/domain/investments";
+import { readInvestmentReturns, readPortfolioInvestmentReturns } from "@/domain/investment-returns";
 import { listLongTermSavingsAccounts } from "@/domain/long-term-savings";
 import { getOverview } from "@/domain/dashboard";
 import { aggregateSpending } from "@/domain/aggregates";
@@ -411,6 +412,93 @@ describe("MCP tools (issue #113 Phase 6 — the rest of the read-only surface)",
     try {
       const out = await mcp.call("portfolio");
       expect(stripProvenance(out)).toEqual(payload(domain));
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it("investment_returns exposes the domain's exact read-only figures and quality", async () => {
+    const fx = await freshFixture("investment-returns");
+    const investmentAccountId = randomUUID();
+    await elevatedDb.insert(schema.accounts).values({
+      id: investmentAccountId,
+      ownerId: fx.userId,
+      accountType: "investment",
+      classification: "asset",
+      nameCt: encText(fx.dataKey, "Investments", investmentAccountId, "name_ct", 1),
+      currency: "ILS",
+    });
+    const [instrument] = await elevatedDb
+      .insert(schema.instruments)
+      .values({ ownerId: fx.userId, kind: "etf" })
+      .returning({ id: schema.instruments.id });
+
+    const portfolioDomain = await readPortfolioInvestmentReturns({
+      userId: fx.userId,
+      dataKey: fx.dataKey,
+    });
+    const accountDomain = await readInvestmentReturns({
+      userId: fx.userId,
+      accountId: investmentAccountId,
+      dataKey: fx.dataKey,
+    });
+    const instrumentDomain = await readInvestmentReturns({
+      userId: fx.userId,
+      accountId: investmentAccountId,
+      instrumentId: instrument.id,
+      dataKey: fx.dataKey,
+    });
+    const mcp = await connect(fx.ctx);
+    try {
+      const portfolioOut = await mcp.call("investment_returns");
+      expect(stripProvenance(portfolioOut)).toEqual(payload(portfolioDomain));
+      expect(portfolioOut.realizedGain).toMatchObject({
+        ils: { amount: "0", currency: "ILS", basis: "ils_gain_includes_fx" },
+        quality: {
+          completeness: "unknown",
+          provenance: [],
+          valuationAsOf: null,
+          fxAsOf: null,
+        },
+      });
+      expect(portfolioOut.performance).toMatchObject({
+        twr: {
+          rate: null,
+          basis: "time_weighted_return_ils",
+          quality: { completeness: "unknown", valuationAsOf: null, fxAsOf: null },
+        },
+        mwr: {
+          rate: null,
+          basis: "money_weighted_return_ils_irr",
+          quality: { completeness: "unknown", valuationAsOf: null, fxAsOf: null },
+        },
+      });
+      expect(portfolioOut.dividendIncome).toMatchObject({
+        ils: { amount: "0", currency: "ILS", basis: "booked_cash_income" },
+        quality: { completeness: "unknown", valuationAsOf: null, fxAsOf: null },
+      });
+
+      const accountOut = await mcp.call("investment_returns", {
+        account_id: investmentAccountId,
+      });
+      expect(stripProvenance(accountOut)).toEqual(payload(accountDomain));
+
+      const instrumentOut = await mcp.call("investment_returns", {
+        account_id: investmentAccountId,
+        instrument_id: instrument.id,
+      });
+      expect(stripProvenance(instrumentOut)).toEqual(payload(instrumentDomain));
+      expect(instrumentOut.performance).toEqual(accountOut.performance);
+
+      // Calling the read twice leaves its domain result unchanged. The only
+      // write is guardedTool's required access-audit row, never financial data.
+      await expect(
+        readInvestmentReturns({
+          userId: fx.userId,
+          accountId: investmentAccountId,
+          dataKey: fx.dataKey,
+        }),
+      ).resolves.toEqual(accountDomain);
     } finally {
       await mcp.close();
     }

@@ -1,0 +1,143 @@
+{
+  "data": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "symbol": {
+        "description": null,
+        "symbol": "SCHFDX0",
+        "raw_symbol": "SCHFDX0",
+        "currency": { "code": "USD" },
+        "type": {
+          "code": "",
+          "description": "Security type is not defined",
+          "is_supported": false
+        },
+        "figi_code": null,
+        "figi_instrument": null
+      },
+      "option_symbol": null,
+      "currency": { "code": "USD" },
+      "type": "INTEREST",
+      "description": "SCHWAB1 INT 07/30-08/28",
+      "amount": 1.65,
+      "price": 0.0,
+      "units": 0.0,
+      "fee": 0.0,
+      "fx_rate": null,
+      "external_reference_id": "AAAA0001",
+      "settlement_date": "2024-08-29T00:00:00Z",
+      "trade_date": "2024-08-29T00:00:00Z",
+      "institution": "Schwab",
+      "option_type": ""
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "symbol": {
+        "description": "Vanguard Total Stock Market ETF",
+        "symbol": "VTI",
+        "raw_symbol": "VTI",
+        "currency": { "code": "USD" },
+        "type": { "code": "et", "description": "ETF", "is_supported": true },
+        "figi_code": "BBG000HRBDF4",
+        "figi_instrument": { "figi_code": "BBG000HRBDF4", "figi_share_class": "BBG001SHTB03" }
+      },
+      "option_symbol": null,
+      "currency": { "code": "USD" },
+      "type": "DIVIDEND",
+      "description": "VANGUARD TOTAL STOCK MARKET ETF",
+      "amount": 100.25,
+      "price": 0.0,
+      "units": 0.0,
+      "fee": 0.0,
+      "fx_rate": null,
+      "external_reference_id": "AAAA0002",
+      "settlement_date": "2024-10-01T00:00:00Z",
+      "trade_date": "2024-10-01T00:00:00Z",
+      "institution": "Schwab",
+      "option_type": ""
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "symbol": {
+        "description": "Vanguard Total Stock Market ETF",
+        "symbol": "VTI",
+        "raw_symbol": "VTI",
+        "currency": { "code": "USD" },
+        "type": { "code": "et", "description": "ETF", "is_supported": true },
+        "figi_code": "BBG000HRBDF4",
+        "figi_instrument": { "figi_code": "BBG000HRBDF4", "figi_share_class": "BBG001SHTB03" }
+      },
+      "option_symbol": null,
+      "currency": { "code": "USD" },
+      "type": "BUY",
+      "description": "VANGUARD TOTAL STOCK MARKET INDEX FUND ETF SHARES",
+      "amount": -100.25,
+      "price": 280.0,
+      "units": 0.358,
+      "fee": 0.0,
+      "fx_rate": null,
+      "external_reference_id": "AAAA0003",
+      "settlement_date": "2024-10-01T00:00:00Z",
+      "trade_date": "2024-10-01T00:00:00Z",
+      "institution": "Schwab",
+      "option_type": ""
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000004",
+      "symbol": {
+        "description": null,
+        "symbol": "SCHFDX0",
+        "raw_symbol": "SCHFDX0",
+        "currency": { "code": "USD" },
+        "type": {
+          "code": "",
+          "description": "Security type is not defined",
+          "is_supported": false
+        },
+        "figi_code": null,
+        "figi_instrument": null
+      },
+      "option_symbol": null,
+      "currency": { "code": "USD" },
+      "type": "TRANSFER",
+      "description": "WIRED FUNDS RECEIVED",
+      "amount": 3000.0,
+      "price": 0.0,
+      "units": 0.0,
+      "fee": 0.0,
+      "fx_rate": null,
+      "external_reference_id": "AAAA0004",
+      "settlement_date": "2025-03-18T00:00:00Z",
+      "trade_date": "2025-03-18T00:00:00Z",
+      "institution": "Schwab",
+      "option_type": ""
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000005",
+      "symbol": {
+        "description": "Vanguard Total Stock Market ETF",
+        "symbol": "VTI",
+        "raw_symbol": "VTI",
+        "currency": { "code": "USD" },
+        "type": { "code": "et", "description": "ETF", "is_supported": true },
+        "figi_code": "BBG000HRBDF4",
+        "figi_instrument": { "figi_code": "BBG000HRBDF4", "figi_share_class": "BBG001SHTB03" }
+      },
+      "option_symbol": null,
+      "currency": { "code": "USD" },
+      "type": "BUY",
+      "description": "VANGUARD TOTAL STOCK MARKET INDEX FUND ETF SHARES",
+      "amount": -2800.0,
+      "price": 280.0,
+      "units": 10,
+      "fee": 0.0,
+      "fx_rate": null,
+      "external_reference_id": "AAAA0005",
+      "settlement_date": "2025-03-19T00:00:00Z",
+      "trade_date": "2025-03-18T00:00:00Z",
+      "institution": "Schwab",
+      "option_type": ""
+    }
+  ],
+  "pagination": { "offset": 0, "limit": 1000, "total": 5 }
+}

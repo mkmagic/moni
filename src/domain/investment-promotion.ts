@@ -17,11 +17,13 @@ import {
 } from "@/db/schema";
 import {
   serializeCanonicalInvestmentEnvelope,
+  type IbkrFlexActivityEvidenceSet,
   type InvestmentSyncEnvelope,
 } from "@/lib/investments";
 import { getConnectorDefinition } from "@/lib/connectors";
 import { errorLabel, syncLog } from "@/lib/sync-log";
 import { decText, encText } from "./fields";
+import { ingestInvestmentActivityEvidenceInTransaction } from "./investment-activity";
 import { israelDate } from "./investment-valuation";
 import { markSyncRunFailed } from "./sync-promotion";
 
@@ -270,12 +272,42 @@ async function resolveInstrument(
       .from(instruments)
       .where(eq(instruments.id, mapping.instrumentId))
       .limit(1);
-    if (
-      !instrument ||
-      instrument.kind !== position.assetKind ||
-      mapping.currency !== position.currency
-    )
-      fail("identity_conflict");
+    if (!instrument || mapping.currency !== position.currency) fail("identity_conflict");
+    if (instrument.kind !== position.assetKind) {
+      // Activity ingestion runs before promotion and creates a bare `generic`
+      // instrument for a security the snapshot has never held (a first buy).
+      // The snapshot is the first source that knows what it is, so it
+      // completes that instrument instead of rejecting it as a conflict.
+      if (instrument.kind !== "generic") fail("identity_conflict");
+      await tx
+        .update(instruments)
+        .set({
+          kind: position.assetKind,
+          canonicalNameCt:
+            instrument.canonicalNameCt ??
+            (position.name
+              ? encText(
+                  dataKey,
+                  position.name,
+                  instrument.id,
+                  "canonical_name_ct",
+                  instrument.version,
+                )
+              : null),
+          canonicalSymbolCt:
+            instrument.canonicalSymbolCt ??
+            (position.symbol
+              ? encText(
+                  dataKey,
+                  position.symbol,
+                  instrument.id,
+                  "canonical_symbol_ct",
+                  instrument.version,
+                )
+              : null),
+        })
+        .where(eq(instruments.id, instrument.id));
+    }
     if (mapping.provider === source) {
       // Descriptive provider metadata, unlike the identity fields checked
       // above, can legitimately change between syncs — a venue relabelled, or
@@ -422,6 +454,7 @@ async function promote(
     syncRunId: string;
     dataKey: Uint8Array;
     envelope: InvestmentSyncEnvelope;
+    activityEvidence?: IbkrFlexActivityEvidenceSet;
   },
 ): Promise<InvestmentPromotionResult> {
   const { userId, connectionId, syncRunId, dataKey, envelope } = input;
@@ -748,6 +781,17 @@ async function promote(
     positions: result.positions,
     cashBalances: result.cashBalances,
   });
+  // Activity from the same fetch lands in the same transaction: the accounts it
+  // attaches to exist by now (even on a connection's first sync), and the run is
+  // still `running`, which ingestion requires.
+  if (input.activityEvidence)
+    await ingestInvestmentActivityEvidenceInTransaction(tx, {
+      userId,
+      connectionId,
+      syncRunId,
+      dataKey,
+      evidence: input.activityEvidence,
+    });
   await tx
     .update(connections)
     .set({ status: "active", lastSyncAt: new Date() })
@@ -775,6 +819,8 @@ export async function promoteInvestmentSnapshot(input: {
   syncRunId: string;
   dataKey: Uint8Array;
   envelope: InvestmentSyncEnvelope;
+  /** Activity parsed from the same fetch; ingested atomically with the snapshot. */
+  activityEvidence?: IbkrFlexActivityEvidenceSet;
 }): Promise<InvestmentPromotionResult> {
   try {
     return await withUser(input.userId, (tx) => promote(tx, input));

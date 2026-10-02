@@ -1,8 +1,15 @@
 import { createHmac } from "node:crypto";
 
+import Decimal from "decimal.js";
 import { z } from "zod";
 
 import { decimalText } from "./decimal";
+import {
+  normalizeInvestmentActivityEvidence,
+  type InvestmentActivityEvidence,
+  type InvestmentActivityType,
+} from "./evidence";
+import type { IbkrFlexActivityEvidenceSet } from "./ibkr-flex";
 import { asOf, checked, code, currencySchema, nonblankSchema, requireLimit } from "./shared";
 import { InvestmentNormalizationError, type InvestmentSyncEnvelope } from "./types";
 import { readBoundedResponse, WorkerSourceError, type FetchAdapter } from "./workers";
@@ -53,8 +60,11 @@ async function get(
   clientId: string,
   consumerKey: Buffer,
   fetcher: FetchAdapter,
+  params = "",
 ): Promise<unknown> {
-  const query = `clientId=${encodeURIComponent(clientId)}&timestamp=${Math.round(Date.now() / 1000)}`;
+  // The signature covers the exact query string sent, so extra parameters are
+  // part of it rather than appended after signing.
+  const query = `clientId=${encodeURIComponent(clientId)}${params}&timestamp=${Math.round(Date.now() / 1000)}`;
   const url = new URL(`${path}?${query}`, SNAPTRADE_API_ORIGIN);
   if (url.origin !== SNAPTRADE_API_ORIGIN || !url.pathname.startsWith(ACCOUNTS_PATH))
     throw new WorkerSourceError("provider_rejected");
@@ -162,13 +172,44 @@ const positionsSchema = z.object({
   data_freshness: z.object({ as_of: nonblankSchema }),
 });
 
+const activitySchema = z.object({
+  id: nonblankSchema,
+  external_reference_id: z.string().nullish(),
+  type: nonblankSchema,
+  description: z.string().nullish(),
+  trade_date: nonblankSchema,
+  settlement_date: z.string().nullish(),
+  units: decimalString.nullish(),
+  price: decimalString.nullish(),
+  amount: decimalString.nullish(),
+  fee: decimalString.nullish(),
+  currency: z.object({ code: currencySchema }).nullish(),
+  symbol: z
+    .object({
+      symbol: z.string().nullish(),
+      figi_code: z.string().nullish(),
+      figi_instrument: z.object({ figi_code: z.string().nullish() }).nullish(),
+    })
+    .nullish(),
+});
+
+const activitiesPageSchema = z.object({ data: z.array(activitySchema) });
+
+const ACTIVITY_PAGE_SIZE = 1000;
+const MAX_ACTIVITY_ROWS = 100_000;
+
 export type SnaptradeAccountPayload = {
   account: z.infer<typeof accountSchema>;
   balances: z.infer<typeof balancesSchema>;
   positions: z.infer<typeof positionsSchema>;
+  /** The account's whole activity history; SnapTrade's default range is everything it has. */
+  activities: Array<z.infer<typeof activitySchema>>;
 };
 
-/** One authenticated pass over every account the personal key can see. */
+/**
+ * One authenticated pass over every account the personal key can see:
+ * holdings for the snapshot, and the full activity history for lots and dividends.
+ */
 export async function fetchSnaptradeHoldings(
   clientId: Buffer,
   consumerKey: Buffer,
@@ -199,13 +240,32 @@ export async function fetchSnaptradeHoldings(
           get(`${base}/positions/all`, id, consumerKey, fetcher),
         ),
       );
+      const activities: SnaptradeAccountPayload["activities"] = [];
+      for (let offset = 0; ; offset += ACTIVITY_PAGE_SIZE) {
+        const page = checked(
+          activitiesPageSchema,
+          await logFetch("snaptrade.activities.fetch", { offset }, () =>
+            get(
+              `${base}/activities`,
+              id,
+              consumerKey,
+              fetcher,
+              `&offset=${offset}&limit=${ACTIVITY_PAGE_SIZE}`,
+            ),
+          ),
+        );
+        activities.push(...page.data);
+        requireLimit(activities.length, MAX_ACTIVITY_ROWS);
+        if (page.data.length < ACTIVITY_PAGE_SIZE) break;
+      }
       syncLog("snaptrade.account", {
         institution: account.institution_name,
         positions: positions.results.length,
+        activities: activities.length,
         asOf: positions.data_freshness.as_of,
         lastSync: account.sync_status.holdings.last_successful_sync,
       });
-      payloads.push({ account, balances, positions });
+      payloads.push({ account, balances, positions, activities });
     }
     return payloads;
   } finally {
@@ -241,6 +301,10 @@ function assetKind(kind: string | null | undefined): "stock" | "etf" | "mutual_f
     default:
       return "generic";
   }
+}
+
+function accountRef(account: SnaptradeAccountPayload["account"]): string {
+  return account.institution_account_id ?? account.id;
 }
 
 /**
@@ -284,7 +348,7 @@ export function normalizeSnaptradeHoldings(
         rows.push(entry);
       }
       return {
-        sourceAccountRef: account.institution_account_id ?? account.id,
+        sourceAccountRef: accountRef(account),
         institutionName: account.institution_name?.trim() || undefined,
         baseCurrency: account.balance.total.currency,
         positions: rows,
@@ -313,6 +377,127 @@ export function normalizeSnaptradeHoldings(
       sourceAsOf: asOf(earliest),
       accounts,
     };
+  } catch (error) {
+    throw code(error);
+  }
+}
+
+function activityType(
+  type: string,
+  amount: string | undefined,
+  units: string | undefined,
+): InvestmentActivityType {
+  switch (type.toUpperCase()) {
+    case "BUY":
+    // Dividend reinvestment buys shares; Schwab's DRIP shows up as plain BUY.
+    case "REI":
+      return "buy";
+    case "SELL":
+      return "sell";
+    case "DIVIDEND":
+    case "SUBSTITUTE_DIVIDEND":
+      return "dividend";
+    case "INTEREST":
+      return "interest";
+    case "FEE":
+      return "fee";
+    case "TAX":
+      return "tax";
+    case "CONTRIBUTION":
+      return "deposit";
+    case "WITHDRAWAL":
+      return "withdrawal";
+  }
+  if (type.toUpperCase().includes("TRANSFER")) {
+    // Shares moving in or out stay a transfer (no cost basis arrives with
+    // them); a cash-only transfer such as a wire is funding, signed by amount.
+    if (units !== undefined) return "transfer";
+    if (amount !== undefined) return new Decimal(amount).isNegative() ? "withdrawal" : "deposit";
+    return "transfer";
+  }
+  return "other";
+}
+
+/** A non-zero decimal as text, or undefined — SnapTrade sends 0.0 for "not applicable". */
+function nonZero(value: string | null | undefined): string | undefined {
+  if (value == null) return undefined;
+  const text = decimalText(value);
+  return new Decimal(text).isZero() ? undefined : text;
+}
+
+/**
+ * Maps every account's activity history onto the provider-neutral evidence the
+ * IBKR path already ingests. SnapTrade reports no lots, so opening lots stay
+ * empty: positions older than its history window (Schwab's reaches back about
+ * two years) show up as a reconciliation gap for the owner to fill with an
+ * opening-lot import, never as an invented lot.
+ *
+ * `amount` is taken as the settled cash movement with any fee already inside
+ * it, so a trade's gross is `amount` with the fee backed out. Schwab ETF
+ * trades carry no fee, so this is unverified against a fee-bearing trade.
+ */
+export function normalizeSnaptradeActivity(
+  payloads: SnaptradeAccountPayload[],
+): IbkrFlexActivityEvidenceSet {
+  try {
+    const activities: InvestmentActivityEvidence[] = [];
+    for (const { account, activities: rows } of payloads) {
+      const sourceAccountRef = accountRef(account);
+      for (const row of rows) {
+        const units = nonZero(row.units);
+        const amount = row.amount == null ? undefined : decimalText(row.amount);
+        const fee = nonZero(row.fee);
+        const type = activityType(row.type, amount, units);
+        const figi = row.symbol?.figi_instrument?.figi_code ?? row.symbol?.figi_code ?? undefined;
+        const symbol = row.symbol?.symbol?.trim() || undefined;
+        // Cash rows (interest, wires) name Schwab's sweep placeholder, not a
+        // security; only rows about shares, or a real FIGI, get an instrument.
+        const security =
+          figi || (symbol && (units !== undefined || type === "dividend"))
+            ? {
+                sourceSecurityId: figi ?? symbol,
+                // Must match normalizeSnaptradeHoldings, or lots and the
+                // snapshot land on two different instruments.
+                sourceSecurityIdKind: figi ? "snaptrade_figi" : "snaptrade_symbol",
+              }
+            : {};
+        const feeAmount = fee ? new Decimal(fee).abs().neg().toFixed() : undefined;
+        const isTrade = type === "buy" || type === "sell";
+        activities.push(
+          normalizeInvestmentActivityEvidence({
+            source: "snaptrade",
+            sourceAccountRef,
+            idempotencyKey: `${sourceAccountRef}:activity:${row.id}`,
+            sourceActivityId: row.id,
+            // Shared by the legs of one brokerage order (buy, fee, fx) — a
+            // grouping key, not a unique one.
+            sourceOrderId: row.external_reference_id?.trim() || undefined,
+            ...security,
+            activityType: type,
+            tradeDate: row.trade_date.slice(0, 10),
+            occurredAt: row.trade_date,
+            settlementDate: row.settlement_date?.slice(0, 10) || undefined,
+            quantity: units,
+            quantityUnit: units ? "shares" : undefined,
+            price: isTrade ? nonZero(row.price) : undefined,
+            grossAmount:
+              isTrade && amount !== undefined
+                ? new Decimal(amount).minus(feeAmount ?? "0").toFixed()
+                : type === "dividend"
+                  ? amount
+                  : undefined,
+            feeAmount: type === "fee" ? amount : feeAmount,
+            taxAmount: type === "tax" ? amount : undefined,
+            netCashAmount: amount,
+            currency: row.currency?.code,
+            rawType: row.type,
+            rawDescription: row.description?.trim() || undefined,
+            provenance: "broker_reported",
+          }),
+        );
+      }
+    }
+    return { activities, openLots: [], dividendAccruals: [], corporateActions: [] };
   } catch (error) {
     throw code(error);
   }

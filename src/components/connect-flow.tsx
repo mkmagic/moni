@@ -97,7 +97,12 @@ export function ConnectFlow({
   function afterConnected(target: Target) {
     setAddedCount((n) => n + 1);
     const definition = getConnectorDefinition(target.connectorId);
-    if (definition?.mode === "user_mediated_import" || startDate === null) {
+    // Investment syncs fetch whatever history the broker offers; the backfill
+    // window (and its "Nothing for now") is a bank-scrape choice only.
+    if (
+      definition?.mode === "user_mediated_import" ||
+      (startDate === null && definition?.kind !== "investment")
+    ) {
       setStep({ kind: "skipped", target });
       return;
     }
@@ -170,6 +175,7 @@ export function ConnectFlow({
   if (step.kind === "connect") {
     const definition = getConnectorDefinition(step.connectorId);
     const isImport = definition?.mode === "user_mediated_import";
+    const isInvestment = definition?.kind === "investment";
     return (
       <div className="flex flex-col gap-5">
         <div>
@@ -179,12 +185,14 @@ export function ConnectFlow({
           <p className="text-sm text-muted-foreground">
             {isImport
               ? "Create the connection now — you can import your first file on the next step."
-              : startDate === null
-                ? "We'll link the account without fetching anything yet."
-                : "We'll fetch your transactions as soon as it's connected."}
+              : isInvestment
+                ? "We'll fetch all the history your broker makes available as soon as it's connected."
+                : startDate === null
+                  ? "We'll link the account without fetching anything yet."
+                  : "We'll fetch your transactions as soon as it's connected."}
           </p>
         </div>
-        {!isImport && (
+        {!isImport && !isInvestment && (
           <BackfillWindowPicker today={today} value={startDate} onChange={setStartDate} />
         )}
         <div className="border-t border-border pt-5">

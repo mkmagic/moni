@@ -104,6 +104,28 @@ The source-observed signed quantity of one instrument in one investment snapshot
 It is an account state observation, not a trade or tax lot.
 _Avoid_: Activity, transaction, lot.
 
+**Activity**:
+A durable source assertion that something happened in an investment account, such
+as an execution, dividend, fee, tax, transfer, or corporate action. It is evidence,
+not a position or a derived lot.
+_Avoid_: Position, snapshot, inferred trade.
+
+**Lot**:
+A quantity of one instrument tied to a particular acquisition. Use the qualified
+terms **opening lot** or **tax lot** when its source or role matters.
+_Avoid_: Position, holding.
+
+**Opening lot**:
+User-authored or imported evidence for an acquisition before trustworthy activity
+coverage begins. It closes a known history gap without pretending Moni observed
+the missing activity.
+_Avoid_: Plug lot, synthetic activity, manual position.
+
+**Tax lot**:
+A reproducible result derived from activity and opening-lot evidence under a named,
+versioned matching policy. It is never the sole durable record of an acquisition.
+_Avoid_: Position, broker snapshot, hand-edited lot.
+
 **Cash balance**:
 A source-observed signed amount in one currency held within an investment snapshot.
 It appears beside positions but is not an instrument or position.

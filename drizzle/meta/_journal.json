@@ -309,6 +309,34 @@
       "when": 1788204101801,
       "tag": "0043_household_cascade_deletes",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1789204843330,
+      "tag": "0044_soft_kree",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1789226357078,
+      "tag": "0045_colossal_maria_hill",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1789228752148,
+      "tag": "0046_investment_lot_closures",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1790320102698,
+      "tag": "0047_investment_opening_cash",
+      "breakpoints": true
     }
   ]
 }
