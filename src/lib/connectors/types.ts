@@ -79,6 +79,8 @@ export type ConnectorId =
   | "snaptrade"
   | "harel_pension_quarterly"
   | "harel_hishtalmut"
+  | "migdal_pension_quarterly"
+  | "analyst_hishtalmut"
   | "agam_liderim";
 
 export interface ConnectorDefinition {

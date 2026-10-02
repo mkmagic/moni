@@ -154,3 +154,76 @@ export function depositColumns(items: Item[], headerAnchor: Item): Column[] {
     })
     .sort((a, b) => b.centre - a.centre);
 }
+
+/** Widest gap, in points, between two pieces of one phrase on a baseline. */
+const MAX_WORD_GAP = 6;
+
+/** A gap wider than this between two merged pieces is a space. */
+const SPACE_GAP = 1.2;
+
+/**
+ * Re-joins text a PDF emitted in pieces into the phrases the label patterns
+ * match. Harel emits a whole phrase per run; Migdal emits one run per word and
+ * Analyst one per Hebrew GLYPH, so on those a label like "דמי ניהול מחיסכון"
+ * does not exist as an item until it is rebuilt here.
+ *
+ * Only text merges. A run carrying a digit always stands alone, because the
+ * label/value rules above depend on a figure being its own item — and a figure
+ * printed beside a label (a date in "יתרת הכספים בקרן ב- 30/06/2026") must not
+ * be swallowed into it. Two phrases on one baseline sit further apart than
+ * `MAX_WORD_GAP` on every report seen so far (the closest pair is ~16pt).
+ */
+export function mergeRuns(items: Item[]): Item[] {
+  const rows = new Map<string, Item[]>();
+  for (const item of items) {
+    const key = [...rows.keys()].find((k) => {
+      const [page, y] = k.split(":").map(Number);
+      return page === item.page && Math.abs(y - item.y) <= 1;
+    });
+    const row = key ? rows.get(key) : undefined;
+    if (row) row.push(item);
+    else rows.set(`${item.page}:${item.y}`, [item]);
+  }
+
+  const merged: Item[] = [];
+  for (const row of rows.values()) {
+    let current: Item | undefined;
+    for (const item of [...row].sort((a, b) => b.x - a.x)) {
+      const textual = !/\d/.test(item.text);
+      if (
+        current &&
+        textual &&
+        !/\d/.test(current.text) &&
+        current.x - item.right <= MAX_WORD_GAP
+      ) {
+        const gap = current.x - item.right;
+        current.text = `${current.text}${gap > SPACE_GAP ? " " : ""}${item.text}`;
+        current.x = Math.min(current.x, item.x);
+        current.centre = (current.x + current.right) / 2;
+      } else {
+        current = { ...item };
+        merged.push(current);
+      }
+    }
+  }
+  return merged;
+}
+
+/**
+ * The percentage to the left of the label matching `pattern`, without its
+ * "%". Providers print it either as one run ("0.63%") or as a number with a
+ * separate "%" glyph beside it; both read the same here.
+ */
+export function percentAt(items: Item[], pattern: RegExp): string | null {
+  const label = findLabel(items, pattern);
+  if (!label) return null;
+  let best: Item | undefined;
+  for (const item of items) {
+    if (item === label || !sameRow(item, label) || item.right > label.x) continue;
+    if (label.x - item.right > MAX_LABEL_GAP) continue;
+    if (!/^\d+(\.\d+)?%$/.test(item.text) && !(isNumber(item) && hasPercentSign(items, item)))
+      continue;
+    if (!best || item.right > best.right) best = item;
+  }
+  return best ? best.text.replace("%", "") : null;
+}

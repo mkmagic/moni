@@ -15,9 +15,11 @@
  * downstream sees the normalised `LongTermSavingsReport`.
  */
 import type { ConnectorId } from "../types";
+import { analystHishtalmutParser, normaliseAnalystHishtalmut } from "./analyst/hishtalmut";
 import { harelHishtalmutParser, normaliseHarelHishtalmut } from "./harel/hishtalmut";
 import { harelPensionQuarterlyParser, normaliseHarelPension } from "./harel/pension-quarterly";
 import type { LongTermSavingsReport } from "./long-term-savings-report";
+import { migdalPensionQuarterlyParser, normaliseMigdalPension } from "./migdal/pension-quarterly";
 import type { Item } from "./pdf-text";
 import type { DocumentParser } from "./types";
 
@@ -54,4 +56,6 @@ function importer<TReport>(
 export const LONG_TERM_SAVINGS_IMPORTERS: Partial<Record<ConnectorId, LongTermSavingsImporter>> = {
   harel_pension_quarterly: importer(harelPensionQuarterlyParser, normaliseHarelPension),
   harel_hishtalmut: importer(harelHishtalmutParser, normaliseHarelHishtalmut),
+  migdal_pension_quarterly: importer(migdalPensionQuarterlyParser, normaliseMigdalPension),
+  analyst_hishtalmut: importer(analystHishtalmutParser, normaliseAnalystHishtalmut),
 };

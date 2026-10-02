@@ -30,6 +30,18 @@ export interface LongTermSavingsMovements {
   /** Null on a product with no insurance component, e.g. קרן השתלמות. */
   disabilityInsuranceCost: string | null;
   deathInsuranceCost: string | null;
+  /**
+   * Money moved in from another fund ("כספים שהעברת לקרן"). Kept apart from
+   * `contributions` because the deposits table never lists it, so folding it in
+   * would break the table-vs-movements reconciliation. Null when the document
+   * has no such line.
+   */
+  transfersIn: string | null;
+  /**
+   * A pension fund's actuarial-balancing adjustment ("עדכון יתרת הכספים בגין
+   * הפעלת מנגנון איזון אקטוארי"), signed. Null when the document has no such line.
+   */
+  actuarialAdjustment: string | null;
   closingBalance: string;
 }
 
@@ -142,7 +154,9 @@ export function checkLongTermSavingsReport(report: LongTermSavingsReport): {
     .plus(d(m.investmentResult))
     .plus(d(m.managementFeesCharged))
     .plus(d(m.disabilityInsuranceCost))
-    .plus(d(m.deathInsuranceCost));
+    .plus(d(m.deathInsuranceCost))
+    .plus(d(m.transfersIn))
+    .plus(d(m.actuarialAdjustment));
   const balanceDrift = expectedClosing.minus(d(m.closingBalance)).abs().toString();
 
   const checks: ReportCheck[] = [

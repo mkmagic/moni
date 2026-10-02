@@ -392,7 +392,8 @@ export function normaliseHarelPension(report: HarelPensionQuarterlyReport): Long
     quarter: report.quarter,
     year: report.year,
     liquidFrom: null,
-    movements: report.movements,
+    // Harel's section ב prints neither line on any report seen so far.
+    movements: { ...report.movements, transfersIn: null, actuarialAdjustment: null },
     fees: {
       rateDeposit: report.managementFees.onDeposit,
       rateSavings: report.managementFees.onSavings,

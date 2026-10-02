@@ -89,6 +89,20 @@ describe("CONNECTOR_REGISTRY matches israeli-bank-scrapers' SCRAPERS", () => {
         mode: "user_mediated_import",
         loginFields: [],
       }),
+      expect.objectContaining({
+        id: "migdal_pension_quarterly",
+        institutionLabel: "Migdal",
+        product: "pension",
+        mode: "user_mediated_import",
+        loginFields: [],
+      }),
+      expect.objectContaining({
+        id: "analyst_hishtalmut",
+        institutionLabel: "Analyst",
+        product: "hishtalmut",
+        mode: "user_mediated_import",
+        loginFields: [],
+      }),
       // The agency aggregator: an Excel export covering many accounts across
       // providers, so it carries no connector-level product and reads an xlsx
       // rather than a single provider's PDF report.
