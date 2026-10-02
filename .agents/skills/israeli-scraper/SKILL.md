@@ -27,22 +27,14 @@ npx puppeteer browsers install chrome
 executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 ```
 
-### Puppeteer Troubleshooting (Linux server — verified on Ubuntu 24.04, 2026-07-31)
+### Puppeteer on the Linux server
 
-**`npx puppeteer browsers install chrome` does not reliably work here.** It and `npm ci` both
-exit non-zero **with no error message**, leaving a version directory containing an *empty*
-`chrome-linux64/`. The failure only surfaces later, as the badly misleading
-`Could not find Chrome (ver. X)` — which reads like "it was never downloaded" when in fact the
-download succeeded and the *extraction* is what failed. Don't trust the exit code; check for the
-binary. Fetch and unpack it yourself:
-
-```bash
-VER=148.0.7778.97   # must match puppeteer's expected build: node -p "require('puppeteer').executablePath()"
-cd ~/.cache/puppeteer/chrome && rm -rf "linux-$VER"
-curl -sSL -o c.zip "https://storage.googleapis.com/chrome-for-testing-public/$VER/linux64/chrome-linux64.zip"
-mkdir -p "linux-$VER" && unzip -q c.zip -d "linux-$VER/" && chmod -R +x "linux-$VER/chrome-linux64/" && rm c.zip
-"linux-$VER/chrome-linux64/chrome" --version
-```
+Do not use `npx puppeteer browsers install chrome` or a service-user cache in production. The old
+Puppeteer 24 installer used `extract-zip`, silently produced incomplete Chrome trees on Node 26,
+and did not provide Moni's required artifact digest/ownership boundary. Puppeteer 25 removed that
+dependency, but production still uses Moni's smaller deterministic path: `release.sh` installs the
+exact version and SHA-256 in `deploy/chrome-for-testing.env` as root under `/opt/moni/chrome` and
+sets `MONI_CHROME_PATH`. Update that reviewed pin when Puppeteer's supported Chrome changes.
 
 **Runtime libraries** the Chrome download does *not* include (Ubuntu 24.04 names — note the
 `t64` suffixes, the pre-24.04 names in most "Chrome in Docker" recipes will not resolve):

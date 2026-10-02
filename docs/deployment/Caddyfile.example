@@ -19,6 +19,9 @@
 # and a Caddy build including that provider's module.
 #
 # moni.example.com {
+# 	request_body {
+# 		max_size 11MiB
+# 	}
 # 	reverse_proxy 127.0.0.1:3000
 # }
 
@@ -29,6 +32,9 @@
 # as root, or set TS_PERMIT_CERT_UID where that file exists).
 #
 # moni.<TAILNET>.ts.net {
+# 	request_body {
+# 		max_size 11MiB
+# 	}
 # 	reverse_proxy 127.0.0.1:3000
 # }
 

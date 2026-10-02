@@ -1,6 +1,8 @@
+import { isIP } from "node:net";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticate, SESSION_COOKIE, SESSION_COOKIE_ATTRS } from "@/domain/auth";
+import { passwordLoginProtection } from "@/lib/auth/login-abuse";
 import { SESSION_TTL_SECONDS } from "@/lib/auth/session-store";
 
 // Zod at the trust boundary (docs/design/conventions.md — Validation).
@@ -16,11 +18,29 @@ export async function POST(req: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "invalid request" }, { status: 400 });
   }
 
+  // Caddy is the only non-loopback caller and overwrites X-Forwarded-For, so
+  // its first value is the network source. Invalid/missing values deliberately
+  // share one conservative bucket rather than bypassing the limiter.
+  const forwardedFor = req.headers.get("x-forwarded-for")?.split(",", 1)[0]?.trim();
+  const source = forwardedFor && isIP(forwardedFor) ? forwardedFor : "unknown";
+  const admission = passwordLoginProtection.begin(source);
+  if (!admission.allowed) {
+    console.warn("password login throttled", { reason: admission.reason });
+    return NextResponse.json(
+      { error: "try again later" },
+      {
+        status: 429,
+        headers: { "retry-after": String(admission.retryAfterSeconds ?? 1) },
+      },
+    );
+  }
+
   // The password arrives as a JS string (immutable, unwipeable) at the HTTP/
   // JSON boundary — an unavoidable residual, bounded by the short-lived
   // request (threat-model §5.5, cf. the israeli-bank-scrapers string caveat).
   // Move it into a wipeable Buffer at once and wipe after use.
   const password = Buffer.from(parsed.data.password, "utf8");
+  let success = false;
   try {
     const sessionId = await authenticate(parsed.data.email, password);
     if (!sessionId) {
@@ -31,8 +51,10 @@ export async function POST(req: Request): Promise<NextResponse> {
       ...SESSION_COOKIE_ATTRS,
       maxAge: SESSION_TTL_SECONDS,
     });
+    success = true;
     return res;
   } finally {
+    admission.attempt!.finish(success);
     password.fill(0);
   }
 }

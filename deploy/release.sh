@@ -43,6 +43,12 @@ wait_for_health(){
   printf '%s' "$code"
   return 1
 }
+verify_caddy_hardening(){
+  [ "$(systemctl show caddy.service -p LimitCORE --value)" = 0 ] \
+    && [ "$(systemctl show caddy.service -p NoNewPrivileges --value)" = yes ] \
+    && [ "$(systemctl show caddy.service -p AmbientCapabilities --value)" = cap_net_bind_service ] \
+    && [ "$(systemctl show caddy.service -p CapabilityBoundingSet --value)" = cap_net_bind_service ]
+}
 switch_app(){
   ln -sfn "$1" "$ROOT/.app-next"
   mv -Tf "$ROOT/.app-next" "$APP"
@@ -77,6 +83,9 @@ ARCHIVE="$INCOMING/$SHA.tar.gz"
 STAGE="$RELEASES/.stage-$SHA-$$"
 FINAL="$RELEASES/$SHA"
 UNIT_BACKUP="$ROOT/.moni.service-$SHA-$$"
+CHROME_STAGE=""
+CHROME_ZIP=""
+CHROME_CHECKSUM=""
 CUTOVER_ACTIVE=0
 cleanup(){
   local rc=$?
@@ -84,6 +93,9 @@ cleanup(){
   set +e
   rm -f "$ARCHIVE" "$ROOT/.app-next"
   [ ! -d "${STAGE:-}" ] || rm -rf "$STAGE"
+  [ -z "$CHROME_STAGE" ] || [ ! -d "$CHROME_STAGE" ] || rm -rf "$CHROME_STAGE"
+  [ -z "$CHROME_ZIP" ] || rm -f "$CHROME_ZIP"
+  [ -z "$CHROME_CHECKSUM" ] || rm -f "$CHROME_CHECKSUM"
   if [ "$rc" -ne 0 ] && [ "$CUTOVER_ACTIVE" = 1 ]; then
     if ! rollback_cutover; then
       log "CRITICAL: automatic rollback failed; service backup preserved at $UNIT_BACKUP"
@@ -110,6 +122,28 @@ chown moni:moni "$STAGE"
 asmoni tar -xzf "$ARCHIVE" -C "$STAGE"
 [ "$(cat "$STAGE/.moni-release-sha")" = "$SHA" ] || { echo "artifact SHA mismatch" >&2; exit 1; }
 [ -f "$STAGE/.next/standalone/server.js" ] || { echo "artifact has no server" >&2; exit 1; }
+# shellcheck disable=SC1091
+source "$STAGE/deploy/chrome-for-testing.env"
+[[ "$CHROME_VERSION" =~ ^[0-9]+(\.[0-9]+){3}$ ]] \
+  && [[ "$CHROME_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+  && [ "$CHROME_URL" = "https://storage.googleapis.com/chrome-for-testing-public/$CHROME_VERSION/linux64/chrome-linux64.zip" ] \
+  || { echo "invalid Chrome manifest" >&2; exit 1; }
+[ "$(cat "$STAGE/.moni-chrome-version")" = "$CHROME_VERSION" ] \
+  && [ "$(cat "$STAGE/.moni-chrome-sha256")" = "$CHROME_SHA256" ] \
+  || { echo "artifact Chrome manifest mismatch" >&2; exit 1; }
+
+log "reconcile Caddy configuration and service hardening"
+MONI_DOMAIN="$MONI_DOMAIN" caddy validate --config "$STAGE/deploy/Caddyfile.production" --adapter caddyfile
+install -o root -g root -m 644 "$STAGE/deploy/Caddyfile.production" /etc/caddy/Caddyfile
+install -d -o root -g root -m 755 /etc/systemd/system/caddy.service.d
+install -o root -g root -m 644 "$STAGE/deploy/caddy.service.conf" \
+  /etc/systemd/system/caddy.service.d/override.conf
+systemctl daemon-reload
+systemctl restart caddy
+verify_caddy_hardening || {
+  echo "REFUSING TO DEPLOY: effective caddy.service hardening does not match reviewed override" >&2
+  exit 1
+}
 
 if [ ! -f "$SHARED/.env" ]; then
   [ -f "$APP/.env" ] || { echo "current app has no .env to migrate" >&2; exit 1; }
@@ -117,17 +151,50 @@ if [ ! -f "$SHARED/.env" ]; then
 fi
 ln -s "$SHARED/.env" "$STAGE/.env"
 
-log "reconcile Chrome with artifact's Puppeteer version"
-EXP=$(asmoni bash -c "cd '$STAGE' && node -p 'require(\"puppeteer\").executablePath()'")
-VER=$(printf '%s' "$EXP" | sed -E 's#.*/chrome/linux-([0-9.]+)/.*#\1#')
-if ! sudo -u moni test -x "$EXP"; then
-  log "Chrome $VER missing — downloading"
-  asmoni mkdir -p /home/moni/.cache/puppeteer/chrome
-  asmoni bash -c "cd /home/moni/.cache/puppeteer/chrome && rm -rf 'linux-$VER' \
-    && curl -fsSL -o c.zip 'https://storage.googleapis.com/chrome-for-testing-public/$VER/linux64/chrome-linux64.zip' \
-    && mkdir 'linux-$VER' && unzip -q c.zip -d 'linux-$VER/' \
-    && chmod -R +x 'linux-$VER/chrome-linux64/' && rm c.zip"
+log "reconcile reviewed Chrome $CHROME_VERSION ($CHROME_SHA256)"
+CHROME_ROOT="$ROOT/chrome"
+CHROME_DIR="$CHROME_ROOT/$CHROME_VERSION"
+EXP="$CHROME_DIR/chrome-linux64/chrome"
+chrome_is_valid(){
+  [ -x "$EXP" ] \
+    && [ "$(cat "$CHROME_DIR/.moni-chrome-version" 2>/dev/null)" = "$CHROME_VERSION" ] \
+    && [ "$(cat "$CHROME_DIR/.moni-chrome-sha256" 2>/dev/null)" = "$CHROME_SHA256" ] \
+    && [ "$(stat -c '%U:%G' "$CHROME_DIR" 2>/dev/null)" = root:root ] \
+    && [ -z "$(find "$CHROME_DIR" -perm /022 -print -quit 2>/dev/null)" ] \
+    && "$EXP" --version 2>/dev/null | grep -Fq "$CHROME_VERSION"
+}
+if ! chrome_is_valid; then
+  log "install Chrome $CHROME_VERSION from pinned artifact"
+  install -d -o root -g root -m 755 "$CHROME_ROOT"
+  CHROME_ZIP="$INCOMING/chrome-$CHROME_VERSION-$$.zip"
+  CHROME_CHECKSUM="$INCOMING/chrome-$CHROME_VERSION-$$.sha256"
+  CHROME_STAGE="$CHROME_ROOT/.stage-$CHROME_VERSION-$$"
+  curl -fsSL --retry 3 -o "$CHROME_ZIP" "$CHROME_URL"
+  printf '%s  %s\n' "$CHROME_SHA256" "$CHROME_ZIP" > "$CHROME_CHECKSUM"
+  sha256sum -c "$CHROME_CHECKSUM"
+  unzip -Z1 "$CHROME_ZIP" | awk '
+    /^\// || /\\/ || /(^|\/)\.\.($|\/)/ || $0 !~ /^chrome-linux64\// { bad=1 }
+    END { exit bad }
+  ' || { echo "unsafe Chrome archive path" >&2; exit 1; }
+  ENTRY_COUNT=$(unzip -Z1 "$CHROME_ZIP" | wc -l)
+  SAFE_ENTRY_COUNT=$(zipinfo -l "$CHROME_ZIP" | awk '$1 ~ /^[-d][rwx-]{9}$/ { count++ } END { print count+0 }')
+  [ "$ENTRY_COUNT" = "$SAFE_ENTRY_COUNT" ] \
+    || { echo "unsafe Chrome archive entry type" >&2; exit 1; }
+  mkdir "$CHROME_STAGE"
+  unzip -q "$CHROME_ZIP" -d "$CHROME_STAGE"
+  [ -z "$(find "$CHROME_STAGE" -type l -print -quit)" ] \
+    || { echo "unsafe Chrome archive symlink" >&2; exit 1; }
+  [ -x "$CHROME_STAGE/chrome-linux64/chrome" ] \
+    || { echo "Chrome archive has no executable" >&2; exit 1; }
+  printf '%s\n' "$CHROME_VERSION" > "$CHROME_STAGE/.moni-chrome-version"
+  printf '%s\n' "$CHROME_SHA256" > "$CHROME_STAGE/.moni-chrome-sha256"
+  chown -R root:root "$CHROME_STAGE"
+  chmod -R go-w "$CHROME_STAGE"
+  [ ! -e "$CHROME_DIR" ] || rm -rf "$CHROME_DIR"
+  mv "$CHROME_STAGE" "$CHROME_DIR"
+  CHROME_STAGE=""
 fi
+chrome_is_valid || { echo "Chrome install verification failed" >&2; exit 1; }
 if grep -q '^MONI_CHROME_PATH=' "$SHARED/.env"; then
   # --follow-symlinks: when .env is a symlink into the LUKS store (#93 M2), a plain `sed -i`
   # replaces the symlink with a NEW plaintext regular file holding every secret. Follow the link
@@ -167,6 +234,8 @@ systemctl restart moni
 if code=$(wait_for_health); then
   install -m 755 "$FINAL/deploy/release.sh" "$ROOT/release.sh.next"
   mv -f "$ROOT/release.sh.next" "$ROOT/release.sh"
+  install -m 755 "$FINAL/deploy/verify-host.sh" /root/verify-host.sh.next
+  mv -f /root/verify-host.sh.next /root/verify-host.sh
   CUTOVER_ACTIVE=0
   log "done — $SHA, health $code"
   exit 0

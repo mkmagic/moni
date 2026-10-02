@@ -22,7 +22,8 @@
     "scrape:test": "tsx scripts/scrape-test.ts",
     "suggestions:eval": "tsx scripts/eval-suggestions.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -38,14 +39,17 @@
     "geist": "^1.7.2",
     "israeli-bank-scrapers": "^6.9.0",
     "lucide-react": "^1.26.0",
-    "next": "16.3.0",
+    "next": "16.3.5",
     "pg": "8.22.0",
+    "puppeteer": "25.11.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "recharts": "^3.10.0",
+    "sharp": "0.35.4",
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "1.56.0",
     "@tailwindcss/postcss": "4.3.3",
     "@types/node": "26.1.1",
     "@types/pg": "8.20.0",
@@ -57,7 +61,7 @@
     "dotenv": "17.4.2",
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.5",
-    "eslint-config-next": "16.2.11",
+    "eslint-config-next": "16.3.5",
     "eslint-config-prettier": "10.1.8",
     "patch-package": "^8.0.1",
     "pdfjs-dist": "^5.7.284",
@@ -73,6 +77,7 @@
     "fast-uri": "^3.1.7",
     "js-yaml": "^4.3.2",
     "nanoid": "^3.3.18",
+    "puppeteer": "$puppeteer",
     "qs": "^6.16.0"
   }
 }

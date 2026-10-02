@@ -15,7 +15,11 @@ next-env.d.ts
 coverage/
 .nyc_output/
 playwright-report/
+blob-report/
 test-results/
+# Playwright's saved signed-in session (holds a live cookie) and run cache.
+playwright/.auth/
+.last-run.json
 
 # Environment & secrets — never commit
 .env

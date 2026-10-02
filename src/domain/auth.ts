@@ -157,7 +157,17 @@ export async function authenticate(email: string, password: Buffer): Promise<str
     .limit(1);
 
   const candidate = rows[0];
-  if (!candidate) return null;
+  if (!candidate) {
+    // Unknown accounts pay the same bounded Argon2 cost as known accounts.
+    // The route's global token bucket and two-slot admission cap run before
+    // this, so equalizing work does not create an unbounded CPU/RAM amplifier.
+    const dummyKek = await deriveKekFromPassword(
+      password,
+      Buffer.from("7ecbd14a91b82643cb2e144f7332ff52", "hex"),
+    );
+    wipe(dummyKek);
+    return null;
+  }
 
   return withUser(candidate.id, async (tx) => {
     const dataKey = await unwrapDataKey(tx, password);
