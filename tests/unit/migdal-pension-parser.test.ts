@@ -94,13 +94,20 @@ describe("section ב — movements", () => {
     expect(checkLongTermSavingsReport(report).balanceDrift).toBe("1");
   });
 
-  it("lets the balance equation catch a transfer it failed to read", () => {
-    const report = normaliseMigdalPension(parse(replace(q2, "125,911", "·")));
+  it("lets the balance equation catch a large line whose cell came back empty", () => {
+    const report = normaliseMigdalPension(parse(q2.filter((item) => item.text !== "125,911")));
     expect(Number(checkLongTermSavingsReport(report).balanceDrift)).toBeGreaterThan(50);
   });
 
   it("refuses a report whose opening-balance line is missing, not merely blank", () => {
     expect(() => parse(q2.filter((item) => item.text !== "בתחילת"))).toThrow(malformed);
+  });
+
+  it("refuses a small printed amount it cannot read, rather than storing it as ₪0", () => {
+    // The actuarial line is −₪32: read as blank, the balance would drift only
+    // ₪31, well under the ±₪50 gate. So the parser itself must refuse it.
+    for (const unreadable of ["−32", "(32)"])
+      expect(() => parse(replace(q2, "-32", unreadable)), unreadable).toThrow(malformed);
   });
 
   it("refuses a report missing a required line", () => {

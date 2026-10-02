@@ -59,6 +59,12 @@ export function toDecimalString(text: string): string {
  * dash (Harel prints "-" for "not applicable").
  */
 export function numberLeftOf(items: Item[], label: Item): string | null {
+  const cell = numberItemLeftOf(items, label);
+  return cell ? toDecimalString(cell.text) : null;
+}
+
+/** `numberLeftOf`, returning the cell itself so its position can be used. */
+export function numberItemLeftOf(items: Item[], label: Item): Item | undefined {
   let best: Item | undefined;
   for (const item of items) {
     if (item === label || !sameRow(item, label) || item.right > label.x) continue;
@@ -66,7 +72,7 @@ export function numberLeftOf(items: Item[], label: Item): string | null {
     if (!isNumber(item)) continue;
     if (!best || item.right > best.right) best = item;
   }
-  return best ? toDecimalString(best.text) : null;
+  return best;
 }
 
 /** True when a "%" glyph abuts the right edge of `value`. */

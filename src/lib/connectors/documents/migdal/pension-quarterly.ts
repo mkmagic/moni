@@ -30,6 +30,8 @@ import {
   isNumber,
   joinRtl,
   mergeRuns,
+  sameRow,
+  numberItemLeftOf,
   numberLeftOf,
   percentAt,
   toDecimalString,
@@ -184,23 +186,67 @@ function parseExpectedPayments(items: Item[]): z.infer<typeof expectedPaymentsSc
   };
 }
 
+const REQUIRED_LINES = {
+  contributions: /^כספים שהופקדו לקרן$/,
+  investmentResult: /^(רווחים|הפסדים) בניכוי הוצאות ניהול השקעות/,
+  managementFeesCharged: /^דמי ניהול שנגבו/,
+  // "יתרת הכספים בקרן ב- 30/06/2026": the date is its own run, so the
+  // balance is still the nearest NUMBER to the label's left.
+  closingBalance: /^יתרת הכספים בקרן ב-$/,
+};
+
+/**
+ * Section ב. The lines Migdal may leave blank are read against the amount
+ * column itself, because "blank" and "printed but unreadable" must not look
+ * alike: a figure the number reader rejects (a "−" minus, "(32)" brackets)
+ * would otherwise come back as null, be stored as ₪0, and — on a line as small
+ * as the actuarial adjustment or an insurance cost — hide under the ±₪50
+ * balance gate. The column's extent is taken from the required lines' own
+ * figures, so it is derived, not a page coordinate.
+ */
 function parseMovements(items: Item[]): z.infer<typeof movementsSchema> {
-  // The opening line must be there even when its cell is blank — a missing
-  // label means the layout moved, not that the fund is new.
-  if (!findLabel(items, /^יתרת הכספים בקרן בתחילת/))
+  const cells = Object.values(REQUIRED_LINES).map((pattern) => {
+    const label = findLabel(items, pattern);
+    const cell = label && numberItemLeftOf(items, label);
+    if (!cell) throw new DocumentParseError("malformed_document");
+    return cell;
+  });
+  const columnLeft = Math.min(...cells.map((cell) => cell.x)) - 4;
+  const columnRight = Math.max(...cells.map((cell) => cell.right)) + 4;
+
+  /** Null only when the line is absent or its amount cell is empty or "-". */
+  const optional = (pattern: RegExp, { labelRequired = false } = {}): string | null => {
+    const label = findLabel(items, pattern);
+    if (!label) {
+      // The opening line must be there even when its cell is blank — a
+      // missing label means the layout moved, not that the fund is new.
+      if (labelRequired) throw new DocumentParseError("malformed_document");
+      return null;
+    }
+    const inColumn = items.filter(
+      (item) =>
+        item !== label &&
+        sameRow(item, label) &&
+        item.right <= label.x &&
+        item.right > columnLeft &&
+        item.x < columnRight,
+    );
+    const value = numberLeftOf(inColumn.concat(label), label);
+    if (value !== null) return value;
+    if (inColumn.every((item) => item.text === "-")) return null;
     throw new DocumentParseError("malformed_document");
+  };
+
   return {
-    openingBalance: valueAt(items, /^יתרת הכספים בקרן בתחילת/),
-    contributions: requiredValueAt(items, /^כספים שהופקדו לקרן$/),
-    investmentResult: requiredValueAt(items, /^(רווחים|הפסדים) בניכוי הוצאות ניהול השקעות/),
-    transfersIn: valueAt(items, /^כספים שהעברת לקרן$/),
-    managementFeesCharged: requiredValueAt(items, /^דמי ניהול שנגבו/),
-    disabilityInsuranceCost: valueAt(items, /^עלות ביטוח לסיכוני נכות/),
-    deathInsuranceCost: valueAt(items, /^עלות ביטוח למקרה מוות/),
-    actuarialAdjustment: valueAt(items, /^עדכון יתרת הכספים בגין הפעלת/),
-    // "יתרת הכספים בקרן ב- 30/06/2026": the date is its own run, so the
-    // balance is still the nearest NUMBER to the label's left.
-    closingBalance: requiredValueAt(items, /^יתרת הכספים בקרן ב-$/),
+    openingBalance: optional(/^יתרת הכספים בקרן בתחילת/, { labelRequired: true }),
+    contributions: requiredValueAt(items, REQUIRED_LINES.contributions),
+    investmentResult: requiredValueAt(items, REQUIRED_LINES.investmentResult),
+    transfersIn: optional(/^כספים שהעברת לקרן$/),
+    managementFeesCharged: requiredValueAt(items, REQUIRED_LINES.managementFeesCharged),
+    disabilityInsuranceCost: optional(/^עלות ביטוח לסיכוני נכות/),
+    deathInsuranceCost: optional(/^עלות ביטוח למקרה מוות/),
+    actuarialAdjustment: optional(/^עדכון יתרת הכספים בגין הפעלת/),
+    closingBalance: requiredValueAt(items, REQUIRED_LINES.closingBalance),
   };
 }
 
