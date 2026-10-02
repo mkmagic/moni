@@ -76,11 +76,12 @@ To update the package to the latest version:
 npm install israeli-bank-scrapers@latest --save
 ```
 
-**This package is PATCHED.** `patches/israeli-bank-scrapers+6.9.0.patch` is applied by
+**This package is PATCHED.** `patches/israeli-bank-scrapers+6.12.2.patch` is applied by
 `patch-package` via the root `postinstall` (verified to run even though npm gates *dependency*
 postinstall scripts). Upgrading the package will orphan the patch — re-check whether both fixes are
 still needed, and regenerate with `npx patch-package israeli-bank-scrapers`. Both are upstream bugs
-worth reporting (`npx patch-package israeli-bank-scrapers --create-issue` drafts the issue):
+worth reporting (`npx patch-package israeli-bank-scrapers --create-issue` drafts the issue). Re-checked
+at 6.12.2 (2026-09-30): upstream still ships both bugs, and Leumi moved to `lib/scrapers/leumi/`:
 
 1. **Leumi `getLoginOptions` waited on `load` for `https://www.leumi.co.il/he`, which never fires.**
    Leumi added hCaptcha + `captcha.perfdrive.com` (F5/Shape) assets to their public homepage; they
@@ -93,7 +94,7 @@ worth reporting (`npx patch-package israeli-bank-scrapers --create-issue` drafts
    `אחד או יותר מפרטי ההזדהות שהוקלדו שגויים` (was `…שמסרת שגויים. ניתן לנסות שוב`). The exact-string
    match never fired, so a wrong password hung the full 60s and then failed on the unrelated
    `a[title="דלג לחשבון"]` selector. The patch broadens it to the shared prefix
-   (`leumi.js:31`), which **is** correct — see the warning immediately below.
+   (`leumi/leumi.js:32`), which **is** correct — see the warning immediately below.
 
 > [!WARNING]
 > **Fix 2 does not currently work, and this section previously claimed it did.**
@@ -105,7 +106,7 @@ worth reporting (`npx patch-package israeli-bank-scrapers --create-issue` drafts
 >
 > Most likely cause, **unconfirmed**: the `InvalidPassword` detector never reads that text from the
 > page directly. It reads it via `pageEvalAll(page, 'svg#Capa_1', …)` and then walks
-> `parentElement.children[1].innerText` (`leumi.js:43`) — a DOM-shape assumption about the error
+> `parentElement.children[1].innerText` (`leumi/leumi.js:42`) — a DOM-shape assumption about the error
 > *icon* that the patch never touched. If Leumi renamed or restructured that icon, `errorMessage`
 > is `undefined`, `undefined?.startsWith(...)` is falsy, and `InvalidPassword` can never match no
 > matter how correct the string is. A DOM probe attempting to confirm this failed to reproduce the
