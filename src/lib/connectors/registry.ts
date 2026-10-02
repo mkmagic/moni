@@ -69,7 +69,7 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
     loginFields: [
       { key: "id", label: "ID Number", inputType: "text" },
       PASSWORD_FIELD,
-      { key: "num", label: "Account Number", inputType: "text" },
+      { key: "num", label: "User Code (קוד מזהה)", inputType: "text" },
     ],
   },
   mercantile: {
@@ -80,7 +80,7 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
     loginFields: [
       { key: "id", label: "ID Number", inputType: "text" },
       PASSWORD_FIELD,
-      { key: "num", label: "Account Number", inputType: "text" },
+      { key: "num", label: "User Code (קוד מזהה)", inputType: "text" },
     ],
   },
   yahav: {
