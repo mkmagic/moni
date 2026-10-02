@@ -262,11 +262,9 @@ async function resolveFx(
 type TxnBranch = "new" | "matchedUnchanged" | "updatedPendingToPosted";
 
 /** The branch taken, plus the entry it landed on — the caller collects the
- * ids so categorization can run once over the whole batch. */
-interface TxnOutcome {
-  branch: TxnBranch;
-  entryId: string;
-}
+ * ids so categorization can run once over the whole batch. A skipped row
+ * lands on no entry. */
+type TxnOutcome = { branch: TxnBranch; entryId: string } | { branch: "skipped"; entryId: null };
 
 /**
  * Reconciles one scraped transaction against `entries.import_key`
@@ -317,15 +315,33 @@ async function promoteTransaction(
 
   const newStatus: "posted" | "pending" = txn.status === "completed" ? "posted" : "pending";
 
+  const stagingId = randomUUID();
+  const rawPayloadCt = encText(dataKey, JSON.stringify(txn), stagingId, "raw_payload_ct", 1);
+
+  // Leumi gives a pending transaction a provisional reference number that
+  // changes when it posts, so the posted row never matches the pending one
+  // by import key and a ghost entry is left behind. Log it to staging as
+  // received, but don't promote it; the posted version arrives next sync.
+  if (connectorId === "leumi" && newStatus === "pending") {
+    await tx.insert(syncStaging).values({
+      id: stagingId,
+      ownerId,
+      syncRunId,
+      accountId: resolved.id,
+      rawPayloadCt,
+      importKey,
+      scraperStatus: txn.status,
+      reconcileState: "new",
+    });
+    return { branch: "skipped", entryId: null };
+  }
+
   const existingRows = await tx
     .select()
     .from(entries)
     .where(and(eq(entries.ownerId, ownerId), eq(entries.importKey, importKey)))
     .limit(1);
   const existing = existingRows[0];
-
-  const stagingId = randomUUID();
-  const rawPayloadCt = encText(dataKey, JSON.stringify(txn), stagingId, "raw_payload_ct", 1);
 
   if (!existing) {
     // --- New: insert sync_staging -> insert entries + entry_transactions ---
@@ -556,13 +572,7 @@ export async function promoteScrapeResult(
       if (gotSnapshot) summary.balanceSnapshots++;
 
       for (const txn of scraperAccount.txns) {
-        // Leumi gives a pending transaction a provisional reference number
-        // that changes when it posts, so the posted row never matches the
-        // pending one by import key and a ghost is left behind. Skip them;
-        // the posted version arrives on the next sync.
-        if (connectorId === "leumi" && txn.status !== "completed") continue;
-
-        const { branch, entryId } = await promoteTransaction(
+        const outcome = await promoteTransaction(
           tx,
           userId,
           dataKey,
@@ -572,14 +582,15 @@ export async function promoteScrapeResult(
           reportingCurrency,
           txn,
         );
-        if (branch === "new") {
+        if (outcome.branch === "skipped") continue;
+        if (outcome.branch === "new") {
           summary.newEntries++;
-          touchedEntryIds.push(entryId);
-        } else if (branch === "matchedUnchanged") {
+          touchedEntryIds.push(outcome.entryId);
+        } else if (outcome.branch === "matchedUnchanged") {
           summary.matchedUnchanged++;
         } else {
           summary.updatedPendingToPosted++;
-          touchedEntryIds.push(entryId);
+          touchedEntryIds.push(outcome.entryId);
         }
       }
     }

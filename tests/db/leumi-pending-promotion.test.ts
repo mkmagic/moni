@@ -91,6 +91,23 @@ describe("promoteScrapeResult: Leumi pending transactions", () => {
     expect(await readStatuses(fx)).toEqual(["posted"]);
   });
 
+  it("still logs the skipped pending item to the staging buffer, unpromoted", async () => {
+    const fx = await freshFixture("leumi-staging", "leumi");
+    createdUserIds.push(fx.userId);
+
+    const summary = await promote(fx, [transfer("pending", 699035449)]);
+    expect(summary.newEntries).toBe(0);
+
+    const staged = await withUser(fx.userId, async (tx) => tx.select().from(schema.syncStaging));
+    expect(
+      staged.map((row) => ({
+        scraperStatus: row.scraperStatus,
+        reconcileState: row.reconcileState,
+        promotedEntryId: row.promotedEntryId,
+      })),
+    ).toEqual([{ scraperStatus: "pending", reconcileState: "new", promotedEntryId: null }]);
+  });
+
   it("still imports pending transactions from other banks", async () => {
     const fx = await freshFixture("other-pending", "mizrahi");
     createdUserIds.push(fx.userId);
