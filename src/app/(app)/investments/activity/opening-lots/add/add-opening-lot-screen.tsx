@@ -20,6 +20,11 @@ function decimalOrNull(value: string): Decimal | null {
   }
 }
 
+// A blank (or whitespace-only) optional field is absent, not an invalid decimal.
+function optional(value: string): string | undefined {
+  return value.trim() || undefined;
+}
+
 const selectClass =
   "w-full rounded-[var(--radius)] border border-input bg-background px-3 py-2 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:text-sm";
 
@@ -52,12 +57,19 @@ export function AddOpeningLotScreen({
   const [error, setError] = useState<string | null>(null);
   const currency = instrument?.currency ?? account?.currency ?? "ILS";
   const positive = (value: string) => decimalOrNull(value)?.isPositive() ?? false;
-  // A blank total falls back to unit cost × original quantity, so "Unit cost" alone is enough.
+  // A blank total falls back to unit cost × original quantity + fee (the CSV import's rule), so
+  // "Unit cost" alone is enough.
   const derivedTotal =
-    !totalCost.trim() && positive(unitCost) && positive(quantity)
-      ? new Decimal(unitCost).mul(quantity).toFixed()
+    !totalCost.trim() &&
+    positive(unitCost) &&
+    positive(quantity) &&
+    (!fee.trim() || (decimalOrNull(fee)?.gte(0) ?? false))
+      ? new Decimal(unitCost)
+          .mul(quantity)
+          .plus(optional(fee) ?? "0")
+          .toFixed()
       : "";
-  const effectiveTotal = totalCost.trim() ? totalCost : derivedTotal;
+  const effectiveTotal = totalCost.trim() || derivedTotal;
   const problems: string[] = [];
   if (!accountId || !instrumentId) problems.push("choose an account and investment");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(tradeDate)) problems.push("a complete acquisition date");
@@ -84,11 +96,11 @@ export function AddOpeningLotScreen({
           tradeDate,
           quantity,
           remainingQuantity,
-          unitCost: unitCost || undefined,
+          unitCost: optional(unitCost),
           totalCost: effectiveTotal,
           currency,
-          fee: fee || undefined,
-          ilsFxRate: ilsFxRate || undefined,
+          fee: optional(fee),
+          ilsFxRate: optional(ilsFxRate),
         }),
       });
       if (!response.ok) {
@@ -234,7 +246,9 @@ export function AddOpeningLotScreen({
               <Input
                 inputMode="decimal"
                 value={totalCost}
-                placeholder={derivedTotal ? `${derivedTotal} (unit cost × quantity)` : undefined}
+                placeholder={
+                  derivedTotal ? `${derivedTotal} (unit cost × quantity + fee)` : undefined
+                }
                 onChange={(event) => setTotalCost(event.target.value)}
                 className="tabular-nums"
               />
@@ -285,12 +299,12 @@ export function AddOpeningLotScreen({
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Fee</p>
-              {fee ? <Money value={{ amount: fee, currency }} /> : <p>None</p>}
+              {optional(fee) ? <Money value={{ amount: fee.trim(), currency }} /> : <p>None</p>}
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Locked ILS FX</p>
               <p className="tabular-nums">
-                {ilsFxRate || "Bank of Israel lookup on acquisition date"}
+                {optional(ilsFxRate) ?? "Bank of Israel lookup on acquisition date"}
               </p>
             </div>
           </div>
