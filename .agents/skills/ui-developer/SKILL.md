@@ -42,6 +42,17 @@ new feedback lands.
 
 ## Feedback log (newest first — append, don't overwrite)
 
+### 2026-10-02 — opening-lot form: a silently disabled button reads as a broken one
+
+- **The owner thought "Review opening lot" was unclickable.** It was disabled because the date was
+  incomplete, and nothing said so. A forward button that can be disabled must say what is missing
+  ("Still needed: …") right above it.
+- **Labels must be honest.** "Unit cost · optional" did nothing alone while the unlabelled Total cost
+  was required. Mark required fields, and derive what can be derived (total = unit cost × quantity).
+- **Native date inputs need `color-scheme: dark`.** Without it the calendar icon is dark-on-dark and
+  users believe there is no picker; `:root { color-scheme: dark }` is now in `globals.css`. Calling
+  `showPicker()` on click opens the calendar from anywhere in the field.
+
 ### 2026-09-25 — investment connections: no backfill picker; cash gaps get a way out
 
 - **The "how far back" picker misled on investment connections.** It only ever reached bank

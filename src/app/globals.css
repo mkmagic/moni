@@ -53,6 +53,11 @@
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
+/* Dark-only: native controls (date-picker icon, calendar, scrollbars) render for a dark page. */
+:root {
+  color-scheme: dark;
+}
+
 body {
   background-color: var(--color-background);
   color: var(--color-foreground);

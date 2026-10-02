@@ -12,6 +12,14 @@ import { Input } from "@/components/ui/input";
 import type { InvestmentResolutionItemView } from "@/domain/investment-activity-resolution";
 import type { OpeningLotFormOption } from "@/domain/investment-opening-lots";
 
+function decimalOrNull(value: string): Decimal | null {
+  try {
+    return new Decimal(value);
+  } catch {
+    return null;
+  }
+}
+
 const selectClass =
   "w-full rounded-[var(--radius)] border border-input bg-background px-3 py-2 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:text-sm";
 
@@ -43,20 +51,25 @@ export function AddOpeningLotScreen({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const currency = instrument?.currency ?? account?.currency ?? "ILS";
-  let valid = Boolean(accountId && instrumentId && /^\d{4}-\d{2}-\d{2}$/.test(tradeDate));
-  try {
-    valid =
-      valid &&
-      new Decimal(quantity).isPositive() &&
-      new Decimal(remainingQuantity).isPositive() &&
-      new Decimal(remainingQuantity).lte(quantity) &&
-      new Decimal(totalCost).isPositive() &&
-      (!unitCost || new Decimal(unitCost).isPositive()) &&
-      (!fee || new Decimal(fee).gte(0)) &&
-      (!ilsFxRate || new Decimal(ilsFxRate).isPositive());
-  } catch {
-    valid = false;
-  }
+  const positive = (value: string) => decimalOrNull(value)?.isPositive() ?? false;
+  // A blank total falls back to unit cost × original quantity, so "Unit cost" alone is enough.
+  const derivedTotal =
+    !totalCost.trim() && positive(unitCost) && positive(quantity)
+      ? new Decimal(unitCost).mul(quantity).toFixed()
+      : "";
+  const effectiveTotal = totalCost.trim() ? totalCost : derivedTotal;
+  const problems: string[] = [];
+  if (!accountId || !instrumentId) problems.push("choose an account and investment");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(tradeDate)) problems.push("a complete acquisition date");
+  if (!positive(quantity)) problems.push("an original quantity above 0");
+  if (!positive(remainingQuantity)) problems.push("a remaining quantity above 0");
+  else if (positive(quantity) && new Decimal(remainingQuantity).gt(quantity))
+    problems.push("a remaining quantity no larger than the original");
+  if (!positive(effectiveTotal)) problems.push("a total cost (or unit cost) above 0");
+  if (unitCost.trim() && !positive(unitCost)) problems.push("a unit cost above 0, or none");
+  if (fee.trim() && !(decimalOrNull(fee)?.gte(0) ?? false)) problems.push("a fee of 0 or more");
+  if (ilsFxRate.trim() && !positive(ilsFxRate)) problems.push("an FX rate above 0, or none");
+  const valid = problems.length === 0;
 
   async function commit() {
     setBusy(true);
@@ -72,7 +85,7 @@ export function AddOpeningLotScreen({
           quantity,
           remainingQuantity,
           unitCost: unitCost || undefined,
-          totalCost,
+          totalCost: effectiveTotal,
           currency,
           fee: fee || undefined,
           ilsFxRate: ilsFxRate || undefined,
@@ -164,11 +177,19 @@ export function AddOpeningLotScreen({
               </select>
             </label>
             <label className="text-sm">
-              <span className="mb-1 block text-muted-foreground">Acquisition date</span>
+              <span className="mb-1 block text-muted-foreground">Acquisition date · required</span>
               <Input
                 type="date"
                 value={tradeDate}
                 onChange={(event) => setTradeDate(event.target.value)}
+                onClick={(event) => {
+                  // Open the calendar on a click anywhere in the field, not just on its icon.
+                  try {
+                    event.currentTarget.showPicker();
+                  } catch {
+                    // Unsupported browser: typing the date still works.
+                  }
+                }}
               />
             </label>
             <label className="text-sm">
@@ -176,7 +197,7 @@ export function AddOpeningLotScreen({
               <Input value={currency} disabled className="tabular-nums" />
             </label>
             <label className="text-sm">
-              <span className="mb-1 block text-muted-foreground">Original quantity</span>
+              <span className="mb-1 block text-muted-foreground">Original quantity · required</span>
               <Input
                 inputMode="decimal"
                 value={quantity}
@@ -185,7 +206,9 @@ export function AddOpeningLotScreen({
               />
             </label>
             <label className="text-sm">
-              <span className="mb-1 block text-muted-foreground">Remaining quantity</span>
+              <span className="mb-1 block text-muted-foreground">
+                Remaining quantity · required
+              </span>
               <Input
                 inputMode="decimal"
                 value={remainingQuantity}
@@ -194,7 +217,9 @@ export function AddOpeningLotScreen({
               />
             </label>
             <label className="text-sm">
-              <span className="mb-1 block text-muted-foreground">Unit cost · optional</span>
+              <span className="mb-1 block text-muted-foreground">
+                Unit cost · optional if total given
+              </span>
               <Input
                 inputMode="decimal"
                 value={unitCost}
@@ -203,10 +228,13 @@ export function AddOpeningLotScreen({
               />
             </label>
             <label className="text-sm">
-              <span className="mb-1 block text-muted-foreground">Total cost · incl. fees</span>
+              <span className="mb-1 block text-muted-foreground">
+                Total cost · incl. fees, required
+              </span>
               <Input
                 inputMode="decimal"
                 value={totalCost}
+                placeholder={derivedTotal ? `${derivedTotal} (unit cost × quantity)` : undefined}
                 onChange={(event) => setTotalCost(event.target.value)}
                 className="tabular-nums"
               />
@@ -253,7 +281,7 @@ export function AddOpeningLotScreen({
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Native total cost</p>
-              <Money value={{ amount: totalCost, currency }} />
+              <Money value={{ amount: effectiveTotal, currency }} />
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Fee</p>
@@ -266,6 +294,9 @@ export function AddOpeningLotScreen({
               </p>
             </div>
           </div>
+        )}
+        {step === 2 && !valid && (
+          <p className="text-sm text-muted-foreground">Still needed: {problems.join(", ")}.</p>
         )}
         {error && <p className="text-sm text-negative">{error}</p>}
         <div className="flex items-center justify-between border-t border-border pt-4">
