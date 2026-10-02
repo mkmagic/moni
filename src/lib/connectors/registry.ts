@@ -152,6 +152,26 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
     importFormat: "pdf",
     loginFields: [],
   },
+  migdal_pension_quarterly: {
+    id: "migdal_pension_quarterly",
+    label: "Quarterly Pension Report",
+    institutionLabel: "Migdal",
+    kind: "long_term_savings",
+    product: "pension",
+    mode: "user_mediated_import",
+    importFormat: "pdf",
+    loginFields: [],
+  },
+  analyst_hishtalmut: {
+    id: "analyst_hishtalmut",
+    label: "Quarterly קרן השתלמות Report",
+    institutionLabel: "Analyst",
+    kind: "long_term_savings",
+    product: "hishtalmut",
+    mode: "user_mediated_import",
+    importFormat: "pdf",
+    loginFields: [],
+  },
   // The agency aggregator, not a single provider's report: one Excel export
   // lists every long-term-savings account the agency holds for the member —
   // pension, גמל and השתלמות at different providers, each with its own balance.

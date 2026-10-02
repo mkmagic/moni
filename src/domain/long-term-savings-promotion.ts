@@ -285,6 +285,8 @@ async function promote(
     // above would refuse the import before reaching here.
     insuranceDisabilityCt: money(m.disabilityInsuranceCost ?? "0", "insurance_disability_ct"),
     insuranceDeathCt: money(m.deathInsuranceCost ?? "0", "insurance_death_ct"),
+    transfersInCt: optionalMoney(m.transfersIn, "transfers_in_ct"),
+    actuarialAdjustmentCt: optionalMoney(m.actuarialAdjustment, "actuarial_adjustment_ct"),
     feeRateDeposit: report.fees.rateDeposit,
     feeRateSavings: report.fees.rateSavings,
     feeRateInvestmentExpenses: report.fees.rateInvestmentExpenses,

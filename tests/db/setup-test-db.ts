@@ -89,6 +89,7 @@ const MIGRATION_FILES = [
   "0045_colossal_maria_hill.sql",
   "0046_investment_lot_closures.sql",
   "0047_investment_opening_cash.sql",
+  "0048_lts_transfers_actuarial.sql",
 ];
 
 /** Bookkeeping for which of MIGRATION_FILES this database has already seen.

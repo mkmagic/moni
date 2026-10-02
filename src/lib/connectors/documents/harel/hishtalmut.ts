@@ -349,8 +349,12 @@ interface DepositRowCandidate {
 
 type DepositTotalsCandidate = Record<keyof z.infer<typeof depositTotalsSchema>, string | null>;
 
-/** Reads one page's worth of the deposits table. */
-function parseDepositsPage(
+/**
+ * Reads one page's worth of the deposits table. Exported for the Analyst
+ * parser, whose קרן השתלמות table is the same uniform layout — same columns,
+ * same totals row, no severance.
+ */
+export function parseDepositsPage(
   items: Item[],
   anchor: Item,
 ): { rows: DepositRowCandidate[]; totals: DepositTotalsCandidate | null } {
@@ -494,6 +498,8 @@ export function normaliseHarelHishtalmut(report: HarelHishtalmutReport): LongTer
       // cost read as absent would show up as drift the ±₪50 gate rejects.
       disabilityInsuranceCost: null,
       deathInsuranceCost: null,
+      transfersIn: null,
+      actuarialAdjustment: null,
       closingBalance: report.movements.closingBalance,
     },
     fees: {

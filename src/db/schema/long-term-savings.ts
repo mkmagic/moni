@@ -123,6 +123,12 @@ export const longTermSavingsSnapshots = pgTable(
     feesChargedCt: bytea("fees_charged_ct").notNull(),
     insuranceDisabilityCt: bytea("insurance_disability_ct").notNull(),
     insuranceDeathCt: bytea("insurance_death_ct").notNull(),
+    /**
+     * Money moved in from another fund, and a pension fund's actuarial-balancing
+     * adjustment. Null when the report prints no such line — most do not.
+     */
+    transfersInCt: bytea("transfers_in_ct"),
+    actuarialAdjustmentCt: bytea("actuarial_adjustment_ct"),
 
     // Percentages, not money: fund-wide averages are public, and the member's
     // own rates are not a balance. Exact-decimal all the same.
