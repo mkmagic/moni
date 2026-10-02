@@ -9,8 +9,8 @@ import { getDevUserDataKey } from "@/lib/crypto";
 import { cleanupOwners, elevatedDb, elevatedPool } from "./helpers";
 
 // Opening lots next to stored activity: IBKR's OpenPosition lot for a buy that
-// is already stored must not become a second acquisition, and a separately
-// stated fee belongs in the lot's cost basis.
+// is already stored must not become a second acquisition, and an opening lot's
+// total cost already includes its fee, so the fee is not added again.
 describe("opening-lot derivation", () => {
   let userId: string;
   let accountId: string;
@@ -110,7 +110,7 @@ describe("opening-lot derivation", () => {
     await elevatedPool.end();
   });
 
-  it("counts a stored buy once and adds an opening lot's fee to its cost basis", async () => {
+  it("counts a stored buy once and does not add an opening lot's fee on top of its cost", async () => {
     const dataKey = getDevUserDataKey(userId);
     try {
       await deriveInvestmentTaxLots({ userId, accountId, instrumentId, dataKey });
@@ -123,7 +123,7 @@ describe("opening-lot derivation", () => {
         .sort((left, right) => Number(right.fromActivity) - Number(left.fromActivity));
       expect(costs).toEqual([
         { fromActivity: true, costBasis: "50" },
-        { fromActivity: false, costBasis: "21.5" },
+        { fromActivity: false, costBasis: "20" },
       ]);
     } finally {
       dataKey.fill(0);

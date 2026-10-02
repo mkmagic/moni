@@ -24,7 +24,7 @@ describe("opening-lot CSV", () => {
         quantity: "2.5",
         remainingQuantity: "2.5",
         unitCost: "10.25",
-        totalCost: "25.625",
+        totalCost: "26.375",
         currency: "USD",
         fee: "0.75",
         ilsFxRate: undefined,

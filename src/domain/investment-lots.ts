@@ -399,13 +399,10 @@ export async function deriveInvestmentTaxLotsInTransaction(
     )!;
     const brokerLotId = text(input.dataKey, row, row.brokerLotIdCt, "broker_lot_id_ct");
     if (brokerLotId && storedAcquisitionIds.has(brokerLotId)) continue;
+    // total_cost is the full amount paid, fees included — IBKR's costBasisMoney
+    // already carries the commission, and a CSV row without one folds its fee
+    // in at parse time — so the fee is never added again here.
     const totalCost = text(input.dataKey, row, row.totalCostCt, "total_cost_ct")!;
-    const fees = text(input.dataKey, row, row.feesCt, "fees_ct");
-    // A separately stated fee is part of the acquisition cost, as it is for buys.
-    const costBasis = decimal(totalCost)
-      .abs()
-      .plus(fees ? decimal(fees).abs() : new Decimal("0"))
-      .toString();
     lots.push({
       id: current?.id ?? randomUUID(),
       current,
@@ -417,7 +414,7 @@ export async function deriveInvestmentTaxLotsInTransaction(
       originalQuantity: decimal(originalQuantity).abs().toString(),
       remainingQuantity: decimal(remainingQuantity).abs().toString(),
       quantityUnit: row.quantityUnit,
-      costBasis: decimal(costBasis).abs().toString(),
+      costBasis: decimal(totalCost).abs().toString(),
       costBasisCurrency: row.currency,
       lockedFxRate: text(input.dataKey, row, row.lockedFxRateCt, "locked_fx_rate_ct"),
       lockedFxConvention: row.lockedFxConvention,

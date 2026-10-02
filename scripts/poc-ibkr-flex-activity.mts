@@ -371,6 +371,50 @@ function analyze(xml: string): void {
       `lot↔snapshot reconciliation — ${reconciled} positions match; ${mismatches.length} mismatch`,
   );
   for (const m of mismatches.slice(0, 10)) console.log(`      ${m}`);
+
+  // 10. Does a lot's costBasisMoney already include the opening buy's commission?
+  // Compare it against the originating buy (same report), pro-rated to the lot's quantity.
+  const buyById = new Map<string, Attrs>();
+  for (const t of fills.filter((f) => a(f, "buySell")?.toUpperCase() === "BUY")) {
+    for (const id of [a(t, "transactionID"), a(t, "tradeID")]) if (id) buyById.set(id, t);
+  }
+  const tally = { includes: 0, excludes: 0, unclear: 0 };
+  const rows: string[] = [];
+  const near = (x: Decimal, y: Decimal): boolean => x.minus(y).abs().lte("0.01");
+  for (const l of lots) {
+    const buy = buyById.get(a(l, "originatingTransactionID") ?? "");
+    const cost = a(l, "costBasisMoney");
+    if (!buy || !cost) continue;
+    const lotQty = new Decimal(a(l, "position") ?? "0").abs();
+    const buyQty = new Decimal(a(buy, "quantity") ?? "0").abs();
+    if (buyQty.isZero()) continue;
+    const multiplier = new Decimal(a(buy, "multiplier") ?? "1");
+    const price = new Decimal(a(buy, "tradePrice") ?? "0").abs().mul(lotQty).mul(multiplier);
+    const commission = new Decimal(a(buy, "ibCommission") ?? "0").abs().mul(lotQty).div(buyQty);
+    const basis = new Decimal(cost).abs();
+    const sameCurrency =
+      (a(buy, "ibCommissionCurrency") ?? a(buy, "currency")) === a(l, "currency");
+    const kind = !sameCurrency
+      ? "unclear"
+      : commission.isZero()
+        ? "unclear"
+        : near(basis, price.plus(commission))
+          ? "includes"
+          : near(basis, price)
+            ? "excludes"
+            : "unclear";
+    tally[kind] += 1;
+    rows.push(
+      `${(a(l, "symbol") ?? "?").padEnd(8)} qty=${lotQty.toString()} price×qty=${price.toFixed(4)} ` +
+        `commission=${commission.toFixed(4)} costBasisMoney=${basis.toString()} → ${kind}`,
+    );
+  }
+  console.log(
+    `[10] ${verdict(tally.excludes === 0 && tally.includes > 0, tally.includes + tally.excludes === 0)} ` +
+      `lot cost basis vs opening commission — includes=${tally.includes} excludes=${tally.excludes} ` +
+      `unclear=${tally.unclear} (lots whose opening buy is in this report)`,
+  );
+  for (const r of rows.slice(0, 15)) console.log(`      ${r}`);
   console.log("");
 }
 

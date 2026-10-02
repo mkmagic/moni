@@ -203,7 +203,7 @@ export function AddOpeningLotScreen({
               />
             </label>
             <label className="text-sm">
-              <span className="mb-1 block text-muted-foreground">Total cost</span>
+              <span className="mb-1 block text-muted-foreground">Total cost · incl. fees</span>
               <Input
                 inputMode="decimal"
                 value={totalCost}
@@ -212,7 +212,9 @@ export function AddOpeningLotScreen({
               />
             </label>
             <label className="text-sm">
-              <span className="mb-1 block text-muted-foreground">Fee · optional</span>
+              <span className="mb-1 block text-muted-foreground">
+                Fee · optional, already in total
+              </span>
               <Input
                 inputMode="decimal"
                 value={fee}

@@ -24,7 +24,7 @@ export const OPENING_LOT_AI_CONVERSION_PROMPT = `Convert my brokerage or spreads
 Output only CSV, with this exact header and column order:
 account,isin,symbol,exchange,trade_date,quantity,remaining_quantity,unit_cost,total_cost,currency,fee,ils_fx_rate,broker_lot_id
 
-Use one row per lot. Keep all quantities, costs, fees, and FX rates as exact decimal text without currency symbols or thousands separators. Use YYYY-MM-DD for trade_date and a three-letter uppercase currency code. account must contain the broker account reference used in Moni. quantity is the original lot quantity; leave remaining_quantity blank to make it equal quantity. At least one of unit_cost or total_cost is required. fee and broker_lot_id are optional. At least one of isin or symbol+exchange is required; a symbol without exchange is invalid. If the source has an ILS exchange rate for the acquisition, place it in ils_fx_rate verbatim. Leave ils_fx_rate blank if your export has no ILS rate. Do not invent missing values, combine lots, or add commentary.`;
+Use one row per lot. Keep all quantities, costs, fees, and FX rates as exact decimal text without currency symbols or thousands separators. Use YYYY-MM-DD for trade_date and a three-letter uppercase currency code. account must contain the broker account reference used in Moni. quantity is the original lot quantity; leave remaining_quantity blank to make it equal quantity. At least one of unit_cost or total_cost is required. total_cost is the full amount paid for the lot including any commission or fee (a broker's cost basis usually already includes it); do not subtract the fee from it. fee and broker_lot_id are optional. At least one of isin or symbol+exchange is required; a symbol without exchange is invalid. If the source has an ILS exchange rate for the acquisition, place it in ils_fx_rate verbatim. Leave ils_fx_rate blank if your export has no ILS rate. Do not invent missing values, combine lots, or add commentary.`;
 
 export interface OpeningLotImportRow {
   account: string;
@@ -133,7 +133,14 @@ export function parseOpeningLotsCsv(source: Buffer): OpeningLotImportRow[] {
           quantity,
           remainingQuantity,
           unitCost,
-          totalCost: suppliedTotalCost ?? new Decimal(unitCost!).mul(quantity).toFixed(),
+          // total_cost is what was paid, fees included; when only unit_cost is
+          // given, the fee is added to make it so.
+          totalCost:
+            suppliedTotalCost ??
+            new Decimal(unitCost!)
+              .mul(quantity)
+              .plus(decimal(row.fee) ?? "0")
+              .toFixed(),
           currency,
           fee: decimal(row.fee),
           ilsFxRate: decimal(row.ils_fx_rate),
