@@ -34,7 +34,7 @@ async function freshFixture(label: string): Promise<Fixture> {
   const credentialKey = await enrollTestCredentialKey(userId);
   const { id: connectionId } = await createConnection(
     userId,
-    "leumi",
+    "mizrahi",
     { username: "dana", password: "hunter2" },
     credentialKey,
   );
@@ -141,7 +141,7 @@ describe("promoteScrapeResult: reconciliation", () => {
       userId: fx.userId,
       dataKey: fx.dataKey,
       connectionId: fx.connectionId,
-      connectorId: "leumi",
+      connectorId: "mizrahi",
       syncRunId,
       accounts,
     });
@@ -185,7 +185,7 @@ describe("promoteScrapeResult: reconciliation", () => {
       userId: fx.userId,
       dataKey: fx.dataKey,
       connectionId: fx.connectionId,
-      connectorId: "leumi",
+      connectorId: "mizrahi",
       syncRunId: syncRunId1,
       accounts,
     });
@@ -196,7 +196,7 @@ describe("promoteScrapeResult: reconciliation", () => {
       userId: fx.userId,
       dataKey: fx.dataKey,
       connectionId: fx.connectionId,
-      connectorId: "leumi",
+      connectorId: "mizrahi",
       syncRunId: syncRunId2,
       accounts,
     });
@@ -232,7 +232,7 @@ describe("promoteScrapeResult: reconciliation", () => {
       userId: fx.userId,
       dataKey: fx.dataKey,
       connectionId: fx.connectionId,
-      connectorId: "leumi",
+      connectorId: "mizrahi",
       syncRunId: syncRunId1,
       accounts: pendingAccounts,
     });
@@ -266,7 +266,7 @@ describe("promoteScrapeResult: reconciliation", () => {
       userId: fx.userId,
       dataKey: fx.dataKey,
       connectionId: fx.connectionId,
-      connectorId: "leumi",
+      connectorId: "mizrahi",
       syncRunId: syncRunId2,
       accounts: postedAccounts,
     });
@@ -324,7 +324,7 @@ describe("promoteScrapeResult: reconciliation", () => {
         userId: fx.userId,
         dataKey: fx.dataKey,
         connectionId: fx.connectionId,
-        connectorId: "leumi",
+        connectorId: "mizrahi",
         syncRunId,
         accounts,
       }),
@@ -355,7 +355,7 @@ describe("promoteScrapeResult: reconciliation", () => {
       userId: fx.userId,
       dataKey: fx.dataKey,
       connectionId: fx.connectionId,
-      connectorId: "leumi",
+      connectorId: "mizrahi",
       syncRunId: syncRunId1,
       accounts: firstAccounts,
     });
@@ -377,7 +377,7 @@ describe("promoteScrapeResult: reconciliation", () => {
       userId: fx.userId,
       dataKey: fx.dataKey,
       connectionId: fx.connectionId,
-      connectorId: "leumi",
+      connectorId: "mizrahi",
       syncRunId: syncRunId2,
       accounts: secondAccounts,
     });

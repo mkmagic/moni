@@ -556,6 +556,12 @@ export async function promoteScrapeResult(
       if (gotSnapshot) summary.balanceSnapshots++;
 
       for (const txn of scraperAccount.txns) {
+        // Leumi gives a pending transaction a provisional reference number
+        // that changes when it posts, so the posted row never matches the
+        // pending one by import key and a ghost is left behind. Skip them;
+        // the posted version arrives on the next sync.
+        if (connectorId === "leumi" && txn.status !== "completed") continue;
+
         const { branch, entryId } = await promoteTransaction(
           tx,
           userId,
