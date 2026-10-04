@@ -8,6 +8,8 @@ interface FormatOptions {
   locale?: string;
   /** Intl signDisplay — default "auto" (negatives get a leading minus). */
   signDisplay?: "auto" | "never" | "always" | "exceptZero";
+  /** Round to whole currency units (no minor units) — for headline figures. */
+  whole?: boolean;
 }
 
 /**
@@ -22,6 +24,7 @@ export function formatMoney(money: Money, opts: FormatOptions = {}): string {
     currency: money.currency,
     roundingMode: "halfExpand", // half away from zero == half-up for the shown value
     signDisplay: opts.signDisplay ?? "auto",
+    ...(opts.whole ? { minimumFractionDigits: 0, maximumFractionDigits: 0 } : {}),
   }).format(Number(money.amount));
 }
 

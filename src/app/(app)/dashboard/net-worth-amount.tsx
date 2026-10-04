@@ -25,7 +25,7 @@ export function NetWorthAmount({ value, className }: NetWorthAmountProps) {
   return (
     <div className="flex items-center gap-2">
       {visible ? (
-        <Money value={value} className={className} />
+        <Money value={value} whole className={className} />
       ) : (
         <button
           type="button"
