@@ -18,7 +18,7 @@ new feedback lands.
   `border-border`, `rounded-[var(--radius)]`, …). Never hand-pick a colour outside these tokens; add
   a token first, then use it.
 - **Primitives:** `src/components/ui/{card,button,input,badge}.tsx`; `cn` in `src/lib/utils.ts`.
-- **Composite components:** `src/components/*` (`sidebar`, `stat-card`, `sparkline`,
+- **Composite components:** `src/components/*` (`sidebar`, `sparkline`,
   `income-expense-chart`, `money`, `transactions-table`, `account-card`).
 - **Pages:** server components under `src/app/(app)/` call `requireSession()` → the domain layer;
   interactive/chart bits are `"use client"` leaf components.
@@ -192,6 +192,7 @@ new feedback lands.
 m.net)}` — the removed card that charted monthly _flow_ under a "Net Worth" label. Updated the test
   to the new structure. `StatCard` and `BudgetCard` are now orphaned by the redesign; left in place
   and flagged rather than deleted (they hold the clickable-card glow pattern a detail view may want).
+  `StatCard` was later deleted; `account-card.tsx` still carries the glow pattern.
 - **Verification notes.** The demo `dana@moni.demo` is a _clear-day_ user (curl login → "All caught
   up", no review card), which conveniently exercised that branch server-side; the browser already
   held a _busy-day_ session that exercised the other. `resize_window` did **not** reflow the content
