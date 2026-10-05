@@ -105,9 +105,9 @@ export function ThisMonthCard({
                 )}
               </div>
               <p className="mt-1.5 text-lg font-semibold">
-                <Money value={budget.spent} />
+                <Money value={budget.spent} whole />
                 <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-                  of <Money value={budget.ceilingTotal} />
+                  of <Money value={budget.ceilingTotal} whole />
                 </span>
               </p>
               <div className="mt-2.5">
