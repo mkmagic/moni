@@ -154,6 +154,9 @@ async function findFormSelector(page, selector, timeoutMs) {
 async function newPage(browser) {
   const page = await browser.newPage();
   await page.setUserAgent((await browser.userAgent()).replace("HeadlessChrome", "Chrome"));
+  // Match the library's BaseScraperWithBrowser default viewport. Puppeteer's own
+  // 800x600 default flips Cal into its mobile layout, hiding #ccLoginDesktopBtn.
+  await page.setViewport({ width: 1024, height: 768 });
   return page;
 }
 
