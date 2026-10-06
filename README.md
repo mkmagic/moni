@@ -69,6 +69,15 @@ provider or a local model on the box). This is a host-level setting: **individua
 cannot supply their own AI credentials** — either the owner configures one backend for the whole
 instance, or there are no AI features.
 
+## Deploying it
+
+The quick-start above is for running Moni locally. Putting it on a real server — a cloud VPS or
+your own hardware at home — is **agent-guided**: ask your coding agent to run the
+[`new-box-setup`](.agents/skills/new-box-setup/SKILL.md) skill. It checks the host can reach your
+banks, asks you the decisions that are yours (where to host, domain, how much hardening — e.g.
+disk encryption with a manual unlock after every reboot — and where encrypted backups go), then
+walks provisioning and verification. The same skill moves an existing instance to a new host.
+
 ## Security & authentication
 
 Security in Moni is **tiered** on purpose — the bar is deliberately high on the crown jewels and
