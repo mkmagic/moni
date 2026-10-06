@@ -125,7 +125,7 @@ authoritative until step 8.
 - [ ] `https://<domain>/api/health` OK; cert issued by the intended method; renewal timer active.
 - [ ] Real user login works (proves encrypted columns decrypt — `backup-restore` § Verifying a restore).
 - [ ] Passkey unlock works and an existing bank connection syncs (proves the RP ID survived).
-- [ ] During a scrape: `grep VmSwap /proc/$(pgrep -f server.js)/status` is 0.
+- [ ] During a scrape: `grep VmSwap /proc/$(systemctl show -p MainPID --value moni)/status` is 0.
 - [ ] A backup runs and lands off-box; it decrypts with the off-box key.
 - [ ] A CI release deploys end-to-end.
 
