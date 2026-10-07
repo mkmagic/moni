@@ -13,7 +13,7 @@ skill (Chrome/Puppeteer specifics) and `db-schema` (migrations).
 - **Host:** DigitalOcean, region **FRA1**, 2 vCPU / 4 GB / 80 GB, **x86_64**, Ubuntu 24.04.
 - **Domain:** `MONI_DOMAIN` in `/root/moni-secrets.env` — registrar get.tech, **DNS on Cloudflare
   (grey-cloud / DNS-only)**. Scripts validate it and fail closed; never infer it from an HTTP Host header.
-- **Topology:** **bare-host, no Docker.** Next via systemd `moni.service` (`next start -H 127.0.0.1`,
+- **Topology:** **bare-host, no Docker.** Next via systemd `moni.service` (`node .next/standalone/server.js` on 127.0.0.1,
   loopback only); Postgres 16 co-located (loopback); Caddy terminates TLS. Chrome-for-Testing is
   pinned in `deploy/chrome-for-testing.env` and reconciled by every release.
 - **App runs as user `moni`** (`/opt/moni/app`). Secrets: `/root/moni-secrets.env` (root, 600) holds
@@ -34,7 +34,7 @@ skill (Chrome/Puppeteer specifics) and `db-schema` (migrations).
   swap enabled on the box, memory pressure could otherwise page them to disk, where a stolen disk or
   swap image recovers them. `MemorySwapMax=0` forbids the app cgroup — and the scrape/worker children
   it `spawn()`s, which inherit that cgroup — from ever swapping, so the app is OOM-killed (safe) rather
-  than paged out. Verify during a real scrape: `grep VmSwap /proc/$(pgrep -f 'next start')/status` = 0.
+  than paged out. Verify during a real scrape: `grep VmSwap /proc/$(systemctl show -p MainPID --value moni)/status` = 0 (the process renames itself `next-server`, so don't `pgrep` by command line).
 - **Tier-0 hardening (#93 M1).** `deploy/moni.service` also sets `LimitCORE=0` and `UMask=0077`; the
   box additionally disables Apport and sets `kernel.core_pattern=|/bin/false` + `fs.suid_dumpable=0`
   (a core would snapshot decrypted RAM to disk). `release.sh` **fails closed** if effective
