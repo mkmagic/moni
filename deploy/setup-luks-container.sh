@@ -153,7 +153,12 @@ cmd_migrate(){
   mount "$PGDATA"
   swapon "$MOUNT/swapfile"
   systemctl start postgresql@16-main
-  systemctl start moni
+  # On a fresh host the container is set up before the first release exists.
+  if [ -e /opt/moni/app ]; then
+    systemctl start moni
+  else
+    log "no release at /opt/moni/app yet; moni will start with the first release"
+  fi
   log "migrate done. Verify (verify-host.sh + a real login + a reboot drill) BEFORE wipe-plaintext."
 }
 

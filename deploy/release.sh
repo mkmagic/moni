@@ -220,7 +220,11 @@ mv "$STAGE" "$FINAL"
 PREVIOUS=$(readlink -f "$APP")
 cp -a /etc/systemd/system/moni.service "$UNIT_BACKUP"
 CUTOVER_ACTIVE=1
-if [ ! -L "$APP" ]; then
+if [ ! -e "$APP" ] && [ ! -L "$APP" ]; then
+  # First release on a fresh host: there is no previous app to roll back to.
+  CUTOVER_ACTIVE=0
+  ln -s "$FINAL" "$APP"
+elif [ ! -L "$APP" ]; then
   PREVIOUS="$RELEASES/legacy-$TS"
   mv "$APP" "$PREVIOUS"
   ln -s "$FINAL" "$APP"

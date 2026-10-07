@@ -134,6 +134,13 @@ Follow in order; tick each box.
    `systemctl is-enabled certbot.timer`, and `certbot renew --dry-run`. If DNS-01 lookups fail,
    apply the resolver pin in `deployment` § TLS. It may be unnecessary now that Certbot talks to the
    DNS API, so verify before pinning.
+   **Install the production Caddy config now.** `release.sh` would install it too, but only at the
+   first release, and TLS has to work before that (B3.1 rehearses it):
+   `MONI_DOMAIN=<domain> caddy validate --config deploy/Caddyfile.production --adapter caddyfile`,
+   then `install -m644 deploy/Caddyfile.production /etc/caddy/Caddyfile`,
+   `install -d /etc/systemd/system/caddy.service.d`,
+   `install -m644 deploy/caddy.service.conf /etc/systemd/system/caddy.service.d/override.conf`,
+   and finally `systemctl daemon-reload && systemctl restart caddy`.
 10. [ ] **Backups** (`deployment` § Off-box backups): `/root/moni-backup.env`, the rclone config,
     `install -m700 deploy/backup.sh /opt/moni/backup.sh`, the `moni-backup.*` units, and enable the
     timer. Run once and see the object land off-box. Retention, if any, is a bucket lifecycle rule
@@ -143,7 +150,8 @@ Follow in order; tick each box.
     `postgresql@`. Place the app env **directly** at `/mnt/secure/app/.env` (moni 600) and
     `ln -s` it to `/opt/moni/shared/.env`. The script's `migrate` only moves `/opt/moni/app/.env`,
     which doesn't exist yet, and `verify-host` fails on a plaintext secret. Verify a backup decrypts
-    off-box, then `migrate`. The passphrase goes to the owner's password manager. The container needs
+    off-box, then `migrate`. That's safe before any release exists: `migrate` starts `moni` only if
+    `/opt/moni/app` is present. The passphrase goes to the owner's password manager. The container needs
     ≥ 20 GiB free on the root disk. Without LUKS: write the app env at `/opt/moni/shared/.env`.
 12. [ ] **Bootstrap for the first release.** `release.sh` can't install itself, and it refuses unless
     the live unit already has `MemorySwapMax=0` + `LimitCORE=0`:
@@ -151,6 +159,8 @@ Follow in order; tick each box.
     `install -m644 deploy/moni.service /etc/systemd/system/`; `systemctl daemon-reload`.
     Enable the unit only if there's no LUKS; with LUKS, `moni-unlock` starts it.
     `release.sh` also needs `/root/moni-backup.env` and an existing `moni` DB (it runs a predeploy dump).
+    Don't create `/opt/moni/app`. `release.sh` treats a missing path as a first install, symlinks the
+    release there, and has no previous release to roll back to.
 13. [ ] **CI deploy**: generate an ed25519 pair. Append the public key to `/root/.ssh/authorized_keys`
     as
     `command="/opt/moni/release.sh",no-agent-forwarding,no-port-forwarding,no-pty,no-X11-forwarding ssh-ed25519 AAAA… moni-ci`.
