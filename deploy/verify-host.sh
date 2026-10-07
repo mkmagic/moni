@@ -60,6 +60,10 @@ csm=$(cat /sys/fs/cgroup/system.slice/moni.service/memory.swap.max 2>/dev/null)
 cp=$(cat /proc/sys/kernel/core_pattern)
 case "$cp" in *apport*) bad "core_pattern routes to Apport: $cp";; *) ok "core_pattern discards ($cp)";; esac
 [ "$(sysctl -n fs.suid_dumpable)" = "0" ] && ok "suid_dumpable=0" || bad "suid_dumpable != 0"
+# Chrome's Crashpad writes its own minidumps (not via core_pattern); one from a scrape
+# can hold bank credentials (#152). Any outside the LUKS mount is a Tier-0 leak.
+dmp=$(find /opt/moni /var/lib/moni /root /home /tmp -xdev -type f -name '*.dmp' -path '*Crash*' -print -quit 2>/dev/null)
+[ -z "$dmp" ] && ok "no Chrome crash dumps on the plaintext disk" || bad "Chrome crash dump outside the encrypted store: $dmp"
 
 echo "== Blast-radius containment (#93 M3) =="
 # App tree read-only to the process + no dangerous caps/transitions, so a live
@@ -112,6 +116,8 @@ if [ -f /var/lib/moni-secure.img ] || grep -q '^moni_secure ' /etc/crypttab 2>/d
   [ -z "$left" ] && ok "no *.PLAINTEXT-old plaintext leftovers" || bad "plaintext leftover: $left (run wipe-plaintext)"
   [ "$(systemctl show moni.service -p Environment --value 2>/dev/null | tr ' ' '\n' | grep '^TMPDIR=')" = "TMPDIR=/mnt/secure/tmp" ] \
     && ok "moni TMPDIR routed into the container" || bad "moni TMPDIR not /mnt/secure/tmp (scrape state may hit plaintext)"
+  [ "$(systemctl show moni.service -p Environment --value 2>/dev/null | tr ' ' '\n' | grep '^HOME=' | tail -1)" = "HOME=/mnt/secure/home" ] \
+    && ok "moni HOME (Chrome crash state) inside the container" || bad "moni HOME not /mnt/secure/home (Chrome crash dumps may hit plaintext)"
 else
   echo "  -- LUKS container not configured (M2 pending) — skipping"
 fi

@@ -69,4 +69,22 @@ describe("production deployment hardening", () => {
     expect(verifier).toContain("release marker missing or invalid");
     expect(verifier).not.toContain('git -C "$APP"');
   });
+
+  // #152: Crashpad refuses to start without a writable $HOME (Chrome dies at
+  // launch under ProtectSystem=strict), and its minidumps can hold Tier-0 memory.
+  it("gives Chrome a writable HOME that LUKS keeps off the plaintext disk", () => {
+    const unit = read("deploy/moni.service");
+    const luks = read("deploy/setup-luks-container.sh");
+    const verifier = read("deploy/verify-host.sh");
+
+    expect(unit).toContain("StateDirectory=moni");
+    expect(unit).toContain("Environment=HOME=/var/lib/moni");
+    expect(luks).toContain("Environment=HOME=$MOUNT/home");
+    expect(luks).toContain("ReadWritePaths=-$MOUNT/home");
+    expect(luks).toContain("getent passwd moni");
+    expect(luks).not.toContain("/home/moni");
+    expect(luks).toContain("/opt/moni/shared/.env");
+    expect(verifier).toContain("HOME=/mnt/secure/home");
+    expect(verifier).toContain("Chrome crash dump outside the encrypted store");
+  });
 });
