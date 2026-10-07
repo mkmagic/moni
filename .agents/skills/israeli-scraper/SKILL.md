@@ -60,6 +60,12 @@ in memory), so `--no-sandbox` on a real host silently deletes a boundary that
 `security-design-principles.md` §20 is separately trying to build. Acceptable on a throwaway probe
 box; not on anything that holds real credentials.
 
+**Chrome also needs a writable `$HOME`.** Its crash reporter (Crashpad) keeps a database under
+`~/.config/<product>/Crash Reports` and Chrome dies at launch if it can't create it
+(`chrome_crashpad_handler: --database is required`). `--disable-crash-reporter` /
+`--disable-breakpad` do **not** stop this (tested on Chrome 153). Production gives the service a
+writable `HOME` inside LUKS (#152, `deployment` skill); on a probe box, use a normal user's home.
+
 Also pass `--disable-dev-shm-usage`: Docker defaults `/dev/shm` to 64 MB and Chrome dies mid-page
 with renderer crashes rather than a clean error. `scrape-worker.mts` passes **no** launch `args`
 today (`scrape-worker.mts:77`), so this is still an open gap for deployment.

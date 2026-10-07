@@ -15,10 +15,10 @@ The **ordering** playbook for standing up a Moni host (Part A) or moving one wit
 Use placeholders (`<host>`, `<domain>`, `<new-ip>`) in anything you write down; never commit the
 owner's domain, IPs, provider, or bucket names.
 
-> **Not yet proven.** Moni has never actually been moved between providers, and Part A has only
-> been done once, by hand. Both Parts were checked against the live host but are a first draft.
-> Expect this skill to be **rewritten after the first real migration**. When you run it, record what
-> was wrong and propose the fix to the owner (CLAUDE.md §6).
+> **Proven once.** Part B was run end to end for the first time on 2026-10-07 (a cloud VPS moved
+> to another provider, same domain); what it got wrong is folded in below. Part A has still only
+> been done once, by hand. When you run either Part, record what was wrong and propose the fix to
+> the owner (CLAUDE.md §6).
 
 ## Common ground (read before either Part)
 
@@ -88,7 +88,17 @@ Skip any that discovery already answered.
   curl `https://$MONI_DOMAIN/api/health`. If the domain still points elsewhere, a "pass" is
   meaningless, and a down old box can trigger a wrong rollback.
 - Some provider images enable root SSH **password** auth. Check with `sshd -T`, don't assume.
-  Test key login **before** disabling passwords.
+  Test key login **before** disabling passwords. Some images' `sshd_config` also has **no
+  `Include /etc/ssh/sshd_config.d/*.conf` line**, so a drop-in there is silently ignored: add the
+  line at the top (sshd takes the first value it sees), then confirm with `sshd -T` and a refused
+  password login (`ssh -o PubkeyAuthentication=no -o PreferredAuthentications=password …`).
+- **Disabling Apport resets `kernel.core_pattern`** to `core`. Run `systemctl disable --now apport`
+  first, then `sysctl --system`, then check `sysctl kernel.core_pattern` is `|/bin/false`.
+- **Chrome needs a writable `$HOME`.** Its crash reporter (Crashpad) won't start without one, and
+  `ProtectSystem=strict` makes `/opt/moni` read-only, so every browser scrape dies within a second
+  (`scrape_failed`) while API connectors still sync. `moni.service` sets `HOME=/var/lib/moni`
+  (`StateDirectory`), and the LUKS drop-in moves it to `/mnt/secure/home` so a minidump stays
+  encrypted (#152). An old host may hide this: a `~/.config` created before the sandbox existed.
 - The LUKS manual unlock needs a provider **web console** or SSH after every reboot. Confirm one
   works before the first reboot drill. Keep unattended-upgrades `Automatic-Reboot` false.
 - Cloud firewalls are provider-specific. Fall back to `ufw` (22/80/443 tcp), and keep the two in
@@ -115,7 +125,8 @@ Follow in order; tick each box.
    stable** repo (Ubuntu's is < 2.10 and fails `request_body`). Plus `postgresql-16`, `age`, `unzip`,
    `curl`, `sudo`, `certbot` + its DNS plugin, the Chrome runtime libs (`israeli-scraper`), and
    official rclone (C4).
-4. [ ] **Sysctl + apport** files from C3, then `sysctl --system` and `systemctl disable --now apport`.
+4. [ ] **Sysctl + apport** files from C3, then `systemctl disable --now apport`, **then**
+   `sysctl --system` (in that order, see C4).
 5. [ ] **User + dirs**: `moni` system user with home `/opt/moni`; `/opt/moni/shared` (moni 700).
    The `caddy` group comes from the Caddy package.
 6. [ ] **DNS**: point `<domain>` at the host (lower the TTL first).
@@ -126,7 +137,8 @@ Follow in order; tick each box.
    write `MIGRATE_STEADY` and `DATABASE_URL` with the new passwords.
 9. [ ] **TLS**: write `/etc/caddy/moni.env`, the DNS token file (C3), and install
    `deploy/certbot-deploy-hook.sh` as `/etc/letsencrypt/renewal-hooks/deploy/moni-caddy` (755).
-   First issuance: `certbot certonly --dns-<plugin> --dns-<plugin>-credentials <ini>
+   First issuance (add `--non-interactive --agree-tos` plus `-m <email>` or
+   `--register-unsafely-without-email`, matching the old box's account): `certbot certonly --dns-<plugin> --dns-<plugin>-credentials <ini>
    --dns-<plugin>-propagation-seconds 30 --key-type ecdsa -d <domain> --deploy-hook
    /etc/letsencrypt/renewal-hooks/deploy/moni-caddy`. Hooks in that directory run only on
    *renew*, so without `--deploy-hook` the first certificate never reaches `/etc/caddy/certs`.
@@ -147,12 +159,19 @@ Follow in order; tick each box.
     at the storage provider.
 11. [ ] **LUKS (if chosen)** (`deployment` § Encryption at rest): `deploy/setup-luks-container.sh
     create` installs `moni-unlock` and the `20-secure-store.conf` drop-ins for `moni` and
-    `postgresql@`. Place the app env **directly** at `/mnt/secure/app/.env` (moni 600) and
-    `ln -s` it to `/opt/moni/shared/.env`. The script's `migrate` only moves `/opt/moni/app/.env`,
-    which doesn't exist yet, and `verify-host` fails on a plaintext secret. Verify a backup decrypts
-    off-box, then `migrate`. That's safe before any release exists: `migrate` starts `moni` only if
-    `/opt/moni/app` is present. The passphrase goes to the owner's password manager. The container needs
-    ≥ 20 GiB free on the root disk. Without LUKS: write the app env at `/opt/moni/shared/.env`.
+    `postgresql@`. Size it with `MONI_LUKS_SIZE` (default 20G; 10G holds a household's DB, the 4G
+    swap and scrape state), and leave that much free on the root disk. `create` is interactive (the
+    owner types `YES` and the passphrase), so the **owner runs it** in their own terminal:
+    `ssh -t root@<host> 'MONI_LUKS_SIZE=10G <path>/setup-luks-container.sh create'`. A Ctrl-C at the
+    passphrase prompt leaves an unformatted image that later runs skip and can't open: check
+    `cryptsetup isLuks /var/lib/moni-secure.img`, and if it isn't LUKS (and nothing is in
+    crypttab/fstab yet), `rm` it and rerun. Place the app env **directly** at `/mnt/secure/app/.env`
+    (moni 600) and `ln -s` it to `/opt/moni/shared/.env`, so it never touches the plaintext disk.
+    Verify a backup decrypts off-box, then `migrate` (on a fresh host the cluster is empty, so the
+    `/root/.moni-luks-backup-verified` marker just records that). That's safe before any release
+    exists: `migrate` starts `moni` only if `/opt/moni/app` is present. Delete the empty
+    `…/main.PLAINTEXT-old` cluster it leaves, or `verify-host` fails. The passphrase goes to the
+    owner's password manager. Without LUKS: write the app env at `/opt/moni/shared/.env`.
 12. [ ] **Bootstrap for the first release.** `release.sh` can't install itself, and it refuses unless
     the live unit already has `MemorySwapMax=0` + `LimitCORE=0`:
     `install -m755 deploy/release.sh /opt/moni/release.sh`;
@@ -199,19 +218,27 @@ Summarize the findings for the owner in plain language, then ask the C2 question
 
 ### B2. Build the new host
 
-Do Part A steps **1–5 and 9–12**, with these changes:
+Do Part A steps **1–5 and 9–12**, with these changes. With LUKS, do step **11 (`create` +
+`migrate` on the still-empty cluster) before copying any secret**, so none ever lands on the
+plaintext disk.
 
 - **Skip Part A step 6 (DNS) and step 8 (bootstrap + rotation).** Create an empty `moni` DB only.
   The restore brings the roles **with the old box's passwords**. Rotating now would break
   `DATABASE_URL`/`MIGRATE_STEADY` the moment the restore runs.
 - **Copy, don't regenerate**: `/root/moni-secrets.env`, the app env, `/root/moni-backup.env`, and the
-  rclone config, **byte-for-byte** with `scp` to 600 paths (host to host, never through chat or logs).
-  Rotate role passwords afterwards if wanted, updating both env files. With LUKS, the app env goes
-  to `/mnt/secure/app/.env` (step 11).
+  rclone config, **byte-for-byte**, never through chat or logs. The old box can't SSH to the new one,
+  so stream each file through your laptop's memory without printing it:
+  `ssh root@<old> 'cat <src>' | ssh root@<new> 'umask 077; cat > <dst>.tmp && chown <owner> <dst>.tmp && mv <dst>.tmp <dst>'`,
+  then compare `sha256sum` on both ends. With LUKS, copy straight to the old box's layout inside the
+  container (`/mnt/secure/secrets/_root_<name>` root 600, `/mnt/secure/app/.env` moni 600) and
+  symlink the canonical paths to them. Rotate role passwords afterwards if wanted, updating both env
+  files.
 - **Backup timer**: the copied backup env points at the **same** off-box remote. Install the units,
   but don't `enable` the timer until after cutover, so empty-DB dumps don't mix with real ones.
   A manual `backup.sh` run (for the LUKS gate) is fine.
-- **DNS token**: create a **new** single-zone token for the new box rather than copying the old one.
+- **DNS token**: preferably a **new** single-zone token for the new box. Copying the old one
+  byte-for-byte is acceptable if the owner prefers (it's single-zone, and the old box is destroyed
+  later); then revoking it at B4 means issuing the new box a fresh one first.
 - **Pin the domain locally**: add `127.0.0.1 <domain>` to the new host's `/etc/hosts`, so every health
   check (C4) hits the new box. The DNS-01 cert is valid before the switch. **Remove the pin after
   cutover.**
@@ -224,30 +251,61 @@ Do Part A steps **1–5 and 9–12**, with these changes:
 
 1. [ ] **Rehearse TLS**: `curl --resolve <domain>:443:<new-ip> -sI https://<domain>/` shows a valid
    cert. There's no app yet, so a 502 is fine.
-2. [ ] **Freeze**: no syncs or edits on the old box from here on.
-3. [ ] **Final backup** on the old box (`/opt/moni/backup.sh`). Pull it locally and **verify it
-   decrypts** (`backup-restore` § Safety rules).
-4. [ ] **Restore onto the new host** (`backup-restore` § Restore onto a live box). If LUKS, unlock
-   first. **Pass the new host as the explicit `ssh-target`** (the default `root@$MONI_DOMAIN` is the
-   old box). No release is on the box yet, so the script's closing app start and health check fail.
-   That's expected: the `users=` count it prints first is the real gate.
-5. [ ] **First release, by hand.** CI can't reach the new box yet, and a release couldn't run before
-   the restore (it migrates as `moni_owner`, which the restore creates). On a laptop at the release
-   SHA: `npm ci && npm run build && deploy/package-release.sh <sha>`, then
-   `ssh root@<new> "/opt/moni/release.sh deploy <sha> <sha256-of-tarball>" < moni-release.tar.gz`.
-   Its health check is trustworthy only because of the new host's `/etc/hosts` pin.
-6. [ ] **Verify before DNS**: `/root/verify-host.sh` on the new box. Then point `<domain>` at
-   `<new-ip>` in **your laptop's** `/etc/hosts` and do a real login + passkey unlock. Undo the pin.
-7. [ ] **DNS switch** (TTL lowered a day ahead). Wait for propagation, then **remove the new
-   host's `/etc/hosts` pin**.
-8. [ ] **CI**: update `DEPLOY_HOST` and `DEPLOY_KNOWN_HOSTS` (and `DEPLOY_SSH_KEY` if you made a new
-   pair) with `--env production`. Get the host key from the new box over a trusted channel; never
-   `ssh-keyscan`. Cut a release and watch it deploy.
-9. [ ] **Full verification** (§ Verification).
-10. [ ] **Data parity**: this is a migration, so the new box must hold the old box's data exactly,
-    not a fresh instance. Compare per-table row counts (`select relname, n_live_tup …` after `ANALYZE`,
-    or `count(*)` on the user-owned tables) between the old box (frozen) and the new box. They must
-    match. A household member logs in and sees their existing accounts and history.
+2. [ ] **Rehearsal restore** (the old box keeps serving): pull the old box's latest nightly dump,
+   verify it decrypts, and restore it onto the new host (`backup-restore` § Restore onto a live box).
+   If LUKS, unlock first. **Pass the new host as the explicit `ssh-target`** (the default
+   `root@$MONI_DOMAIN` is the old box). No release is on the box yet, so the script's closing app
+   start and health check fail. That's expected: the `users=` count it prints first is the real gate.
+3. [ ] **First release, by hand.** CI can't reach the new box yet, and a release couldn't run before
+   the restore (it migrates as `moni_owner`, which the restore creates). Deploy the **same SHA the
+   old box runs** (`cat /opt/moni/app/.moni-release-sha`), so the move changes only the host.
+   **Build on Linux x86_64, never on a Mac**: a macOS build ships darwin native modules (argon2,
+   sharp) and the app won't start. Simplest is the new box itself, as a throwaway unprivileged user
+   (no secrets involved, as in CI): `useradd -m builder`; as builder, `git clone` the repo,
+   `git checkout <sha>`, `PUPPETEER_SKIP_DOWNLOAD=true npm ci && npm run build &&
+   deploy/package-release.sh <sha> ~/moni-release.tar.gz`. Then as root,
+   `/opt/moni/release.sh deploy <sha> $(sha256sum <tarball> | cut -d' ' -f1) < <tarball>`, and
+   `userdel -r builder`. Its health check is trustworthy only because of the new host's
+   `/etc/hosts` pin.
+4. [ ] **Verify before DNS**: `/root/verify-host.sh` on the new box (only the backup timer may fail;
+   it's armed at step 10). Then log in from the laptop **without editing `/etc/hosts`**: start a
+   separate Chrome with a throwaway profile,
+   `open -na "Google Chrome" --args --user-data-dir=<tmp-dir> --host-resolver-rules="MAP <domain> <new-ip>" https://<domain>/`,
+   and confirm in DevTools → Network that the Remote Address is `<new-ip>` before logging in. The
+   owner logs in and checks the data, **without editing or syncing**: this copy is replaced at
+   step 7. A passkey saved in their normal profile may be missing here; that's fine, the passkey is
+   proven after the switch.
+5. [ ] **Reboot drill**: reboot the new box; the owner runs `ssh -t root@<new> moni-unlock` and
+   confirms the provider web console also works. `verify-host.sh` again.
+6. [ ] **Freeze**: no syncs or edits on the old box from here on. Record per-table row counts on
+   the old box now (step 8).
+7. [ ] **Final backup** on the old box (`/opt/moni/backup.sh`), pull it, verify it decrypts, and
+   restore it onto the new host exactly as in step 2. The app is already deployed, so it comes back
+   up with the final data. A few minutes of downtime in all.
+8. [ ] **Data parity**: this is a migration, so the new box must hold the old box's data exactly.
+   Compare exact `count(*)` for **every** table in `public` (generate the union with
+   `information_schema.tables` and run it as `postgres`) on both boxes, and `diff` the two lists.
+   They must match.
+9. [ ] **DNS switch** (TTL lowered a day ahead). In the DNS dashboard, or via the API with the
+   zone's DNS token if the owner agrees (keep it DNS-only / grey-cloud). Undo = point the record
+   back at the old IP. Check the authoritative and public resolvers (`dig @1.1.1.1`, `@8.8.8.8`),
+   then **remove the new host's `/etc/hosts` pin**. Caches lag: a Mac needs
+   `sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder`, and a phone's open browser may
+   keep its old connection until the app is fully closed. Anything done on the old box from here
+   is lost, so check (DevTools Remote Address) before doing anything.
+   After the switch `ssh root@<domain>` reaches the **new** box, and the laptop's `known_hosts`
+   warns that the host key changed. That's expected. Reach the old box by IP while still checking
+   its own key: `ssh -o HostKeyAlias=<domain> root@<old-ip>`. Fix `known_hosts` once the old box is gone.
+10. [ ] **CI and backups**: update `DEPLOY_HOST` and `DEPLOY_KNOWN_HOSTS` (and `DEPLOY_SSH_KEY` if you
+    made a new pair) with `--env production`. Take the host key from the new box over the SSH
+    session you already trust and compare its fingerprint with your `known_hosts`; never
+    `ssh-keyscan`. Publish a release and watch it deploy. Then `systemctl enable --now
+    moni-backup.timer`, run `backup.sh` once, and verify that dump decrypts off-box. The old box's
+    timer keeps uploading **stale** dumps to the same remote until it's destroyed; ignore files
+    from it.
+11. [ ] **Full verification** (§ Verification): passkey login for each household member, and one
+    sync per Chrome-based bank. If browser scrapes fail within a second while API connectors
+    succeed, Chrome isn't starting: see C4, `$HOME`.
 
 ### B4. Decommission (gated: the new box must prove its own backups first)
 
@@ -270,7 +328,7 @@ the part that matters:
   only it used.
 - [ ] Revoke **every** DNS API token the old box held at the DNS provider: the certbot `.ini`, plus
   any older Caddy-era token.
-- [ ] Confirm `DEPLOY_HOST`/`DEPLOY_KNOWN_HOSTS` point at the new box (B3.8).
+- [ ] Confirm `DEPLOY_HOST`/`DEPLOY_KNOWN_HOSTS` point at the new box (B3.10).
 - [ ] Keep the last old-box backup off-box. Then destroy the old VM **and** its provider snapshots
   and backups: old plaintext blocks survive in snapshots.
 
