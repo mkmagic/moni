@@ -26,10 +26,14 @@ owner's domain, IPs, provider, or bucket names.
 
 Israeli banks and card issuers may block some datacenter networks, so a cheap box on the wrong
 network can be useless. **Before committing to a candidate host**, confirm it can reach the
-banks the owner uses. A credential-free probe, `scripts/scraper-test/reachability-probe.mjs`, and a
-skill around it are **planned / in progress on another branch**. Use them if they've landed.
-Otherwise do a manual `curl -sI` to each bank's login page from the candidate box, or have the owner
-accept the risk.
+banks the owner uses. Run the credential-free probe `scripts/scraper-test/reachability-probe.mjs`
+(`[--only discount,leumi] [--out f.json]`). It loads each library-supported bank's login page once
+and types or submits nothing. Run it **at the same time** from the candidate box and from an
+Israeli home connection (the control), then compare; see `israeli-scraper` §2b. On a bare Linux box
+it needs Node, `npm i israeli-bank-scrapers puppeteer` at the repo's versions plus the repo's
+`patches/` (Leumi), the pinned Chrome from `deploy/chrome-for-testing.env` via `MONI_CHROME_PATH`,
+the Chrome runtime libs, and a **non-root** user (no `--no-sandbox`). Throw that setup away before
+building the real host, so the build relies only on this skill's steps.
 
 ### C2. Decisions that belong to the owner
 
@@ -230,11 +234,27 @@ Do Part A steps **1–5 and 9–12**, with these changes:
    pair) with `--env production`. Get the host key from the new box over a trusted channel; never
    `ssh-keyscan`. Cut a release and watch it deploy.
 9. [ ] **Full verification** (§ Verification).
+10. [ ] **Data parity**: this is a migration, so the new box must hold the old box's data exactly,
+    not a fresh instance. Compare per-table row counts (`select relname, n_live_tup …` after `ANALYZE`,
+    or `count(*)` on the user-owned tables) between the old box (frozen) and the new box. They must
+    match. A household member logs in and sees their existing accounts and history.
 
-### B4. Decommission (after verification)
+### B4. Decommission (gated: the new box must prove its own backups first)
 
-The owner just shuts the old VM down, so no on-box cleanup is needed. The **off-box** revocations
-are the part that matters:
+**The old box stays up, untouched, until every item below passes on the new box.** It is the
+rollback; DNS can be pointed back at it at any time.
+
+- [ ] The new box's **own** nightly `moni-backup.timer` run uploaded an age-encrypted dump to the
+  off-box remote (check the remote listing for a new object from the new host's run).
+- [ ] **Restore test from that new-box backup** onto an isolated cluster (`backup-restore` § restore
+  test) succeeds, and the restored data decrypts (a login against it works).
+- [ ] A reboot of the new box followed by the manual LUKS unlock brings every service back, and
+  `verify-host.sh` passes.
+- [ ] At least one successful sync per connected bank, including the ones the old box couldn't reach,
+  with non-zero transaction counts.
+
+Then the owner shuts the old VM down; no on-box cleanup is needed. The **off-box** revocations are
+the part that matters:
 
 - [ ] Remove the old box's deploy keys from GitHub (`gh repo deploy-key list`) and any CI key that
   only it used.
