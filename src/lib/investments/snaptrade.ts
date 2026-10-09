@@ -77,7 +77,8 @@ async function get(
     signal: AbortSignal.timeout(30_000),
   });
   if (response.redirected) throw new WorkerSourceError("redirect_rejected");
-  if (!response.ok) throw new WorkerSourceError("provider_rejected");
+  // Tagged so the advice names SnapTrade's Consumer Key, not IBKR's Flex token.
+  if (!response.ok) throw new WorkerSourceError("provider_rejected:snaptrade");
   const body = await readBoundedResponse(response);
   try {
     return parseJsonPreservingNumbers(body.toString("utf8"));

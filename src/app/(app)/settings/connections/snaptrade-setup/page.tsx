@@ -176,7 +176,7 @@ export default function SnaptradeSetupGuidePage() {
             dashboard; Moni shows SnapTrade&apos;s last figures until you do.
           </li>
           <li>
-            <span className="text-foreground">The broker rejected the request</span> — the Consumer
+            <span className="text-foreground">SnapTrade rejected the request</span> — the Consumer
             Key was rotated or mistyped. Copy it again (step 4), then use{" "}
             <Path>Replace login details</Path> on the connection in Settings › Connections.
           </li>

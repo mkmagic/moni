@@ -32,6 +32,8 @@ const IBKR_FLEX_CODES: Record<string, string> = {
 const CODES: Record<string, string> = {
   provider_rejected:
     "The broker rejected the request — most often an expired Flex token. Create a new token in Client Portal and update the credentials for this connection.",
+  "provider_rejected:snaptrade":
+    "SnapTrade rejected the request — most often because the Consumer Key was rotated or mistyped. Copy the Client ID and Consumer Key again from API Keys in the SnapTrade dashboard and update the credentials for this connection. The setup guide is linked under the connection's login details.",
   send_unexpected_response: "The broker returned an unexpected response. Retry the sync.",
   send_invalid_reference_code: "The broker returned an unusable reference code. Retry the sync.",
   retrieve_unexpected_response:

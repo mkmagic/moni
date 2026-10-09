@@ -10,6 +10,7 @@ import {
   normalizeSnaptradeHoldings,
   parseJsonPreservingNumbers,
   type SnaptradeAccountPayload,
+  WorkerSourceError,
 } from "@/lib/investments";
 import { signSnaptradeRequest } from "@/lib/investments/snaptrade";
 
@@ -111,6 +112,13 @@ describe("fetchSnaptradeHoldings", () => {
     ).rejects.toThrow(
       new InvestmentNormalizationError("incomplete_coverage:snaptrade_no_accounts"),
     );
+  });
+
+  it("names SnapTrade, not IBKR, when SnapTrade refuses the key", async () => {
+    const fetcher = async () => new Response("{}", { status: 401 });
+    await expect(
+      fetchSnaptradeHoldings(Buffer.from("client"), Buffer.from("key"), fetcher),
+    ).rejects.toThrow(new WorkerSourceError("provider_rejected:snaptrade"));
   });
 });
 

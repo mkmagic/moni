@@ -64,6 +64,9 @@ describe("syncErrorMessage", () => {
     expect(syncErrorMessage("incomplete_snapshot:snaptrade_initial_sync")).toMatch(
       /still doing its first sync/,
     );
+    const rejected = syncErrorMessage("provider_rejected:snaptrade");
+    expect(rejected).toMatch(/Consumer Key/);
+    expect(rejected).not.toMatch(/Flex/);
   });
 
   it("still falls back to the raw code for anything unmapped", () => {
