@@ -120,6 +120,20 @@ describe("fetchSnaptradeHoldings", () => {
       fetchSnaptradeHoldings(Buffer.from("client"), Buffer.from("key"), fetcher),
     ).rejects.toThrow(new WorkerSourceError("provider_rejected:snaptrade"));
   });
+
+  it("says SnapTrade is still syncing a just-linked account whose last sync is null", async () => {
+    // SnapTrade's schema allows a null last_successful_sync before the first holdings sync.
+    const fresh = {
+      ...ACCOUNT,
+      sync_status: { holdings: { last_successful_sync: null, initial_sync_completed: false } },
+    };
+    const fetcher = async () => new Response(JSON.stringify([fresh]), { status: 200 });
+    await expect(
+      fetchSnaptradeHoldings(Buffer.from("client"), Buffer.from("key"), fetcher),
+    ).rejects.toThrow(
+      new InvestmentNormalizationError("incomplete_snapshot:snaptrade_initial_sync"),
+    );
+  });
 });
 
 describe("normalizeSnaptradeHoldings", () => {

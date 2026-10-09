@@ -143,7 +143,8 @@ const accountSchema = z.object({
   institution_name: z.string().nullish(),
   sync_status: z.object({
     holdings: z.object({
-      last_successful_sync: nonblankSchema,
+      // Null until SnapTrade finishes its first holdings sync of a new connection.
+      last_successful_sync: nonblankSchema.nullable(),
       initial_sync_completed: z.boolean(),
     }),
   }),
@@ -227,6 +228,10 @@ export async function fetchSnaptradeHoldings(
     requireLimit(accounts.length, 100);
     if (!accounts.length)
       throw new InvestmentNormalizationError("incomplete_coverage:snaptrade_no_accounts");
+    // A just-linked brokerage has nothing to fetch yet; say so before spending
+    // the per-account calls (normalizeSnaptradeHoldings checks this again).
+    if (accounts.some(({ sync_status: { holdings } }) => !holdings.initial_sync_completed))
+      throw new InvestmentNormalizationError("incomplete_snapshot:snaptrade_initial_sync");
     const payloads: SnaptradeAccountPayload[] = [];
     for (const account of accounts) {
       const base = `${ACCOUNTS_PATH}/${encodeURIComponent(account.id)}`;
@@ -321,7 +326,8 @@ export function normalizeSnaptradeHoldings(
     if (!payloads.length)
       throw new InvestmentNormalizationError("incomplete_coverage:snaptrade_no_accounts");
     const accounts = payloads.map(({ account, balances, positions }) => {
-      if (!account.sync_status.holdings.initial_sync_completed)
+      const lastSync = account.sync_status.holdings.last_successful_sync;
+      if (!account.sync_status.holdings.initial_sync_completed || !lastSync)
         throw new InvestmentNormalizationError("incomplete_snapshot:snaptrade_initial_sync");
       requireLimit(positions.results.length, 10_000);
       requireLimit(balances.length, 1_000);
@@ -364,7 +370,7 @@ export function normalizeSnaptradeHoldings(
         brokerTotal: {
           amount: decimalText(account.balance.total.amount),
           currency: account.balance.total.currency,
-          asOf: asOf(account.sync_status.holdings.last_successful_sync).value,
+          asOf: asOf(lastSync).value,
         },
       };
     });
