@@ -50,7 +50,10 @@ export type InvestmentNormalizationErrorCode =
   // advice can name the box to tick.
   | "incomplete_coverage:flex_account_information"
   | "incomplete_snapshot:flex_nav_in_base"
-  | "incomplete_snapshot:flex_positions_and_cash";
+  | "incomplete_snapshot:flex_positions_and_cash"
+  // SnapTrade: what to fix in the user's SnapTrade dashboard.
+  | "incomplete_coverage:snaptrade_no_accounts"
+  | "incomplete_snapshot:snaptrade_initial_sync";
 
 export class InvestmentNormalizationError extends Error {
   constructor(readonly code: InvestmentNormalizationErrorCode) {

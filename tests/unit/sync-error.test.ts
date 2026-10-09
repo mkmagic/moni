@@ -57,6 +57,18 @@ describe("syncErrorMessage", () => {
     expect(syncErrorMessage("incomplete_snapshot")).toMatch(/missing data/);
   });
 
+  it("tells a SnapTrade user what to do in their SnapTrade dashboard", () => {
+    expect(syncErrorMessage("incomplete_coverage:snaptrade_no_accounts")).toMatch(
+      /No brokerage is linked.*Connect another account/,
+    );
+    expect(syncErrorMessage("incomplete_snapshot:snaptrade_initial_sync")).toMatch(
+      /still doing its first sync/,
+    );
+    const rejected = syncErrorMessage("provider_rejected:snaptrade");
+    expect(rejected).toMatch(/Consumer Key/);
+    expect(rejected).not.toMatch(/Flex/);
+  });
+
   it("still falls back to the raw code for anything unmapped", () => {
     expect(syncErrorMessage("some_new_code")).toBe("some_new_code");
     expect(syncErrorMessage(null)).toBe("Last sync failed");

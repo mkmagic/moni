@@ -124,6 +124,7 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
       { key: "clientId", label: "Client ID", inputType: "text" },
       { key: "consumerKey", label: "Consumer Key", inputType: "password" },
     ],
+    setupGuideHref: "/settings/connections/snaptrade-setup",
   },
   // One entry per document parser, not per provider: a provider's pension
   // report and its קרן השתלמות report are different layouts and therefore

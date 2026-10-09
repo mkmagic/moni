@@ -77,7 +77,8 @@ async function get(
     signal: AbortSignal.timeout(30_000),
   });
   if (response.redirected) throw new WorkerSourceError("redirect_rejected");
-  if (!response.ok) throw new WorkerSourceError("provider_rejected");
+  // Tagged so the advice names SnapTrade's Consumer Key, not IBKR's Flex token.
+  if (!response.ok) throw new WorkerSourceError("provider_rejected:snaptrade");
   const body = await readBoundedResponse(response);
   try {
     return parseJsonPreservingNumbers(body.toString("utf8"));
@@ -142,7 +143,8 @@ const accountSchema = z.object({
   institution_name: z.string().nullish(),
   sync_status: z.object({
     holdings: z.object({
-      last_successful_sync: nonblankSchema,
+      // Null until SnapTrade finishes its first holdings sync of a new connection.
+      last_successful_sync: nonblankSchema.nullable(),
       initial_sync_completed: z.boolean(),
     }),
   }),
@@ -224,7 +226,12 @@ export async function fetchSnaptradeHoldings(
       ),
     );
     requireLimit(accounts.length, 100);
-    if (!accounts.length) throw new InvestmentNormalizationError("incomplete_coverage");
+    if (!accounts.length)
+      throw new InvestmentNormalizationError("incomplete_coverage:snaptrade_no_accounts");
+    // A just-linked brokerage has nothing to fetch yet; say so before spending
+    // the per-account calls (normalizeSnaptradeHoldings checks this again).
+    if (accounts.some(({ sync_status: { holdings } }) => !holdings.initial_sync_completed))
+      throw new InvestmentNormalizationError("incomplete_snapshot:snaptrade_initial_sync");
     const payloads: SnaptradeAccountPayload[] = [];
     for (const account of accounts) {
       const base = `${ACCOUNTS_PATH}/${encodeURIComponent(account.id)}`;
@@ -316,10 +323,12 @@ export function normalizeSnaptradeHoldings(
   payloads: SnaptradeAccountPayload[],
 ): InvestmentSyncEnvelope {
   try {
-    if (!payloads.length) throw new InvestmentNormalizationError("incomplete_coverage");
+    if (!payloads.length)
+      throw new InvestmentNormalizationError("incomplete_coverage:snaptrade_no_accounts");
     const accounts = payloads.map(({ account, balances, positions }) => {
-      if (!account.sync_status.holdings.initial_sync_completed)
-        throw new InvestmentNormalizationError("incomplete_snapshot");
+      const lastSync = account.sync_status.holdings.last_successful_sync;
+      if (!account.sync_status.holdings.initial_sync_completed || !lastSync)
+        throw new InvestmentNormalizationError("incomplete_snapshot:snaptrade_initial_sync");
       requireLimit(positions.results.length, 10_000);
       requireLimit(balances.length, 1_000);
       const positionAsOf = asOf(positions.data_freshness.as_of).value;
@@ -361,7 +370,7 @@ export function normalizeSnaptradeHoldings(
         brokerTotal: {
           amount: decimalText(account.balance.total.amount),
           currency: account.balance.total.currency,
-          asOf: asOf(account.sync_status.holdings.last_successful_sync).value,
+          asOf: asOf(lastSync).value,
         },
       };
     });

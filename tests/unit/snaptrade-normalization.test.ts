@@ -5,10 +5,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   InvestmentNormalizationError,
+  fetchSnaptradeHoldings,
   normalizeSnaptradeActivity,
   normalizeSnaptradeHoldings,
   parseJsonPreservingNumbers,
   type SnaptradeAccountPayload,
+  WorkerSourceError,
 } from "@/lib/investments";
 import { signSnaptradeRequest } from "@/lib/investments/snaptrade";
 
@@ -102,6 +104,38 @@ describe("signSnaptradeRequest", () => {
   });
 });
 
+describe("fetchSnaptradeHoldings", () => {
+  it("says no brokerage is linked when SnapTrade lists no accounts", async () => {
+    const fetcher = async () => new Response("[]", { status: 200 });
+    await expect(
+      fetchSnaptradeHoldings(Buffer.from("client"), Buffer.from("key"), fetcher),
+    ).rejects.toThrow(
+      new InvestmentNormalizationError("incomplete_coverage:snaptrade_no_accounts"),
+    );
+  });
+
+  it("names SnapTrade, not IBKR, when SnapTrade refuses the key", async () => {
+    const fetcher = async () => new Response("{}", { status: 401 });
+    await expect(
+      fetchSnaptradeHoldings(Buffer.from("client"), Buffer.from("key"), fetcher),
+    ).rejects.toThrow(new WorkerSourceError("provider_rejected:snaptrade"));
+  });
+
+  it("says SnapTrade is still syncing a just-linked account whose last sync is null", async () => {
+    // SnapTrade's schema allows a null last_successful_sync before the first holdings sync.
+    const fresh = {
+      ...ACCOUNT,
+      sync_status: { holdings: { last_successful_sync: null, initial_sync_completed: false } },
+    };
+    const fetcher = async () => new Response(JSON.stringify([fresh]), { status: 200 });
+    await expect(
+      fetchSnaptradeHoldings(Buffer.from("client"), Buffer.from("key"), fetcher),
+    ).rejects.toThrow(
+      new InvestmentNormalizationError("incomplete_snapshot:snaptrade_initial_sync"),
+    );
+  });
+});
+
 describe("normalizeSnaptradeHoldings", () => {
   it("maps a live Schwab-via-SnapTrade payload onto the envelope", () => {
     const envelope = normalizeSnaptradeHoldings([payload()]);
@@ -167,12 +201,12 @@ describe("normalizeSnaptradeHoldings", () => {
           },
         }),
       ]),
-    ).toThrow(new InvestmentNormalizationError("incomplete_snapshot"));
+    ).toThrow(new InvestmentNormalizationError("incomplete_snapshot:snaptrade_initial_sync"));
   });
 
   it("refuses an empty account list rather than promoting empty coverage", () => {
     expect(() => normalizeSnaptradeHoldings([])).toThrow(
-      new InvestmentNormalizationError("incomplete_coverage"),
+      new InvestmentNormalizationError("incomplete_coverage:snaptrade_no_accounts"),
     );
   });
 
