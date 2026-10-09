@@ -85,6 +85,12 @@ describe("production deployment hardening", () => {
     expect(luks).not.toContain("/home/moni");
     expect(luks).toContain("/opt/moni/shared/.env");
     expect(verifier).toContain("HOME=/mnt/secure/home");
+    // Hosts provisioned before #152 get the drop-in upgraded by the release
+    // itself, before the restart that would otherwise use the plaintext HOME.
+    const release = read("deploy/release.sh");
+    const reconcile = release.indexOf("Environment=HOME=/mnt/secure/home");
+    expect(reconcile).toBeGreaterThan(release.indexOf('"$FINAL/deploy/moni.service"'));
+    expect(reconcile).toBeLessThan(release.lastIndexOf("systemctl restart moni"));
     expect(verifier).toContain("Chrome crash dump outside the encrypted store");
   });
 });
