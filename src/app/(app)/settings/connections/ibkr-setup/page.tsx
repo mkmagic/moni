@@ -1,9 +1,9 @@
-import Image from "next/image";
 import Link from "next/link";
-import type { ReactNode } from "react";
-import { ArrowLeft, TriangleAlert } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import { AiSetupPrompt } from "./ai-setup-prompt";
+import { AiSetupPrompt } from "../ai-setup-prompt";
+import { Note, Path, Shot, Step } from "../setup-guide";
+import { IBKR_SETUP_PROMPT } from "./ai-prompt";
 
 /** The one-time Client Portal setup a new user needs before the IBKR Flex
  * connection can sync. Reached only from that connector's login fields
@@ -43,7 +43,12 @@ export default function IbkrSetupGuidePage() {
         </details>
       </div>
 
-      <AiSetupPrompt />
+      <AiSetupPrompt prompt={IBKR_SETUP_PROMPT}>
+        If you use an AI assistant that can control your browser, such as Claude in Chrome or Codex,
+        give it a ready-made prompt. You log in to Interactive Brokers yourself; the assistant
+        builds the query, checks every setting, and gives you the Query ID. It asks before creating
+        a new token.
+      </AiSetupPrompt>
 
       <Step n={1} title="Turn on the Flex Web Service and create a token">
         <p>
@@ -180,60 +185,6 @@ export default function IbkrSetupGuidePage() {
         </ul>
       </Card>
     </div>
-  );
-}
-
-function Step({ n, title, children }: { n: number; title: string; children: ReactNode }) {
-  return (
-    <Card className="flex flex-col gap-4 p-6 text-sm leading-relaxed text-muted-foreground">
-      <h3 className="flex items-center gap-3 text-base font-semibold text-foreground">
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-primary/60 font-mono text-xs text-primary">
-          {n}
-        </span>
-        {title}
-      </h3>
-      {children}
-    </Card>
-  );
-}
-
-/** An IBKR screen label, set apart so it reads as "look for this on screen". */
-function Path({ children }: { children: ReactNode }) {
-  return <span className="font-medium text-foreground">{children}</span>;
-}
-
-function Note({ children }: { children: ReactNode }) {
-  return (
-    <p className="flex gap-2 rounded-[var(--radius)] border border-primary/40 p-3 text-xs">
-      <TriangleAlert className="h-4 w-4 shrink-0 text-primary" />
-      <span>{children}</span>
-    </p>
-  );
-}
-
-/** A screenshot that opens full size in a new tab — the labels are small. */
-function Shot({
-  src,
-  alt,
-  width = 1200,
-  height = 577,
-}: {
-  src: string;
-  alt: string;
-  width?: number;
-  height?: number;
-}) {
-  return (
-    <a href={src} target="_blank" rel="noreferrer" className="mt-2 block">
-      <Image
-        src={src}
-        alt={alt}
-        width={width}
-        height={height}
-        unoptimized
-        className="h-auto w-full rounded-[var(--radius)] border border-border"
-      />
-    </a>
   );
 }
 

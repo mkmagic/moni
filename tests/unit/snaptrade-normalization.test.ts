@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   InvestmentNormalizationError,
+  fetchSnaptradeHoldings,
   normalizeSnaptradeActivity,
   normalizeSnaptradeHoldings,
   parseJsonPreservingNumbers,
@@ -102,6 +103,17 @@ describe("signSnaptradeRequest", () => {
   });
 });
 
+describe("fetchSnaptradeHoldings", () => {
+  it("says no brokerage is linked when SnapTrade lists no accounts", async () => {
+    const fetcher = async () => new Response("[]", { status: 200 });
+    await expect(
+      fetchSnaptradeHoldings(Buffer.from("client"), Buffer.from("key"), fetcher),
+    ).rejects.toThrow(
+      new InvestmentNormalizationError("incomplete_coverage:snaptrade_no_accounts"),
+    );
+  });
+});
+
 describe("normalizeSnaptradeHoldings", () => {
   it("maps a live Schwab-via-SnapTrade payload onto the envelope", () => {
     const envelope = normalizeSnaptradeHoldings([payload()]);
@@ -167,12 +179,12 @@ describe("normalizeSnaptradeHoldings", () => {
           },
         }),
       ]),
-    ).toThrow(new InvestmentNormalizationError("incomplete_snapshot"));
+    ).toThrow(new InvestmentNormalizationError("incomplete_snapshot:snaptrade_initial_sync"));
   });
 
   it("refuses an empty account list rather than promoting empty coverage", () => {
     expect(() => normalizeSnaptradeHoldings([])).toThrow(
-      new InvestmentNormalizationError("incomplete_coverage"),
+      new InvestmentNormalizationError("incomplete_coverage:snaptrade_no_accounts"),
     );
   });
 

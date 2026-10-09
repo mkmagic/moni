@@ -224,7 +224,8 @@ export async function fetchSnaptradeHoldings(
       ),
     );
     requireLimit(accounts.length, 100);
-    if (!accounts.length) throw new InvestmentNormalizationError("incomplete_coverage");
+    if (!accounts.length)
+      throw new InvestmentNormalizationError("incomplete_coverage:snaptrade_no_accounts");
     const payloads: SnaptradeAccountPayload[] = [];
     for (const account of accounts) {
       const base = `${ACCOUNTS_PATH}/${encodeURIComponent(account.id)}`;
@@ -316,10 +317,11 @@ export function normalizeSnaptradeHoldings(
   payloads: SnaptradeAccountPayload[],
 ): InvestmentSyncEnvelope {
   try {
-    if (!payloads.length) throw new InvestmentNormalizationError("incomplete_coverage");
+    if (!payloads.length)
+      throw new InvestmentNormalizationError("incomplete_coverage:snaptrade_no_accounts");
     const accounts = payloads.map(({ account, balances, positions }) => {
       if (!account.sync_status.holdings.initial_sync_completed)
-        throw new InvestmentNormalizationError("incomplete_snapshot");
+        throw new InvestmentNormalizationError("incomplete_snapshot:snaptrade_initial_sync");
       requireLimit(positions.results.length, 10_000);
       requireLimit(balances.length, 1_000);
       const positionAsOf = asOf(positions.data_freshness.as_of).value;

@@ -50,6 +50,10 @@ const CODES: Record<string, string> = {
     "Your Flex Query is missing the Net Asset Value (NAV) in Base section. Edit the query in Interactive Brokers and add it. The setup guide is linked under the connection's login details.",
   "incomplete_snapshot:flex_positions_and_cash":
     "Your Flex Query returned no holdings or cash for an account that has value. Check it includes Open Positions and Cash Report with Currency Breakout ticked. The setup guide is linked under the connection's login details.",
+  "incomplete_coverage:snaptrade_no_accounts":
+    "No brokerage is linked to your SnapTrade account yet. In the SnapTrade dashboard, click Connect another account, choose Read-only, link your brokerage, then sync again. The setup guide is linked under the connection's login details.",
+  "incomplete_snapshot:snaptrade_initial_sync":
+    "SnapTrade is still doing its first sync of a newly linked brokerage. Try again in a few hours.",
   identity_conflict: "The broker's report contradicted itself and was not accepted.",
   unsupported_source_shape: "Moni could not read the broker's report format.",
   unvalued_position: "The broker reported a holding with no price or value.",
