@@ -44,6 +44,12 @@ const CODES: Record<string, string> = {
     "This connection is missing its Flex token or query ID. Edit it to add them.",
   incomplete_snapshot: "The broker's report was missing data Moni needs to value the account.",
   incomplete_coverage: "The broker's report did not cover every account in the query.",
+  "incomplete_coverage:flex_account_information":
+    "Your Flex Query is missing the Account Information section. Edit the query in Interactive Brokers and add it with Account ID and Currency. The setup guide is linked under the connection's login details.",
+  "incomplete_snapshot:flex_nav_in_base":
+    "Your Flex Query is missing the Net Asset Value (NAV) in Base section. Edit the query in Interactive Brokers and add it. The setup guide is linked under the connection's login details.",
+  "incomplete_snapshot:flex_positions_and_cash":
+    "Your Flex Query returned no holdings or cash for an account that has value. Check it includes Open Positions and Cash Report with Currency Breakout ticked. The setup guide is linked under the connection's login details.",
   identity_conflict: "The broker's report contradicted itself and was not accepted.",
   unsupported_source_shape: "Moni could not read the broker's report format.",
   unvalued_position: "The broker reported a holding with no price or value.",

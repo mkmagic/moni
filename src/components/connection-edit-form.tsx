@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SetupGuideLink } from "@/components/setup-guide-link";
 import { getConnectorDefinition } from "@/lib/connectors";
 import { sendUnlocked } from "@/lib/passkey-client";
 import { cn } from "@/lib/utils";
@@ -135,6 +136,7 @@ export function ConnectionEditForm({
               />
             </div>
           ))}
+          {def?.setupGuideHref && <SetupGuideLink href={def.setupGuideHref} />}
           <p className="text-xs text-muted-foreground">
             {"Saving will ask for your passkey — it's what unlocks the stored login."}
           </p>

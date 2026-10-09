@@ -104,6 +104,7 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
       { key: "flexToken", label: "Flex Token", inputType: "password" },
       { key: "queryId", label: "Query ID", inputType: "text" },
     ],
+    setupGuideHref: "/settings/connections/ibkr-setup",
   },
   schwab_positions_csv: {
     id: "schwab_positions_csv",

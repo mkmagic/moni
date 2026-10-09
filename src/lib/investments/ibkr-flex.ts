@@ -204,7 +204,8 @@ export function normalizeIbkrFlexXml(source: string): InvestmentSyncEnvelope {
       checked(accountSchema, row),
     );
     requireLimit(accountRows.length, MAX_ACCOUNTS);
-    if (!accountRows.length) throw new InvestmentNormalizationError("incomplete_coverage");
+    if (!accountRows.length)
+      throw new InvestmentNormalizationError("incomplete_coverage:flex_account_information");
     const accountIds = new Set(accountRows.map((row) => row.accountId));
     if (accountIds.size !== accountRows.length)
       throw new InvestmentNormalizationError("identity_conflict");
@@ -293,13 +294,13 @@ export function normalizeIbkrFlexXml(source: string): InvestmentSyncEnvelope {
     }
     const accounts = accountRows.map((account) => {
       const total = totals.get(account.accountId);
-      if (!total) throw new InvestmentNormalizationError("incomplete_snapshot");
+      if (!total) throw new InvestmentNormalizationError("incomplete_snapshot:flex_nav_in_base");
       const positions = positionsByAccount.get(account.accountId) ?? [];
       const cash = [...(cashByAccount.get(account.accountId) ?? new Map())].map(
         ([currency, amount]) => ({ currency, amount }),
       );
       if (!positions.length && !cash.length && !isZero(total.amount))
-        throw new InvestmentNormalizationError("incomplete_snapshot");
+        throw new InvestmentNormalizationError("incomplete_snapshot:flex_positions_and_cash");
       return {
         sourceAccountRef: account.accountId,
         baseCurrency: account.currency,

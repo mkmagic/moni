@@ -108,4 +108,6 @@ export interface ConnectorDefinition {
   mode: ConnectorMode;
   /** Ordered to match the scraper's expected credentials-object key order. */
   loginFields: LoginFieldDescriptor[];
+  /** In-app guide for obtaining the login fields, when they aren't an ordinary login. */
+  setupGuideHref?: string;
 }
