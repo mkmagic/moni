@@ -54,6 +54,10 @@ export default function IbkrSetupGuidePage() {
           src="/help/ibkr/01-flex-queries.webp"
           alt="The Flex Queries page, with the token gear, the new-query plus and the info icon marked"
         />
+        <Note>
+          Generating a new token replaces the old one at once. If a <Path>Current Token</Path> is
+          already shown and another app uses it, reuse that token instead — skip to step 2.
+        </Note>
         <ul className="list-disc space-y-1 pl-5">
           <li>
             Tick <Path>Flex Web Service Status</Path>, then click <Path>Generate New Token</Path>.
@@ -63,10 +67,6 @@ export default function IbkrSetupGuidePage() {
           <li>Copy the token. This is your Flex token.</li>
         </ul>
         <Shot src="/help/ibkr/02-token.webp" alt="The Configure Flex Web Service page" />
-        <Note>
-          Generating a new token replaces the old one at once. If another app already uses a Flex
-          token from this account, reuse that token instead of generating a new one.
-        </Note>
       </Step>
 
       <Step n={2} title="Create the Activity Flex Query">
