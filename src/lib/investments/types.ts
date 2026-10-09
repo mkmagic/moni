@@ -45,7 +45,12 @@ export type InvestmentNormalizationErrorCode =
   | "incomplete_coverage"
   | "identity_conflict"
   | "incomplete_snapshot"
-  | "unvalued_position";
+  | "unvalued_position"
+  // IBKR Flex: which section of the user's query came back empty, so the
+  // advice can name the box to tick.
+  | "incomplete_coverage:flex_account_information"
+  | "incomplete_snapshot:flex_nav_in_base"
+  | "incomplete_snapshot:flex_positions_and_cash";
 
 export class InvestmentNormalizationError extends Error {
   constructor(readonly code: InvestmentNormalizationErrorCode) {
