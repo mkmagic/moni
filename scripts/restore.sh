@@ -69,7 +69,9 @@ log "restored: users=$users — starting app"
 ssh "$HOST" "systemctl start moni"
 code=000
 for _ in $(seq 1 12); do
-  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 6 "https://$MONI_DOMAIN/api/health" 2>/dev/null || echo 000)
+  # Curl from the target itself: from here the domain may still resolve to another
+  # box (a migration restores before the DNS switch), making a 200 meaningless.
+  code=$(ssh "$HOST" "curl -sS -o /dev/null -w '%{http_code}' --max-time 6 https://$MONI_DOMAIN/api/health" 2>/dev/null || echo 000)
   [ "$code" = "200" ] && break
   sleep 2
 done

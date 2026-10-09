@@ -233,6 +233,14 @@ else
 fi
 
 install -m 644 "$FINAL/deploy/moni.service" /etc/systemd/system/moni.service
+# A LUKS host set up before #152 has a secure-store drop-in that only moves TMPDIR;
+# left alone, the unit's HOME=/var/lib/moni would put Chrome's crash state on plaintext.
+SECURE_DROPIN=/etc/systemd/system/moni.service.d/20-secure-store.conf
+if [ -f "$SECURE_DROPIN" ] && ! grep -qx 'Environment=HOME=/mnt/secure/home' "$SECURE_DROPIN"; then
+  log "reconcile LUKS drop-in: Chrome HOME into the container"
+  install -d -o moni -g moni -m 700 /mnt/secure/home
+  printf '[Service]\nEnvironment=HOME=/mnt/secure/home\nReadWritePaths=-/mnt/secure/home\n' >> "$SECURE_DROPIN"
+fi
 systemctl daemon-reload
 systemctl restart moni
 if code=$(wait_for_health); then

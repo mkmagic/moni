@@ -31,6 +31,13 @@ UMask=0077
 # then covers /tmp). Verified against real Leumi + Isracard scrapes on the box.
 ProtectSystem=strict
 ReadWritePaths=-/mnt/secure/tmp
+# Chrome's crash reporter (Crashpad) will not start without a writable $HOME, and
+# the real home (/opt/moni) is read-only here, so every scrape died at launch on a
+# fresh host (#152). Give it a private state dir instead; the LUKS drop-in moves
+# HOME into the container so a minidump never reaches the plaintext disk.
+StateDirectory=moni
+StateDirectoryMode=0700
+Environment=HOME=/var/lib/moni
 # No SUID/SGID transitions, no personality() (ASLR-defeat), and no capabilities
 # at all — Node binds 127.0.0.1:3000 (>1024) and needs none.
 RestrictSUIDSGID=true

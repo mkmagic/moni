@@ -18,7 +18,7 @@ MAPPER=moni_secure
 DEV=/dev/mapper/$MAPPER
 MOUNT=/mnt/secure
 PGDATA=/var/lib/postgresql/16/main
-SIZE=20G
+SIZE=${MONI_LUKS_SIZE:-20G}   # holds Postgres + 4G swap + scrape tmp; 10G fits a household
 SWAP=4G
 HERE=$(cd "$(dirname "$0")" && pwd)
 
@@ -28,7 +28,7 @@ log(){ echo "[luks $(date -u +%H:%M:%S)] $*"; }
 # Secret files to pull into the container (real path resolved; symlink left behind).
 secret_paths(){
   printf '%s\n' /root/moni-secrets.env /root/moni-backup.env \
-    /root/.config/rclone/rclone.conf /opt/moni/app/.env
+    /root/.config/rclone/rclone.conf /opt/moni/shared/.env
 }
 
 cmd_create(){
@@ -48,6 +48,8 @@ cmd_create(){
   mountpoint -q "$MOUNT" || mount "$DEV" "$MOUNT"
   install -d -m 755 "$MOUNT/postgresql" "$MOUNT/secrets"
   install -d -o moni -g moni -m 700 "$MOUNT/tmp"
+  # Chrome's $HOME (Crashpad state + any minidump) — see the moni.service drop-in below.
+  install -d -o moni -g moni -m 700 "$MOUNT/home"
   # App env dir is moni-owned: release.sh (as moni) edits .env in place with
   # `sed --follow-symlinks`, which writes its temp INTO this dir — so moni must own it.
   # Keep it separate from the root-owned secrets dir.
@@ -72,6 +74,8 @@ cmd_create(){
 RequiresMountsFor=$MOUNT $PGDATA
 [Service]
 Environment=TMPDIR=$MOUNT/tmp
+Environment=HOME=$MOUNT/home
+ReadWritePaths=-$MOUNT/home
 EOF
   cat > /etc/systemd/system/postgresql@.service.d/20-secure-store.conf <<EOF
 [Unit]
@@ -189,7 +193,17 @@ cmd_wipe(){
   # Pre-migration scrape remnants on the plaintext root (browser profiles, PrivateTmp, crash dumps).
   log "clear pre-migration browser/tmp remnants on the plaintext root"
   rm -rf /tmp/puppeteer_dev_chrome_profile-* /tmp/.org.chromium.* /tmp/systemd-private-*-moni.service-* 2>/dev/null || true
-  find /home/moni/.cache -maxdepth 3 -type d -name '*Crashpad*' -exec rm -rf {} + 2>/dev/null || true
+  # Resolve the service user's real home (/opt/moni, not under /home); Chrome keeps its crash
+  # reports under ~/.config/<product>/Crash Reports and ~/.cache/*Crashpad*.
+  home=$(getent passwd moni | cut -d: -f6)
+  if [ -n "$home" ]; then
+    find "$home/.cache" "$home/.config" -maxdepth 3 -type d \
+      \( -name '*Crashpad*' -o -name 'Crash Reports' \) -prune -print0 2>/dev/null \
+      | while IFS= read -r -d '' d; do
+          find "$d" -type f -exec shred -u {} + 2>/dev/null || true
+          rm -rf "$d"
+        done
+  fi
   log "fstrim (best-effort discard of freed blocks; not guaranteed on virtualized storage)"
   fstrim -av 2>/dev/null || true
   log "wipe done. NOTE: on virtualized storage secure-erase is best-effort — a stolen backing"

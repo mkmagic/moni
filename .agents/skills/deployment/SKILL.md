@@ -68,7 +68,9 @@ Sensitive data lives in a **LUKS2 container** (`/var/lib/moni-secure.img`, a loo
 the root disk), unlocked **manually after every reboot** — DO local droplet disks aren't encrypted
 at rest, so this closes the stolen-disk gap. The container holds the Postgres cluster (bind-mounted
 onto `/var/lib/postgresql/16/main`), the secret envs (`/root/*.env`, `rclone.conf`, the app `.env`
-— symlinked back), swap, and the scrape browser tmp (`moni.service` `TMPDIR=/mnt/secure/tmp`).
+— symlinked back), swap, the scrape browser tmp (`moni.service` `TMPDIR=/mnt/secure/tmp`), and
+Chrome's `HOME=/mnt/secure/home`: Crashpad needs a writable home or Chrome dies at launch, and its
+minidumps can hold credentials (#152). Without LUKS the unit falls back to `HOME=/var/lib/moni`.
 
 - **Passphrase lives OFF the box** (owner's password manager); never on disk/swap/logs. Losing it
   means the data is recoverable only from an off-box backup.
