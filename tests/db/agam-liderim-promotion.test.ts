@@ -1,7 +1,8 @@
 // Promotion gate for src/domain/agam-liderim-promotion.ts — the behaviours only
 // a database can show: one Excel becomes many long-term-savings accounts with
 // balances, re-importing it is idempotent, an account is matched by policy
-// number across imports, a newer import moves the cached balance while an older
+// number + provider + product type across imports (pension funds reuse the
+// member's ID as the number), a newer import moves the cached balance while an older
 // backfill leaves it alone, and an empty portfolio fails having written nothing.
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
@@ -9,7 +10,7 @@ import { eq } from "drizzle-orm";
 import { withUser } from "@/db/client";
 import * as schema from "@/db/schema";
 import { createUser } from "@/domain/registration";
-import { decText } from "@/domain/fields";
+import { decText, encText } from "@/domain/fields";
 import {
   AgamLiderimPromotionError,
   promoteAgamLiderimPortfolio,
@@ -299,14 +300,193 @@ describe("promoteAgamLiderimPortfolio", () => {
     const accounts = await listLongTermSavingsAccounts(ctx.session);
     expect(accounts).toHaveLength(2);
     expect(accounts.map((a) => a.currentBalance?.amount).sort()).toEqual(["60000", "61000"]);
-    // Each carries its own policy number as its external ref.
+    // Each carries its own provider + product type + policy number as its ref.
     const refs = await withUser(ctx.userId, (tx) => tx.select().from(schema.accounts));
     const decrypted = refs
       .map((r) =>
         decText(ctx.dataKey, r.externalAccountRefCt, r.id, "external_account_ref_ct", r.version),
       )
       .sort();
-    expect(decrypted).toEqual(["10000003", "10000004"]);
+    expect(decrypted).toEqual([
+      JSON.stringify(["מגדלמקפת", "קרןהשתלמות", "10000003"]),
+      JSON.stringify(["מגדלמקפת", "קרןהשתלמות", "10000004"]),
+    ]);
+  });
+
+  it("keeps two pensions apart when both use the member's ID as the account number", async () => {
+    // Israeli pension funds key the account on the member's ID number, so a
+    // real export held a Harel and a Menora pension with the same "account
+    // number". Matching on that alone merged them and overwrote one balance.
+    const ctx = await fixture();
+    const pensions: AgamLiderimAccount[] = [
+      account({
+        policyNumber: "212159024",
+        provider: 'הראל פנסיה וגמל בע"מ',
+        productType: "קרן פנסיה מקיפה",
+        productName: "הראל פנסיה",
+        balance: "101349",
+      }),
+      account({
+        policyNumber: "212159024",
+        provider: 'מנורה מבטחים פנסיה וגמל בע"מ',
+        productType: "קרן פנסיה כללית",
+        productName: "מנורה מבטחים משלימה",
+        balance: "2225",
+      }),
+      // Same provider and ID, a different product: still its own account.
+      account({
+        policyNumber: "212159024",
+        provider: 'הראל פנסיה וגמל בע"מ',
+        productType: "קרן פנסיה כללית",
+        productName: "הראל פנסיה משלימה",
+        balance: "500",
+      }),
+    ];
+    for (let i = 0; i < 2; i++) {
+      // Twice: the second import must match all three, not create or merge.
+      const syncRunId = await startRun(ctx.userId, ctx.connectionId);
+      const result = await promoteAgamLiderimPortfolio({
+        userId: ctx.userId,
+        connectionId: ctx.connectionId,
+        syncRunId,
+        dataKey: ctx.dataKey,
+        parserId: "agam_liderim_portfolio",
+        parserVersion: 1,
+        accounts: pensions,
+      });
+      expect(result.accountsCreated).toBe(i === 0 ? 3 : 0);
+    }
+
+    const accounts = await listLongTermSavingsAccounts(ctx.session);
+    expect(accounts).toHaveLength(3);
+    expect(accounts.map((a) => a.currentBalance?.amount).sort()).toEqual(["101349", "2225", "500"]);
+  });
+
+  it("matches the same account when a later export re-spells or renames its labels", async () => {
+    // A provider rebrand or a re-spelled label must not mint a second account —
+    // both would stay in net worth and double-count the same savings.
+    const ctx = await fixture();
+    const imports: AgamLiderimAccount[][] = [
+      [
+        account({ policyNumber: "212159024", provider: 'הראל פנסיה וגמל בע"מ', balance: "100" }),
+        account({
+          policyNumber: "212159024",
+          provider: 'מנורה מבטחים פנסיה וגמל בע"מ',
+          productType: "קרן פנסיה כללית",
+          balance: "200",
+        }),
+      ],
+      // Punctuation, spacing and the legal suffix changed: an exact match.
+      [
+        account({ policyNumber: "212159024", provider: "הראל  פנסיה וגמל", balance: "110" }),
+        account({
+          policyNumber: "212159024",
+          provider: "מנורה מבטחים פנסיה וגמל בעמ",
+          productType: 'קרן פנסיה "כללית"',
+          balance: "210",
+        }),
+      ],
+      // Menora rebranded outright: the one unpaired row takes the one unpaired account.
+      [
+        account({ policyNumber: "212159024", provider: 'הראל פנסיה וגמל בע"מ', balance: "120" }),
+        account({
+          policyNumber: "212159024",
+          provider: 'מבטחים החדשה בע"מ',
+          productType: "קרן פנסיה כללית",
+          balance: "220",
+        }),
+      ],
+    ];
+    for (const [n, portfolio] of imports.entries()) {
+      const syncRunId = await startRun(ctx.userId, ctx.connectionId);
+      await promoteAgamLiderimPortfolio({
+        userId: ctx.userId,
+        connectionId: ctx.connectionId,
+        syncRunId,
+        dataKey: ctx.dataKey,
+        parserId: "agam_liderim_portfolio",
+        parserVersion: 1,
+        // Each export is newer, so each moves the cached balance.
+        accounts: portfolio.map((a) => ({ ...a, asOf: `2026-0${7 + n}-28` })),
+      });
+    }
+
+    const accounts = await listLongTermSavingsAccounts(ctx.session);
+    expect(accounts).toHaveLength(2);
+    expect(accounts.map((a) => [a.institution, a.currentBalance?.amount]).sort()).toEqual([
+      ['הראל פנסיה וגמל בע"מ', "120"],
+      ['מבטחים החדשה בע"מ', "220"],
+    ]);
+  });
+
+  it("heals an account imported under the old policy-number-only key", async () => {
+    // Before the fix, the Menora row matched the Harel account by the shared ID
+    // and overwrote its balance. Re-importing must reuse (and correct) that
+    // account, and create the missing Menora one.
+    const ctx = await fixture();
+    const legacyId = randomUUID();
+    await withUser(ctx.userId, async (tx) => {
+      await tx.insert(schema.accounts).values({
+        id: legacyId,
+        ownerId: ctx.userId,
+        accountType: "long_term_savings",
+        classification: "asset",
+        connectionId: ctx.connectionId,
+        nameCt: encText(ctx.dataKey, "הראל פנסיה", legacyId, "name_ct", 1),
+        institution: 'הראל פנסיה וגמל בע"מ',
+        externalAccountRefCt: encText(
+          ctx.dataKey,
+          "212159024",
+          legacyId,
+          "external_account_ref_ct",
+          1,
+        ),
+        currency: "ILS",
+        status: "active",
+        currentBalanceCt: encText(ctx.dataKey, "2225", legacyId, "current_balance_ct", 1),
+      });
+      await tx.insert(schema.longTermSavingsDetails).values({
+        accountId: legacyId,
+        ownerId: ctx.userId,
+        product: "pension",
+        liquidity: "locked_retirement",
+        liquidFrom: null,
+      });
+    });
+
+    const syncRunId = await startRun(ctx.userId, ctx.connectionId);
+    const result = await promoteAgamLiderimPortfolio({
+      userId: ctx.userId,
+      connectionId: ctx.connectionId,
+      syncRunId,
+      dataKey: ctx.dataKey,
+      parserId: "agam_liderim_portfolio",
+      parserVersion: 1,
+      accounts: [
+        account({
+          policyNumber: "212159024",
+          provider: 'הראל פנסיה וגמל בע"מ',
+          productName: "הראל פנסיה",
+          balance: "101349",
+        }),
+        account({
+          policyNumber: "212159024",
+          provider: 'מנורה מבטחים פנסיה וגמל בע"מ',
+          productType: "קרן פנסיה כללית",
+          productName: "מנורה מבטחים משלימה",
+          balance: "2225",
+        }),
+      ],
+    });
+    expect(result.accountsCreated).toBe(1);
+
+    const accounts = await listLongTermSavingsAccounts(ctx.session);
+    expect(accounts).toHaveLength(2);
+    const harel = accounts.find((a) => a.accountId === legacyId)!;
+    expect(harel.currentBalance?.amount).toBe("101349");
+    const menora = accounts.find((a) => a.accountId !== legacyId)!;
+    expect(menora.institution).toBe('מנורה מבטחים פנסיה וגמל בע"מ');
+    expect(menora.currentBalance?.amount).toBe("2225");
   });
 
   it("fails an empty portfolio, writing nothing and marking the run failed", async () => {
