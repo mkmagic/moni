@@ -8,6 +8,8 @@ interface FormatOptions {
   locale?: string;
   /** Intl signDisplay — default "auto" (negatives get a leading minus). */
   signDisplay?: "auto" | "never" | "always" | "exceptZero";
+  /** Round to whole currency units (no minor units) — for headline figures. */
+  whole?: boolean;
 }
 
 /**
@@ -21,7 +23,10 @@ export function formatMoney(money: Money, opts: FormatOptions = {}): string {
     style: "currency",
     currency: money.currency,
     roundingMode: "halfExpand", // half away from zero == half-up for the shown value
-    signDisplay: opts.signDisplay ?? "auto",
+    // Whole units: a small negative like -0.49 rounds to zero and would read
+    // "-₪0" under "auto"; "negative" drops the sign on negative zero.
+    signDisplay: opts.signDisplay ?? (opts.whole ? "negative" : "auto"),
+    ...(opts.whole ? { minimumFractionDigits: 0, maximumFractionDigits: 0 } : {}),
   }).format(Number(money.amount));
 }
 

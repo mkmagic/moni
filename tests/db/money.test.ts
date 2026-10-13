@@ -98,6 +98,15 @@ describe("Money: divide() stays exact and never rounds", () => {
     expect(formatMoney(divide({ amount: "0.05", currency: "ILS" }, "2"))).toBe("₪0.03");
   });
 
+  it("rounds to whole units, half away from zero, when asked (dashboard headline figures)", () => {
+    expect(formatMoney({ amount: "12345.54", currency: "ILS" }, { whole: true })).toBe("₪12,346");
+    expect(formatMoney({ amount: "12345.5", currency: "ILS" }, { whole: true })).toBe("₪12,346");
+    expect(formatMoney({ amount: "-0.54", currency: "ILS" }, { whole: true })).toBe("-₪1");
+    expect(formatMoney({ amount: "100", currency: "ILS" }, { whole: true })).toBe("₪100");
+    // Rounds to zero: no "-₪0".
+    expect(formatMoney({ amount: "-0.49", currency: "ILS" }, { whole: true })).toBe("₪0");
+  });
+
   it("keeps the currency and never converts", () => {
     const result = divide({ amount: "100", currency: "USD" }, "4");
     expect(result).toEqual({ amount: "25", currency: "USD" });
