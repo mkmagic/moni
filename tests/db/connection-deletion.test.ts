@@ -56,10 +56,14 @@ const CHILDREN = [
   "long_term_savings_snapshot_tracks",
 ];
 
+const PASSWORD = "test password";
+/** A fresh Buffer per call — the domain function may wipe what it is given. */
+const pw = () => Buffer.from(PASSWORD);
+
 async function newUser(): Promise<string> {
   const { userId, dataKey } = await createUser(
     `conn-delete-${randomUUID()}@test.moni`,
-    Buffer.from("test password"),
+    Buffer.from(PASSWORD),
     SIGNUP_TOKEN!,
   );
   dataKey.fill(0);
@@ -67,12 +71,17 @@ async function newUser(): Promise<string> {
   return userId;
 }
 
-async function callDelete(connectionId: string, sessionId?: string): Promise<number> {
-  const headers = new Headers();
+async function callDelete(
+  connectionId: string,
+  sessionId?: string,
+  body: unknown = { password: PASSWORD },
+): Promise<number> {
+  const headers = new Headers({ "content-type": "application/json" });
   if (sessionId) headers.set("cookie", `${SESSION_COOKIE}=${sessionId}`);
   const req = new NextRequest(`http://localhost/api/connections/${connectionId}`, {
     method: "DELETE",
     headers,
+    body: JSON.stringify(body),
   });
   const res = await deleteRoute(req, { params: Promise.resolve({ id: connectionId }) });
   return res.status;
@@ -431,7 +440,7 @@ describe("deleteImportConnection", () => {
     for (const table of CHILDREN) childrenBefore[table] = await count(table, userId);
     const instrumentsBefore = await count("instruments", userId);
 
-    expect(await deleteImportConnection(userId, doomed)).toBe("deleted");
+    expect(await deleteImportConnection(userId, doomed, pw())).toBe("deleted");
 
     for (const table of HANDLED) {
       expect(await countForConnection(table, doomed), table).toBe(0);
@@ -448,6 +457,15 @@ describe("deleteImportConnection", () => {
     expect(rows).toHaveLength(0);
   });
 
+  it("refuses a wrong password before touching anything", async () => {
+    const userId = await newUser();
+    const connectionId = await seedImportConnection(userId, "wrong-password");
+    expect(await deleteImportConnection(userId, connectionId, Buffer.from("not it"))).toBe(
+      "invalid_password",
+    );
+    expect(await countForConnection("accounts", connectionId)).toBe(2);
+  });
+
   it("refuses a bank connection, a running import, and another user's connection", async () => {
     const userId = await newUser();
     const [bank] = await elevatedDb
@@ -459,24 +477,24 @@ describe("deleteImportConnection", () => {
         status: "active",
       })
       .returning({ id: schema.connections.id });
-    expect(await deleteImportConnection(userId, bank.id)).toBe("not_import");
+    expect(await deleteImportConnection(userId, bank.id, pw())).toBe("not_import");
 
     const running = await seedImportConnection(userId, "running");
     await elevatedDb
       .insert(schema.syncRuns)
       .values({ ownerId: userId, connectionId: running, status: "running" });
-    expect(await deleteImportConnection(userId, running)).toBe("sync_running");
+    expect(await deleteImportConnection(userId, running, pw())).toBe("sync_running");
     expect(await countForConnection("accounts", running)).toBe(2);
 
     const other = await newUser();
-    expect(await deleteImportConnection(other, running)).toBe("not_found");
+    expect(await deleteImportConnection(other, running, pw())).toBe("not_found");
     expect(await countForConnection("accounts", running)).toBe(2);
   });
 
-  it("DELETE route: 401 signed out, 400 for a bank, 200 then 404 for an import", async () => {
+  it("DELETE route: needs a session and the password; 400 for a bank, 200 then 404 for an import", async () => {
     const { userId, dataKey } = await createUser(
       `conn-delete-route-${randomUUID()}@test.moni`,
-      Buffer.from("test password"),
+      Buffer.from(PASSWORD),
       SIGNUP_TOKEN!,
     );
     owners.push(userId);
@@ -494,6 +512,9 @@ describe("deleteImportConnection", () => {
         .returning({ id: schema.connections.id });
 
       expect(await callDelete(imported)).toBe(401);
+      expect(await callDelete(imported, sessionId, {})).toBe(400);
+      expect(await callDelete(imported, sessionId, { password: "not it" })).toBe(401);
+      expect(await countForConnection("accounts", imported)).toBe(2);
       expect(await callDelete(bank.id, sessionId)).toBe(400);
       expect(await callDelete(imported, sessionId)).toBe(200);
       expect(await countForConnection("accounts", imported)).toBe(0);

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Trash2 } from "lucide-react";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 interface RemoveConnectionDialogProps {
   open: boolean;
@@ -17,7 +18,9 @@ interface RemoveConnectionDialogProps {
 
 /** Removes a file-import connection. Unticked, it disconnects (history kept,
  * no more uploads); ticked, it deletes the connection and everything imported
- * through it — the step before switching to a different import source. */
+ * through it — the step before switching to a different import source. The
+ * delete has no undo, so it re-asks for the login password
+ * (ui-and-feel.md §6, Destructive action). */
 export function RemoveConnectionDialog({
   open,
   connectionId,
@@ -27,6 +30,7 @@ export function RemoveConnectionDialog({
   onRemoved,
 }: RemoveConnectionDialogProps) {
   const [deleteData, setDeleteData] = useState(disconnected);
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,7 +39,11 @@ export function RemoveConnectionDialog({
     setError(null);
     try {
       const res = deleteData
-        ? await fetch(`/api/connections/${connectionId}`, { method: "DELETE" })
+        ? await fetch(`/api/connections/${connectionId}`, {
+            method: "DELETE",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ password }),
+          })
         : await fetch(`/api/connections/${connectionId}`, {
             method: "PATCH",
             headers: { "content-type": "application/json" },
@@ -46,10 +54,14 @@ export function RemoveConnectionDialog({
         return;
       }
       const body = (await res.json().catch(() => ({}))) as { error?: string };
+      // A 401 here can only be the password: the dialog is unreachable
+      // without a session.
       setError(
-        body.error === "sync_running"
-          ? "An import is still running for this connection. Try again when it finishes."
-          : (body.error ?? "Could not remove the connection"),
+        res.status === 401
+          ? "That password is not correct"
+          : body.error === "sync_running"
+            ? "An import is still running for this connection. Try again when it finishes."
+            : (body.error ?? "Could not remove the connection"),
       );
     } catch {
       setError("Could not reach the server");
@@ -89,6 +101,24 @@ export function RemoveConnectionDialog({
           </label>
         )}
 
+        {deleteData && (
+          <div className="flex flex-col gap-1.5">
+            <label
+              htmlFor={`remove-password-${connectionId}`}
+              className="text-xs font-medium text-muted-foreground"
+            >
+              Confirm with your password
+            </label>
+            <Input
+              id={`remove-password-${connectionId}`}
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </div>
+        )}
+
         {error && (
           <p className="rounded-[var(--radius)] border border-negative/30 bg-negative/10 px-3 py-2 text-xs text-negative">
             {error}
@@ -99,7 +129,11 @@ export function RemoveConnectionDialog({
           <Button variant="ghost" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button variant="destructive" onClick={() => void submit()} disabled={busy}>
+          <Button
+            variant="destructive"
+            onClick={() => void submit()}
+            disabled={busy || (deleteData && password === "")}
+          >
             <Trash2 className="h-4 w-4" />
             {busy ? "Removing…" : deleteData ? "Delete connection and data" : "Disconnect"}
           </Button>

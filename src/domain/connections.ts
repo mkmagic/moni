@@ -28,6 +28,7 @@ import {
 } from "@/db/schema";
 import { encryptField, decryptField, type AadContext } from "@/lib/crypto";
 import { getConnectorDefinition, isConnectorId, type ConnectorId } from "@/lib/connectors";
+import { verifyPassword } from "@/domain/auth";
 
 export interface ConnectionView {
   id: string;
@@ -273,11 +274,18 @@ export async function disconnectConnection(
  *
  * Instruments and their source mappings are user-level reference rows shared
  * across accounts, so they stay.
+ *
+ * There is no undo, so — like `deleteAccount` — the login password is
+ * re-verified here, not at the route: a live session cookie alone is not
+ * authority to destroy data (ui-and-feel.md §6, Destructive action).
+ * `password` is a Tier-0 `Buffer` owned by the caller (the route wipes it).
  */
 export async function deleteImportConnection(
   userId: string,
   connectionId: string,
-): Promise<"deleted" | "not_found" | "not_import" | "sync_running"> {
+  password: Buffer,
+): Promise<"deleted" | "invalid_password" | "not_found" | "not_import" | "sync_running"> {
+  if (!(await verifyPassword(userId, password))) return "invalid_password";
   return withUser(userId, async (tx) => {
     const row = (
       await tx

@@ -107,10 +107,16 @@ export async function PATCH(
   }
 }
 
+const DeleteSchema = z.object({ password: z.string().min(1) }).strict();
+
 /**
  * Permanently deletes a file-import connection and every account, report and
  * balance it imported (`deleteImportConnection`). Bank connections are refused
  * with 400 — they can only be disconnected (PATCH `{ disconnect: true }`).
+ *
+ * No undo, so the body must carry the login password, re-verified in the
+ * domain layer — the session cookie alone is not enough (same contract as
+ * DELETE /api/account).
  */
 export async function DELETE(
   req: NextRequest,
@@ -126,7 +132,23 @@ export async function DELETE(
     return NextResponse.json({ error: "invalid request" }, { status: 400 });
   }
 
-  const result = await deleteImportConnection(session.userId, parsedParams.data.id);
+  const body = await req.json().catch(() => null);
+  const parsed = DeleteSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "invalid request" }, { status: 400 });
+  }
+
+  // Unwipeable JS string at the JSON boundary; move it into a Buffer at once
+  // and wipe after use, as the login and account-deletion routes do.
+  const password = Buffer.from(parsed.data.password, "utf8");
+  let result: Awaited<ReturnType<typeof deleteImportConnection>>;
+  try {
+    result = await deleteImportConnection(session.userId, parsedParams.data.id, password);
+  } finally {
+    password.fill(0);
+  }
+  if (result === "invalid_password")
+    return NextResponse.json({ error: "invalid password" }, { status: 401 });
   if (result === "not_found") return NextResponse.json({ error: "not found" }, { status: 404 });
   if (result === "not_import") return NextResponse.json({ error: "not_import" }, { status: 400 });
   if (result === "sync_running")
