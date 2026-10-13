@@ -451,6 +451,42 @@ describe("promoteAgamLiderimPortfolio", () => {
     expect(accounts[0].liquidity).toBe("liquid");
   });
 
+  it("does not roll the classification back on an older backfill", async () => {
+    const ctx = await fixture();
+    const current = account({
+      policyNumber: "666666666",
+      productType: "קופת גמל להשקעה",
+      product: "gemel_investment",
+      balance: "2000",
+      asOf: "2026-08-31",
+    });
+    const older = {
+      ...current,
+      productType: "קופת גמל",
+      product: "gemel" as const,
+      balance: "1500",
+      asOf: "2026-06-30",
+    };
+    for (const portfolio of [[current], [older]]) {
+      const syncRunId = await startRun(ctx.userId, ctx.connectionId);
+      await promoteAgamLiderimPortfolio({
+        userId: ctx.userId,
+        connectionId: ctx.connectionId,
+        syncRunId,
+        dataKey: ctx.dataKey,
+        parserId: "agam_liderim_portfolio",
+        parserVersion: 1,
+        accounts: portfolio,
+      });
+    }
+
+    const accounts = await listLongTermSavingsAccounts(ctx.session);
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0].product).toBe("gemel_investment");
+    expect(accounts[0].liquidity).toBe("liquid");
+    expect(accounts[0].currentBalance?.amount).toBe("2000");
+  });
+
   it("heals an account imported under the old policy-number-only key", async () => {
     // Before the fix, the Menora row matched the Harel account by the shared ID
     // and overwrote its balance. Re-importing must reuse (and correct) that

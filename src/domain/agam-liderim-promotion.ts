@@ -186,9 +186,8 @@ function pairAccounts(held: Held[], rows: AgamLiderimAccount[]): Map<number, Hel
 
 /**
  * Resolves one parsed account to its paired held account, scoped to this
- * connection so two Agam connections never merge, upgrading the held ref (and
- * the provider name, on a rebrand) when it was matched by a looser tier. Creates
- * the account and its details row when nothing was paired.
+ * connection so two Agam connections never merge. Creates the account and its
+ * details row when nothing was paired.
  */
 async function resolveAccount(
   tx: Tx,
@@ -203,27 +202,6 @@ async function resolveAccount(
     // The connection is a long-term-savings aggregator; a row of another type
     // under it would mean corrupted state, not a normal re-import.
     if (row.accountType !== "long_term_savings") fail("account_type_mismatch");
-    if (match.ref !== ref) {
-      await tx
-        .update(accounts)
-        .set({
-          externalAccountRefCt: encText(
-            dataKey,
-            ref,
-            row.id,
-            "external_account_ref_ct",
-            row.version,
-          ),
-          institution: acct.provider,
-        })
-        .where(eq(accounts.id, row.id));
-      // A looser tier may have paired a row whose product type moved category
-      // (קופת גמל → קופת גמל להשקעה); the details follow the file.
-      await tx
-        .update(longTermSavingsDetails)
-        .set({ product: acct.product, liquidity: LIQUIDITY_BY_PRODUCT[acct.product] })
-        .where(eq(longTermSavingsDetails.accountId, row.id));
-    }
     return { id: row.id, version: row.version, isNew: false };
   }
 
@@ -266,16 +244,17 @@ async function resolveAccount(
 }
 
 /**
- * Re-encrypts every ciphertext column on the account row under a bumped
- * version — `version` is shared by all of them, so touching one while bumping
+ * Brings an account up to its newest import: the cached balance, the ref, the
+ * provider name and the product/liquidity all follow that row. Re-encrypts
+ * every ciphertext column on the account row under a bumped version — `version` is shared by all of them, so touching one while bumping
  * the version would leave the rest undecryptable (the trap the scrape path
  * documents).
  */
-async function refreshCachedBalance(
+async function refreshFromNewest(
   tx: Tx,
   dataKey: Uint8Array,
   accountId: string,
-  balance: string,
+  acct: AgamLiderimAccount,
 ): Promise<void> {
   const [row] = await tx.select().from(accounts).where(eq(accounts.id, accountId)).limit(1);
   if (!row) return;
@@ -288,25 +267,28 @@ async function refreshCachedBalance(
     "account_number_last4_ct",
     row.version,
   );
-  const ref = decText(
-    dataKey,
-    row.externalAccountRefCt,
-    row.id,
-    "external_account_ref_ct",
-    row.version,
-  );
   await tx
     .update(accounts)
     .set({
       nameCt: encText(dataKey, name, row.id, "name_ct", version),
       accountNumberLast4Ct:
         last4 != null ? encText(dataKey, last4, row.id, "account_number_last4_ct", version) : null,
-      externalAccountRefCt:
-        ref != null ? encText(dataKey, ref, row.id, "external_account_ref_ct", version) : null,
-      currentBalanceCt: encText(dataKey, balance, row.id, "current_balance_ct", version),
+      externalAccountRefCt: encText(
+        dataKey,
+        accountRef(acct),
+        row.id,
+        "external_account_ref_ct",
+        version,
+      ),
+      institution: acct.provider,
+      currentBalanceCt: encText(dataKey, acct.balance, row.id, "current_balance_ct", version),
       version,
     })
     .where(eq(accounts.id, accountId));
+  await tx
+    .update(longTermSavingsDetails)
+    .set({ product: acct.product, liquidity: LIQUIDITY_BY_PRODUCT[acct.product] })
+    .where(eq(longTermSavingsDetails.accountId, accountId));
 }
 
 async function promote(
@@ -359,16 +341,18 @@ async function promote(
     });
     result.balanceSnapshots++;
 
-    // The cached balance moves only when this import is the newest figure held
-    // for the account, so re-importing an older export never disturbs net
-    // worth. A brand-new account already carries this balance from its insert.
+    // The cached balance — and the account's ref, provider and product, which a
+    // looser pairing tier may have found relabelled — move only when this
+    // import is the newest figure held for the account, so re-importing an
+    // older export never disturbs net worth or rolls the classification back.
+    // A brand-new account already carries all of it from its insert.
     if (!resolved.isNew) {
       const held = await tx
         .select({ date: accountBalanceSnapshots.date })
         .from(accountBalanceSnapshots)
         .where(eq(accountBalanceSnapshots.accountId, resolved.id));
       if (held.every((row) => row.date <= acct.asOf))
-        await refreshCachedBalance(tx, dataKey, resolved.id, acct.balance);
+        await refreshFromNewest(tx, dataKey, resolved.id, acct);
     }
   }
 
