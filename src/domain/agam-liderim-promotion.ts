@@ -6,9 +6,11 @@
  * That path is one connection, one account, one statement with movements and a
  * self-balancing equation. This one is one connection, many accounts, each a
  * balance snapshot and nothing more — the shape SnapTrade's promotion has, not
- * Harel's. So it matches accounts by policy number (decrypt-and-match on
- * `external_account_ref_ct`, scoped to this connection) exactly as the scrape
- * path does, and writes only `accounts` + `long_term_savings_details` +
+ * Harel's. So it matches accounts by a decrypt-and-match on
+ * `external_account_ref_ct`, scoped to this connection, as the scrape path
+ * does — but the ref is provider + product type + policy number, not the
+ * number alone: pension funds use the member's ID as the "account number", so
+ * one file routinely holds several accounts with the same number. It writes only `accounts` + `long_term_savings_details` +
  * `account_balance_snapshots`.
  *
  * It writes no `long_term_savings_snapshots` row on purpose: that table's
@@ -78,9 +80,22 @@ function accountName(acct: AgamLiderimAccount): string {
 }
 
 /**
+ * The stored match key. The policy number alone is not unique — pension funds
+ * reuse the member's ID — so it is qualified by the provider and the product
+ * type (a comprehensive and a supplementary pension at one provider share it).
+ */
+function accountRef(acct: AgamLiderimAccount): string {
+  return JSON.stringify([acct.provider, acct.productType, acct.policyNumber]);
+}
+
+/**
  * Resolves one parsed account to an internal account by decrypt-and-match on
- * the policy number, scoped to this connection so two Agam connections never
+ * {@link accountRef}, scoped to this connection so two Agam connections never
  * merge. Creates the account and its details row when no match exists.
+ *
+ * An account imported before the ref was qualified holds the bare policy
+ * number. It is claimed by the first row with that number at the same provider,
+ * and its ref is upgraded so later rows sharing the number no longer match it.
  */
 async function resolveAccount(
   tx: Tx,
@@ -92,20 +107,38 @@ async function resolveAccount(
     .select()
     .from(accounts)
     .where(eq(accounts.connectionId, input.connectionId));
-  for (const row of existing) {
-    if (!row.externalAccountRefCt) continue;
-    const ref = decText(
-      dataKey,
-      row.externalAccountRefCt,
-      row.id,
-      "external_account_ref_ct",
-      row.version,
+  const refOf = new Map(
+    existing.map((row) => [
+      row,
+      row.externalAccountRefCt
+        ? decText(dataKey, row.externalAccountRefCt, row.id, "external_account_ref_ct", row.version)
+        : null,
+    ]),
+  );
+  const ref = accountRef(acct);
+  const match =
+    existing.find((row) => refOf.get(row) === ref) ??
+    existing.find(
+      (row) => refOf.get(row) === acct.policyNumber && row.institution === acct.provider,
     );
-    if (ref !== acct.policyNumber) continue;
+  if (match) {
     // The connection is a long-term-savings aggregator; a row of another type
     // under it would mean corrupted state, not a normal re-import.
-    if (row.accountType !== "long_term_savings") fail("account_type_mismatch");
-    return { id: row.id, version: row.version, isNew: false };
+    if (match.accountType !== "long_term_savings") fail("account_type_mismatch");
+    if (refOf.get(match) !== ref)
+      await tx
+        .update(accounts)
+        .set({
+          externalAccountRefCt: encText(
+            dataKey,
+            ref,
+            match.id,
+            "external_account_ref_ct",
+            match.version,
+          ),
+        })
+        .where(eq(accounts.id, match.id));
+    return { id: match.id, version: match.version, isNew: false };
   }
 
   const id = randomUUID();
@@ -128,7 +161,7 @@ async function resolveAccount(
       "account_number_last4_ct",
       1,
     ),
-    externalAccountRefCt: encText(dataKey, acct.policyNumber, id, "external_account_ref_ct", 1),
+    externalAccountRefCt: encText(dataKey, ref, id, "external_account_ref_ct", 1),
     currency: CURRENCY,
     status: "active",
     currentBalanceCt: encText(dataKey, acct.balance, id, "current_balance_ct", 1),
