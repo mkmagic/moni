@@ -27,6 +27,7 @@ describe("matchCatalog", () => {
   it.each([
     ["DIGITALOCEAN.COM", "DigitalOcean"],
     ["HETZNER ONLINE", "Hetzner"],
+    ["KAMATERA INC", "Kamatera"],
     ["IONOS CLOUD", "IONOS"],
     ["DROPBOX PLUS", "Dropbox"],
     ["MEGA.NZ", "MEGA"],
@@ -104,6 +105,7 @@ const ALL_SAMPLES = [
   "ANTHROPIC CLAUDE",
   "DIGITALOCEAN.COM",
   "HETZNER ONLINE",
+  "KAMATERA INC",
   "IONOS CLOUD",
   "DROPBOX PLUS",
   "MEGA.NZ",

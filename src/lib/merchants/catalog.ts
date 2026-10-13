@@ -115,6 +115,13 @@ const CATALOG: CatalogEntry[] = [
     needles: ["hetzner"],
   },
   {
+    key: "kamatera",
+    name: "Kamatera",
+    brandColor: "#1e51eb",
+    logoPath: "/merchants/kamatera.png",
+    needles: ["kamatera"],
+  },
+  {
     key: "ionos",
     name: "IONOS",
     brandColor: "#003d8f",
