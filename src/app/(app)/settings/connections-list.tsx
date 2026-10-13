@@ -9,6 +9,7 @@ import {
   RefreshCw,
   RefreshCwOff,
   Pencil,
+  Trash2,
   TriangleAlert,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -16,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArmPrompt } from "@/components/arm-prompt";
 import { ConnectionEditForm } from "@/components/connection-edit-form";
+import { RemoveConnectionDialog } from "@/components/remove-connection-dialog";
 import { getConnectorDefinition } from "@/lib/connectors";
 import { startSyncRun, waitForSyncRun } from "@/lib/sync-client";
 import { syncErrorMessage } from "@/lib/sync-error-message";
@@ -58,6 +60,7 @@ type RowState =
 export function ConnectionsList({ initialConnections }: ConnectionsListProps) {
   const router = useRouter();
   const [rowStates, setRowStates] = useState<Record<string, RowState>>({});
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   function setRow(id: string, state: RowState) {
     setRowStates((s) => ({ ...s, [id]: state }));
@@ -211,7 +214,8 @@ export function ConnectionsList({ initialConnections }: ConnectionsListProps) {
                       type="button"
                       variant="outline"
                       onClick={() => void onSyncRow(c.id)}
-                      disabled={bulkBusy}
+                      // A disconnected source has nothing left to sync with.
+                      disabled={bulkBusy || c.status === "disconnected"}
                       className="gap-1.5 px-3 py-1.5 text-xs"
                     >
                       {bulkBusy ? (
@@ -221,6 +225,20 @@ export function ConnectionsList({ initialConnections }: ConnectionsListProps) {
                       )}
                       Sync
                     </Button>
+                    {/* File imports only: a bank connection's data is
+                        entangled with other accounts' (transfers), so it has
+                        no delete path yet. */}
+                    {c.mode === "user_mediated_import" && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setRemovingId(c.id)}
+                        disabled={bulkBusy}
+                        className="gap-1.5 px-3 py-1.5 text-xs"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Remove
+                      </Button>
+                    )}
                   </>
                 )}
               </div>
@@ -234,6 +252,20 @@ export function ConnectionsList({ initialConnections }: ConnectionsListProps) {
                 onCancel={() => setRow(c.id, { kind: "idle" })}
                 onSaved={() => {
                   setRow(c.id, { kind: "idle" });
+                  router.refresh();
+                }}
+              />
+            )}
+
+            {removingId === c.id && (
+              <RemoveConnectionDialog
+                open
+                connectionId={c.id}
+                label={c.displayName ?? def?.label ?? c.connectorId}
+                disconnected={c.status === "disconnected"}
+                onClose={() => setRemovingId(null)}
+                onRemoved={() => {
+                  setRemovingId(null);
                   router.refresh();
                 }}
               />
