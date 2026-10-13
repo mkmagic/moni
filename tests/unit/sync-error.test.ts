@@ -43,6 +43,32 @@ describe("syncErrorMessage", () => {
     expect(syncErrorMessage("invalid_sync")).not.toBe(syncErrorMessage("promotion_failed"));
   });
 
+  it("names the IBKR Flex Query section to fix", () => {
+    expect(syncErrorMessage("incomplete_coverage:flex_account_information")).toMatch(
+      /Account Information/,
+    );
+    expect(syncErrorMessage("incomplete_snapshot:flex_nav_in_base")).toMatch(
+      /Net Asset Value \(NAV\) in Base/,
+    );
+    expect(syncErrorMessage("incomplete_snapshot:flex_positions_and_cash")).toMatch(
+      /Open Positions.*Currency Breakout/,
+    );
+    // Other sources raise the bare codes, which keep their generic advice.
+    expect(syncErrorMessage("incomplete_snapshot")).toMatch(/missing data/);
+  });
+
+  it("tells a SnapTrade user what to do in their SnapTrade dashboard", () => {
+    expect(syncErrorMessage("incomplete_coverage:snaptrade_no_accounts")).toMatch(
+      /No brokerage is linked.*Connect another account/,
+    );
+    expect(syncErrorMessage("incomplete_snapshot:snaptrade_initial_sync")).toMatch(
+      /still doing its first sync/,
+    );
+    const rejected = syncErrorMessage("provider_rejected:snaptrade");
+    expect(rejected).toMatch(/Consumer Key/);
+    expect(rejected).not.toMatch(/Flex/);
+  });
+
   it("still falls back to the raw code for anything unmapped", () => {
     expect(syncErrorMessage("some_new_code")).toBe("some_new_code");
     expect(syncErrorMessage(null)).toBe("Last sync failed");

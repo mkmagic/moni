@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SetupGuideLink } from "@/components/setup-guide-link";
 import { getConnectorDefinition, type ConnectorId } from "@/lib/connectors";
 import { sendUnlocked } from "@/lib/passkey-client";
 
@@ -101,6 +102,7 @@ export function ConnectForm({ connectorId, onConnected, onBack }: ConnectFormPro
           />
         </div>
       ))}
+      {def.setupGuideHref && <SetupGuideLink href={def.setupGuideHref} />}
       <div className="flex flex-col gap-1.5">
         <label htmlFor="displayName" className="text-xs font-medium text-muted-foreground">
           Nickname (optional)

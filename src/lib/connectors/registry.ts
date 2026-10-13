@@ -104,6 +104,7 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
       { key: "flexToken", label: "Flex Token", inputType: "password" },
       { key: "queryId", label: "Query ID", inputType: "text" },
     ],
+    setupGuideHref: "/settings/connections/ibkr-setup",
   },
   schwab_positions_csv: {
     id: "schwab_positions_csv",
@@ -123,6 +124,7 @@ export const CONNECTOR_REGISTRY: Record<ConnectorId, ConnectorDefinition> = {
       { key: "clientId", label: "Client ID", inputType: "text" },
       { key: "consumerKey", label: "Consumer Key", inputType: "password" },
     ],
+    setupGuideHref: "/settings/connections/snaptrade-setup",
   },
   // One entry per document parser, not per provider: a provider's pension
   // report and its קרן השתלמות report are different layouts and therefore

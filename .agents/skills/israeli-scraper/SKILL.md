@@ -60,6 +60,12 @@ in memory), so `--no-sandbox` on a real host silently deletes a boundary that
 `security-design-principles.md` §20 is separately trying to build. Acceptable on a throwaway probe
 box; not on anything that holds real credentials.
 
+**Chrome also needs a writable `$HOME`.** Its crash reporter (Crashpad) keeps a database under
+`~/.config/<product>/Crash Reports` and Chrome dies at launch if it can't create it
+(`chrome_crashpad_handler: --database is required`). `--disable-crash-reporter` /
+`--disable-breakpad` do **not** stop this (tested on Chrome 153). Production gives the service a
+writable `HOME` inside LUKS (#152, `deployment` skill); on a probe box, use a normal user's home.
+
 Also pass `--disable-dev-shm-usage`: Docker defaults `/dev/shm` to 64 MB and Chrome dies mid-page
 with renderer crashes rather than a clean error. `scrape-worker.mts` passes **no** launch `args`
 today (`scrape-worker.mts:77`), so this is still an open gap for deployment.
@@ -147,6 +153,20 @@ credentials: repeated failed logins can lock a real bank account.
 
 Note `getLoginOptions().loginUrl` for Leumi is the marketing homepage `www.leumi.co.il/he`, NOT the
 login page — probing the obvious URL tests the wrong thing.
+
+### Reachability probe: which banks can THIS machine reach?
+
+`node scripts/scraper-test/reachability-probe.mjs [--only discount,leumi] [--out r.json]` (set
+`MONI_CHROME_PATH` for a non-bundled Chrome; non-root user on Linux, no `--no-sandbox`). It derives each
+bank's `loginUrl` and first-field selector from the library's own `getLoginOptions({})`, loads it once
+(one retry after 30s if not OK) and reports `OK | NETWORK_BLOCK | HTTP_<n> | CHALLENGE | NO_FORM | ERROR`
+plus egress IP. It types and submits nothing; isracard/amex/oneZero have no form so they are only navigated to.
+It sends a normal Chrome UA: Cal and Behatsdaa 403/reject `HeadlessChrome` from any IP (seen 2026-10-06).
+- **Proves:** the host is reachable and the login form renders, up to the login form.
+- **Does NOT prove:** that login works. Some banks bot-check only on submit (e.g. Isracard).
+- **Method:** run it on the candidate server and on a control machine (the Mac) at the same time and diff.
+  A bank that is OK on the control but NETWORK_BLOCK/CHALLENGE on the server is blocked by that network
+  (this is how Discount's block of DigitalOcean Frankfurt shows up).
 
 ### `errorMessage` contains the credential. Never persist or print it raw.
 

@@ -131,6 +131,25 @@ describe("investment source normalization", () => {
     ).toThrow("incomplete_snapshot");
   });
 
+  it("names the Flex Query section a failed report was missing", () => {
+    // The code is the only signal that reaches the user, so it has to say
+    // which part of their IBKR query to fix.
+    expect(() =>
+      normalizeIbkrFlexXml(XML.replace(/<AccountInformation>[\s\S]*?<\/AccountInformation>/, "")),
+    ).toThrow("incomplete_coverage:flex_account_information");
+    expect(() =>
+      normalizeIbkrFlexXml(XML.replace(/<EquitySummaryInBase>[\s\S]*?<\/EquitySummaryInBase>/, "")),
+    ).toThrow("incomplete_snapshot:flex_nav_in_base");
+    expect(() =>
+      normalizeIbkrFlexXml(
+        XML.replace(/<OpenPositions>[\s\S]*?<\/OpenPositions>/, "").replace(
+          /<CashReport>[\s\S]*?<\/CashReport>/,
+          "",
+        ),
+      ),
+    ).toThrow("incomplete_snapshot:flex_positions_and_cash");
+  });
+
   it("accepts explicit zero state and enforces generated source row limits", () => {
     const zero = XML.replace(/<OpenPositions>[\s\S]*?<\/OpenPositions>/, "<OpenPositions/>")
       .replace(/<CashReport>[\s\S]*?<\/CashReport>/, "<CashReport/>")
