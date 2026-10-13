@@ -8,8 +8,8 @@
  * balance snapshot and nothing more — the shape SnapTrade's promotion has, not
  * Harel's. So it matches accounts by a decrypt-and-match on
  * `external_account_ref_ct`, scoped to this connection, as the scrape path
- * does — but the ref is provider + product type + policy number, not the
- * number alone: pension funds use the member's ID as the "account number", so
+ * does — but the ref is provider + product type + policy number (normalised,
+ * see `pairAccounts` for the looser fallbacks), not the number alone: pension funds use the member's ID as the "account number", so
  * one file routinely holds several accounts with the same number. It writes only `accounts` + `long_term_savings_details` +
  * `account_balance_snapshots`.
  *
@@ -80,65 +80,144 @@ function accountName(acct: AgamLiderimAccount): string {
 }
 
 /**
+ * A workbook label reduced to what identifies it: quotes, punctuation,
+ * whitespace and the legal-entity suffix (בע"מ) dropped, so a later export
+ * that re-spells a provider or product type still matches the same account.
+ */
+function normaliseLabel(label: string): string {
+  return label
+    .replace(/["'׳״.,()\-–]/g, "")
+    .replace(/\s+/g, "")
+    .replace(/בעמ$/, "");
+}
+
+/**
  * The stored match key. The policy number alone is not unique — pension funds
  * reuse the member's ID — so it is qualified by the provider and the product
  * type (a comprehensive and a supplementary pension at one provider share it).
  */
 function accountRef(acct: AgamLiderimAccount): string {
-  return JSON.stringify([acct.provider, acct.productType, acct.policyNumber]);
+  return JSON.stringify([
+    normaliseLabel(acct.provider),
+    normaliseLabel(acct.productType),
+    acct.policyNumber,
+  ]);
+}
+
+type AccountRow = typeof accounts.$inferSelect;
+
+interface Held {
+  row: AccountRow;
+  ref: string | null;
+  provider: string;
+  /** Null for an account stored under the old bare-policy-number ref. */
+  productType: string | null;
+  policyNumber: string | null;
+}
+
+/** This connection's accounts, with their decrypted refs split back into parts. */
+async function loadHeld(tx: Tx, input: AgamLiderimPromotionInput): Promise<Held[]> {
+  const rows = await tx
+    .select()
+    .from(accounts)
+    .where(eq(accounts.connectionId, input.connectionId));
+  return rows.map((row) => {
+    const ref = row.externalAccountRefCt
+      ? decText(
+          input.dataKey,
+          row.externalAccountRefCt,
+          row.id,
+          "external_account_ref_ct",
+          row.version,
+        )
+      : null;
+    const parts = ref?.startsWith("[") ? (JSON.parse(ref) as string[]) : null;
+    return {
+      row,
+      ref,
+      provider: parts ? parts[0] : normaliseLabel(row.institution ?? ""),
+      productType: parts ? parts[1] : null,
+      policyNumber: parts ? parts[2] : ref,
+    };
+  });
 }
 
 /**
- * Resolves one parsed account to an internal account by decrypt-and-match on
- * {@link accountRef}, scoped to this connection so two Agam connections never
- * merge. Creates the account and its details row when no match exists.
+ * Pairs each parsed row (by index) with the held account it updates. Each held
+ * account is claimed at most once, so two rows can never collapse into one, and
+ * the tiers run loosest-last so an exact match is never stolen by a fuzzy one:
  *
- * An account imported before the ref was qualified holds the bare policy
- * number. It is claimed by the first row with that number at the same provider,
- * and its ref is upgraded so later rows sharing the number no longer match it.
+ * 1. the exact {@link accountRef};
+ * 2. the same policy number at the same provider — an account stored under the
+ *    old bare-number ref, or a product type the file relabelled;
+ * 3. the same policy number and product type under a renamed provider, only
+ *    when exactly one held account and one row fit — a rebrand, not a guess.
+ *
+ * Anything left unpaired is a new account.
+ */
+function pairAccounts(held: Held[], rows: AgamLiderimAccount[]): Map<number, Held> {
+  const paired = new Map<number, Held>();
+  const claimed = new Set<Held>();
+  const open = () => rows.flatMap((_, i) => (paired.has(i) ? [] : [i]));
+  const tier = (fits: (h: Held, acct: AgamLiderimAccount) => boolean, oneToOne = false) => {
+    for (const i of open()) {
+      const candidates = held.filter((h) => !claimed.has(h) && fits(h, rows[i]));
+      if (candidates.length === 0) continue;
+      if (oneToOne) {
+        const rivals = open().filter((j) => held.some((h) => fits(h, rows[j]) && fits(h, rows[i])));
+        if (candidates.length !== 1 || rivals.length !== 1) continue;
+      }
+      paired.set(i, candidates[0]);
+      claimed.add(candidates[0]);
+    }
+  };
+  tier((h, acct) => h.ref === accountRef(acct));
+  tier(
+    (h, acct) =>
+      h.policyNumber === acct.policyNumber && h.provider === normaliseLabel(acct.provider),
+  );
+  tier(
+    (h, acct) =>
+      h.policyNumber === acct.policyNumber && h.productType === normaliseLabel(acct.productType),
+    true,
+  );
+  return paired;
+}
+
+/**
+ * Resolves one parsed account to its paired held account, scoped to this
+ * connection so two Agam connections never merge, upgrading the held ref (and
+ * the provider name, on a rebrand) when it was matched by a looser tier. Creates
+ * the account and its details row when nothing was paired.
  */
 async function resolveAccount(
   tx: Tx,
   input: AgamLiderimPromotionInput,
   acct: AgamLiderimAccount,
+  match: Held | undefined,
 ): Promise<{ id: string; version: number; isNew: boolean }> {
   const { userId, dataKey } = input;
-  const existing = await tx
-    .select()
-    .from(accounts)
-    .where(eq(accounts.connectionId, input.connectionId));
-  const refOf = new Map(
-    existing.map((row) => [
-      row,
-      row.externalAccountRefCt
-        ? decText(dataKey, row.externalAccountRefCt, row.id, "external_account_ref_ct", row.version)
-        : null,
-    ]),
-  );
   const ref = accountRef(acct);
-  const match =
-    existing.find((row) => refOf.get(row) === ref) ??
-    existing.find(
-      (row) => refOf.get(row) === acct.policyNumber && row.institution === acct.provider,
-    );
   if (match) {
+    const { row } = match;
     // The connection is a long-term-savings aggregator; a row of another type
     // under it would mean corrupted state, not a normal re-import.
-    if (match.accountType !== "long_term_savings") fail("account_type_mismatch");
-    if (refOf.get(match) !== ref)
+    if (row.accountType !== "long_term_savings") fail("account_type_mismatch");
+    if (match.ref !== ref)
       await tx
         .update(accounts)
         .set({
           externalAccountRefCt: encText(
             dataKey,
             ref,
-            match.id,
+            row.id,
             "external_account_ref_ct",
-            match.version,
+            row.version,
           ),
+          institution: acct.provider,
         })
-        .where(eq(accounts.id, match.id));
-    return { id: match.id, version: match.version, isNew: false };
+        .where(eq(accounts.id, row.id));
+    return { id: row.id, version: row.version, isNew: false };
   }
 
   const id = randomUUID();
@@ -242,8 +321,9 @@ async function promote(
     balanceSnapshots: 0,
   };
 
-  for (const acct of input.accounts) {
-    const resolved = await resolveAccount(tx, input, acct);
+  const paired = pairAccounts(await loadHeld(tx, input), input.accounts);
+  for (const [i, acct] of input.accounts.entries()) {
+    const resolved = await resolveAccount(tx, input, acct, paired.get(i));
     result.accountsProcessed++;
     if (resolved.isNew) result.accountsCreated++;
 

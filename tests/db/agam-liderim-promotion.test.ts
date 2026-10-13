@@ -308,8 +308,8 @@ describe("promoteAgamLiderimPortfolio", () => {
       )
       .sort();
     expect(decrypted).toEqual([
-      JSON.stringify(['מגדל מקפת בע"מ', "קרן השתלמות", "10000003"]),
-      JSON.stringify(['מגדל מקפת בע"מ', "קרן השתלמות", "10000004"]),
+      JSON.stringify(["מגדלמקפת", "קרןהשתלמות", "10000003"]),
+      JSON.stringify(["מגדלמקפת", "קרןהשתלמות", "10000004"]),
     ]);
   });
 
@@ -360,6 +360,63 @@ describe("promoteAgamLiderimPortfolio", () => {
     const accounts = await listLongTermSavingsAccounts(ctx.session);
     expect(accounts).toHaveLength(3);
     expect(accounts.map((a) => a.currentBalance?.amount).sort()).toEqual(["101349", "2225", "500"]);
+  });
+
+  it("matches the same account when a later export re-spells or renames its labels", async () => {
+    // A provider rebrand or a re-spelled label must not mint a second account —
+    // both would stay in net worth and double-count the same savings.
+    const ctx = await fixture();
+    const imports: AgamLiderimAccount[][] = [
+      [
+        account({ policyNumber: "212159024", provider: 'הראל פנסיה וגמל בע"מ', balance: "100" }),
+        account({
+          policyNumber: "212159024",
+          provider: 'מנורה מבטחים פנסיה וגמל בע"מ',
+          productType: "קרן פנסיה כללית",
+          balance: "200",
+        }),
+      ],
+      // Punctuation, spacing and the legal suffix changed: an exact match.
+      [
+        account({ policyNumber: "212159024", provider: "הראל  פנסיה וגמל", balance: "110" }),
+        account({
+          policyNumber: "212159024",
+          provider: "מנורה מבטחים פנסיה וגמל בעמ",
+          productType: 'קרן פנסיה "כללית"',
+          balance: "210",
+        }),
+      ],
+      // Menora rebranded outright: the one unpaired row takes the one unpaired account.
+      [
+        account({ policyNumber: "212159024", provider: 'הראל פנסיה וגמל בע"מ', balance: "120" }),
+        account({
+          policyNumber: "212159024",
+          provider: 'מבטחים החדשה בע"מ',
+          productType: "קרן פנסיה כללית",
+          balance: "220",
+        }),
+      ],
+    ];
+    for (const [n, portfolio] of imports.entries()) {
+      const syncRunId = await startRun(ctx.userId, ctx.connectionId);
+      await promoteAgamLiderimPortfolio({
+        userId: ctx.userId,
+        connectionId: ctx.connectionId,
+        syncRunId,
+        dataKey: ctx.dataKey,
+        parserId: "agam_liderim_portfolio",
+        parserVersion: 1,
+        // Each export is newer, so each moves the cached balance.
+        accounts: portfolio.map((a) => ({ ...a, asOf: `2026-0${7 + n}-28` })),
+      });
+    }
+
+    const accounts = await listLongTermSavingsAccounts(ctx.session);
+    expect(accounts).toHaveLength(2);
+    expect(accounts.map((a) => [a.institution, a.currentBalance?.amount]).sort()).toEqual([
+      ['הראל פנסיה וגמל בע"מ', "120"],
+      ['מבטחים החדשה בע"מ', "220"],
+    ]);
   });
 
   it("heals an account imported under the old policy-number-only key", async () => {
