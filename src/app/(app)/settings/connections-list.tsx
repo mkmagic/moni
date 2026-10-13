@@ -214,7 +214,8 @@ export function ConnectionsList({ initialConnections }: ConnectionsListProps) {
                       type="button"
                       variant="outline"
                       onClick={() => void onSyncRow(c.id)}
-                      disabled={bulkBusy}
+                      // A disconnected source has nothing left to sync with.
+                      disabled={bulkBusy || c.status === "disconnected"}
                       className="gap-1.5 px-3 py-1.5 text-xs"
                     >
                       {bulkBusy ? (
