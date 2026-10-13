@@ -1,6 +1,6 @@
 // PATCH edits an existing connection: rename, and/or replace the stored bank
 // credentials after a typo at connect time (previously only fixable with
-// manual SQL).
+// manual SQL). DELETE removes a file-import connection and all its data.
 //
 // Renaming touches plaintext only and needs no unlock. Replacing credentials
 // needs CK, which — since issue #7 — comes only from the armed credential
@@ -13,6 +13,7 @@ import { getSessionFromRequest } from "@/domain/auth";
 import {
   InvalidCredentialsShapeError,
   ConnectionCredentialsUnavailableError,
+  deleteImportConnection,
   disconnectConnection,
   renameConnection,
   updateConnectionCredentials,
@@ -104,4 +105,31 @@ export async function PATCH(
     }
     throw err;
   }
+}
+
+/**
+ * Permanently deletes a file-import connection and every account, report and
+ * balance it imported (`deleteImportConnection`). Bank connections are refused
+ * with 400 — they can only be disconnected (PATCH `{ disconnect: true }`).
+ */
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<NextResponse> {
+  const session = getSessionFromRequest(req);
+  if (!session) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  const parsedParams = ParamsSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return NextResponse.json({ error: "invalid request" }, { status: 400 });
+  }
+
+  const result = await deleteImportConnection(session.userId, parsedParams.data.id);
+  if (result === "not_found") return NextResponse.json({ error: "not found" }, { status: 404 });
+  if (result === "not_import") return NextResponse.json({ error: "not_import" }, { status: 400 });
+  if (result === "sync_running")
+    return NextResponse.json({ error: "sync_running" }, { status: 409 });
+  return NextResponse.json({ ok: true });
 }

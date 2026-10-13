@@ -5,9 +5,27 @@
 // Tier-1 reads (threat-model.md §5, docs plan Decision #1). Nothing here
 // ever touches DK.
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, max } from "drizzle-orm";
+import { and, eq, inArray, max, or } from "drizzle-orm";
 import { withUser, type UserTransaction } from "@/db/client";
-import { accountBalanceSnapshots, accounts, connections, syncRuns } from "@/db/schema";
+import {
+  accountBalanceSnapshots,
+  accounts,
+  connections,
+  investmentActivityCoverage,
+  investmentActivityEvidence,
+  investmentCorporateActionEvidence,
+  investmentDisposalResolutionQueue,
+  investmentLotClosures,
+  investmentOpeningCashEvidence,
+  investmentOpeningLotEvidence,
+  investmentReconciliationQuality,
+  investmentSnapshotDetails,
+  investmentSourceEvidence,
+  investmentTaxLots,
+  longTermSavingsDetails,
+  longTermSavingsSnapshots,
+  syncRuns,
+} from "@/db/schema";
 import { encryptField, decryptField, type AadContext } from "@/lib/crypto";
 import { getConnectorDefinition, isConnectorId, type ConnectorId } from "@/lib/connectors";
 
@@ -235,6 +253,117 @@ export async function disconnectConnection(
       .set({ credentialsCt: null, status: "disconnected" })
       .where(eq(connections.id, connectionId));
     return "disconnected";
+  });
+}
+
+/**
+ * Permanently deletes a FILE-IMPORT connection together with every account it
+ * created and everything recorded on those accounts — the way to replace one
+ * import source with another (e.g. per-provider Harel reports → one Agam
+ * Liderim export) without the old accounts double-counting next to the new.
+ * The keep-the-history alternative is `disconnectConnection`.
+ *
+ * Import-only on purpose: a bank connection's entries are paired into
+ * transfers with other accounts' entries and feed household totals, so
+ * removing them is a different, unbuilt operation. Import connectors never
+ * write `entries`, `sync_staging` or `credit_card_details`; if one ever did,
+ * the account delete below fails its foreign key and the whole transaction
+ * rolls back — fail closed. tests/db/connection-deletion.test.ts keeps the
+ * table list below honest against `information_schema`.
+ *
+ * Instruments and their source mappings are user-level reference rows shared
+ * across accounts, so they stay.
+ */
+export async function deleteImportConnection(
+  userId: string,
+  connectionId: string,
+): Promise<"deleted" | "not_found" | "not_import" | "sync_running"> {
+  return withUser(userId, async (tx) => {
+    const row = (
+      await tx
+        .select({ mode: connections.mode })
+        .from(connections)
+        .where(eq(connections.id, connectionId))
+        .for("update")
+        .limit(1)
+    )[0];
+    if (!row) return "not_found";
+    if (row.mode !== "user_mediated_import") return "not_import";
+    const running = await tx
+      .select({ id: syncRuns.id })
+      .from(syncRuns)
+      .where(and(eq(syncRuns.connectionId, connectionId), eq(syncRuns.status, "running")))
+      .limit(1);
+    if (running[0]) return "sync_running";
+
+    const ids = (
+      await tx
+        .select({ id: accounts.id })
+        .from(accounts)
+        .where(eq(accounts.connectionId, connectionId))
+    ).map((a) => a.id);
+
+    // Child-before-parent, spelled out per table like account-deletion.ts.
+    if (ids.length > 0) {
+      const taxLots = tx
+        .select({ id: investmentTaxLots.id })
+        .from(investmentTaxLots)
+        .where(inArray(investmentTaxLots.accountId, ids));
+      const activity = tx
+        .select({ id: investmentActivityEvidence.id })
+        .from(investmentActivityEvidence)
+        .where(inArray(investmentActivityEvidence.accountId, ids));
+      await tx
+        .delete(investmentDisposalResolutionQueue)
+        .where(inArray(investmentDisposalResolutionQueue.accountId, ids));
+      await tx
+        .delete(investmentLotClosures)
+        .where(
+          or(
+            inArray(investmentLotClosures.closedTaxLotId, taxLots),
+            inArray(investmentLotClosures.sellActivityEvidenceId, activity),
+          ),
+        );
+      await tx.delete(investmentTaxLots).where(inArray(investmentTaxLots.accountId, ids));
+      await tx
+        .delete(investmentReconciliationQuality)
+        .where(inArray(investmentReconciliationQuality.accountId, ids));
+      await tx
+        .delete(investmentActivityCoverage)
+        .where(inArray(investmentActivityCoverage.accountId, ids));
+      await tx
+        .delete(investmentCorporateActionEvidence)
+        .where(inArray(investmentCorporateActionEvidence.accountId, ids));
+      await tx
+        .delete(investmentOpeningLotEvidence)
+        .where(inArray(investmentOpeningLotEvidence.accountId, ids));
+      await tx
+        .delete(investmentOpeningCashEvidence)
+        .where(inArray(investmentOpeningCashEvidence.accountId, ids));
+      await tx
+        .delete(investmentActivityEvidence)
+        .where(inArray(investmentActivityEvidence.accountId, ids));
+      await tx
+        .delete(investmentSourceEvidence)
+        .where(inArray(investmentSourceEvidence.accountId, ids));
+      // Positions and cash balances cascade from their snapshot detail.
+      await tx
+        .delete(investmentSnapshotDetails)
+        .where(inArray(investmentSnapshotDetails.accountId, ids));
+      // Deposits and tracks cascade from their report snapshot.
+      await tx
+        .delete(longTermSavingsSnapshots)
+        .where(inArray(longTermSavingsSnapshots.accountId, ids));
+      await tx.delete(longTermSavingsDetails).where(inArray(longTermSavingsDetails.accountId, ids));
+      await tx
+        .delete(accountBalanceSnapshots)
+        .where(inArray(accountBalanceSnapshots.accountId, ids));
+      await tx.delete(accounts).where(inArray(accounts.id, ids));
+    }
+
+    await tx.delete(syncRuns).where(eq(syncRuns.connectionId, connectionId));
+    await tx.delete(connections).where(eq(connections.id, connectionId));
+    return "deleted";
   });
 }
 
