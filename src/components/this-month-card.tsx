@@ -73,12 +73,20 @@ export function ThisMonthCard({
       <div className="grid grid-cols-2 border-t border-border">
         <div className="border-r border-border px-5 py-4">
           <span className={LABEL}>Income</span>
-          <Money value={income} className="mt-1.5 block text-lg font-semibold text-positive" />
+          <Money
+            value={income}
+            whole
+            className="mt-1.5 block text-lg font-semibold text-positive"
+          />
         </div>
 
         <div className="px-5 py-4">
           <span className={LABEL}>Expenses</span>
-          <Money value={expenses} className="mt-1.5 block text-lg font-semibold text-negative" />
+          <Money
+            value={expenses}
+            whole
+            className="mt-1.5 block text-lg font-semibold text-negative"
+          />
         </div>
 
         <div className="col-span-2 border-t border-border px-5 py-4">
@@ -97,9 +105,9 @@ export function ThisMonthCard({
                 )}
               </div>
               <p className="mt-1.5 text-lg font-semibold">
-                <Money value={budget.spent} />
+                <Money value={budget.spent} whole />
                 <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-                  of <Money value={budget.ceilingTotal} />
+                  of <Money value={budget.ceilingTotal} whole />
                 </span>
               </p>
               <div className="mt-2.5">

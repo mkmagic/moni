@@ -13,10 +13,12 @@ interface MoneyProps {
    * teal/coral would assert one. See `src/domain/flows.ts`.
    */
   transfer?: boolean;
+  /** Round to whole currency units, like the dashboard charts do. */
+  whole?: boolean;
 }
 
 /** Server-safe display of a Money value. Formatting only happens here, at the edge. */
-export function Money({ value, className, signColor, transfer }: MoneyProps) {
+export function Money({ value, className, signColor, transfer, whole }: MoneyProps) {
   return (
     <span
       className={cn(
@@ -27,7 +29,7 @@ export function Money({ value, className, signColor, transfer }: MoneyProps) {
         className,
       )}
     >
-      {formatMoney(value)}
+      {formatMoney(value, { whole })}
     </span>
   );
 }
