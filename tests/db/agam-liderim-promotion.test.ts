@@ -419,6 +419,38 @@ describe("promoteAgamLiderimPortfolio", () => {
     ]);
   });
 
+  it("reclassifies the account when its product type is relabelled", async () => {
+    const ctx = await fixture();
+    const gemel = account({
+      policyNumber: "555555555",
+      productType: "קופת גמל",
+      product: "gemel",
+      balance: "1000",
+    });
+    const relabelled = {
+      ...gemel,
+      productType: "קופת גמל להשקעה",
+      product: "gemel_investment" as const,
+    };
+    for (const portfolio of [[gemel], [relabelled]]) {
+      const syncRunId = await startRun(ctx.userId, ctx.connectionId);
+      await promoteAgamLiderimPortfolio({
+        userId: ctx.userId,
+        connectionId: ctx.connectionId,
+        syncRunId,
+        dataKey: ctx.dataKey,
+        parserId: "agam_liderim_portfolio",
+        parserVersion: 1,
+        accounts: portfolio,
+      });
+    }
+
+    const accounts = await listLongTermSavingsAccounts(ctx.session);
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0].product).toBe("gemel_investment");
+    expect(accounts[0].liquidity).toBe("liquid");
+  });
+
   it("heals an account imported under the old policy-number-only key", async () => {
     // Before the fix, the Menora row matched the Harel account by the shared ID
     // and overwrote its balance. Re-importing must reuse (and correct) that

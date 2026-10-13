@@ -203,7 +203,7 @@ async function resolveAccount(
     // The connection is a long-term-savings aggregator; a row of another type
     // under it would mean corrupted state, not a normal re-import.
     if (row.accountType !== "long_term_savings") fail("account_type_mismatch");
-    if (match.ref !== ref)
+    if (match.ref !== ref) {
       await tx
         .update(accounts)
         .set({
@@ -217,6 +217,13 @@ async function resolveAccount(
           institution: acct.provider,
         })
         .where(eq(accounts.id, row.id));
+      // A looser tier may have paired a row whose product type moved category
+      // (קופת גמל → קופת גמל להשקעה); the details follow the file.
+      await tx
+        .update(longTermSavingsDetails)
+        .set({ product: acct.product, liquidity: LIQUIDITY_BY_PRODUCT[acct.product] })
+        .where(eq(longTermSavingsDetails.accountId, row.id));
+    }
     return { id: row.id, version: row.version, isNew: false };
   }
 
