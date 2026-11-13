@@ -25,7 +25,7 @@ import type {
   LongTermSavingsSnapshotView,
 } from "@/domain/long-term-savings";
 import { getConnectorDefinition } from "@/lib/connectors";
-import { abs } from "@/lib/money";
+import { abs, type Money as MoneyValue } from "@/lib/money";
 import {
   asOfLabel,
   dayLabel,
@@ -199,6 +199,15 @@ function AccountPanel({ account }: { account: LongTermSavingsAccountView }) {
               {liquidity.text}
             </span>
           </div>
+          {/* One point per import, so a trend appears from the second one. */}
+          {account.balanceHistory.length > 1 && (
+            <BalanceTrend
+              points={account.balanceHistory.map((point) => ({
+                label: asOfLabel({ asOf: point.date, quarter: null, fiscalYear: null }),
+                balance: point.balance,
+              }))}
+            />
+          )}
           <p className="text-xs text-muted-foreground">
             {
               "Fees and contribution history aren’t part of this export. Import a provider report for this account to fill them in."
@@ -223,7 +232,19 @@ function AccountPanel({ account }: { account: LongTermSavingsAccountView }) {
             </span>
           </div>
 
-          {account.reports.length > 1 && <BalanceTrend reports={account.reports} />}
+          {account.reports.length > 1 && (
+            <BalanceTrend
+              // Newest first in the view; the chart reads oldest first.
+              points={[...account.reports].reverse().map((report) => ({
+                label: asOfLabel({
+                  asOf: report.asOf,
+                  quarter: report.quarter,
+                  fiscalYear: report.fiscalYear,
+                }),
+                balance: report.closingBalance,
+              }))}
+            />
+          )}
           <Fees snapshot={snapshot} />
 
           <div className="flex flex-wrap gap-2">
@@ -261,23 +282,16 @@ function AccountPanel({ account }: { account: LongTermSavingsAccountView }) {
   );
 }
 
-function BalanceTrend({ reports }: { reports: LongTermSavingsReportView[] }) {
-  // Oldest first for the chart; `Number()` here is chart geometry, which is the
-  // one place money is allowed to widen (ui-and-feel.md §3).
-  const ordered = [...reports].reverse();
+function BalanceTrend({ points }: { points: { label: string; balance: MoneyValue }[] }) {
+  // Oldest first. `Number()` here is chart geometry, which is the one place
+  // money is allowed to widen (ui-and-feel.md §3).
   return (
     <div className="flex flex-col gap-1">
       <span className="text-xs uppercase tracking-wide text-muted-foreground">Balance</span>
       <Sparkline
-        data={ordered.map((report) => Number(report.closingBalance.amount))}
-        labels={ordered.map((report) =>
-          asOfLabel({
-            asOf: report.asOf,
-            quarter: report.quarter,
-            fiscalYear: report.fiscalYear,
-          }),
-        )}
-        currency={ordered[0].closingBalance.currency}
+        data={points.map((point) => Number(point.balance.amount))}
+        labels={points.map((point) => point.label)}
+        currency={points[0].balance.currency}
         color="var(--color-chart-2)"
         height={56}
       />
