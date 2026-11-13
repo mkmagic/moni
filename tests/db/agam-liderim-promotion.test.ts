@@ -216,6 +216,11 @@ describe("promoteAgamLiderimPortfolio", () => {
     const [account0] = await listLongTermSavingsAccounts(ctx.session);
     expect(account0.currentBalance?.amount).toBe("123456");
     expect(account0.balanceAsOf).toBe("2026-08-31");
+    // Both imports stay as points of the balance trend, oldest first.
+    expect(account0.balanceHistory).toEqual([
+      { date: "2026-07-31", balance: { amount: "100000", currency: "ILS" } },
+      { date: "2026-08-31", balance: { amount: "123456", currency: "ILS" } },
+    ]);
   });
 
   it("leaves the cached balance alone when backfilling an older import", async () => {

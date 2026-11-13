@@ -165,6 +165,12 @@ export interface LongTermSavingsAccountView {
   currentBalance: Money | null;
   /** The date of {@link currentBalance}. */
   balanceAsOf: string | null;
+  /**
+   * Every dated balance held for the account, oldest first — one point per
+   * import. What a balance-only account charts its trend from; an account with
+   * reports charts its reports instead (sources are not merged).
+   */
+  balanceHistory: { date: string; balance: Money }[];
   /** Newest first. Empty until the first report has been imported. */
   reports: LongTermSavingsReportView[];
   /**
@@ -418,21 +424,18 @@ export async function listLongTermSavingsAccounts(
       });
       const reports = deriveReports(dataKey, held);
       const heldIds = new Set(held.map((row) => row.id));
+      const balanceMoney = (row: (typeof balanceRows)[number]): Money => ({
+        amount:
+          decText(dataKey, row.nativeBalanceCt!, row.id, "native_balance_ct", row.version) ?? "0",
+        currency: row.currency ?? account.currency,
+      });
       const balance = newestBalance.get(account.id);
       const currentBalance: Money | null =
-        balance && balance.nativeBalanceCt
-          ? {
-              amount:
-                decText(
-                  dataKey,
-                  balance.nativeBalanceCt,
-                  balance.id,
-                  "native_balance_ct",
-                  balance.version,
-                ) ?? "0",
-              currency: balance.currency ?? account.currency,
-            }
-          : null;
+        balance && balance.nativeBalanceCt ? balanceMoney(balance) : null;
+      const balanceHistory = balanceRows
+        .filter((row) => row.accountId === account.id && row.nativeBalanceCt)
+        .map((row) => ({ date: row.date, balance: balanceMoney(row) }))
+        .reverse();
       return {
         accountId: account.id,
         name: decText(dataKey, account.nameCt, account.id, "name_ct", account.version) ?? "",
@@ -444,6 +447,7 @@ export async function listLongTermSavingsAccounts(
         liquidFrom: detail.liquidFrom,
         currentBalance,
         balanceAsOf: balance?.date ?? null,
+        balanceHistory,
         reports,
         deposits: depositRows
           .filter((row) => heldIds.has(row.snapshotId))
