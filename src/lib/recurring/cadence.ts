@@ -119,3 +119,110 @@ export function deriveCadence(dates: string[]): Cadence {
 
   return bestVotes / gapCount >= AGREEMENT ? best : "irregular";
 }
+
+function daysBetween(from: string, to: string): number {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / MS_PER_DAY);
+}
+
+/**
+ * Days without a payment after which a payee counts as stopped.
+ *
+ * Monthly through quarterly: two expected payments missed, past the band's
+ * jitter (band max + one period) — one missed month is a skipped charge, not
+ * a cancellation (see AGREEMENT). Yearly: one missed renewal (the band max) —
+ * waiting for a second would take another year.
+ */
+const STOPPED_AFTER_DAYS: Record<SettableCadence, number> = {
+  monthly: 68,
+  "bi-monthly": 131,
+  quarterly: 191,
+  yearly: 400,
+};
+
+/** A stopped payee is hidden once its last payment is this old. */
+export const HIDE_STOPPED_AFTER_DAYS = 180;
+
+/**
+ * True when a payee has gone quiet for longer than its cadence allows.
+ *
+ * `asOf` is the date the data runs to, not the wall clock: a user who hasn't
+ * synced for three months has not cancelled everything.
+ *
+ * `unknown` (one payment) is judged as monthly — the common case in a
+ * recurring category; an annual payee with one payment so far needs its
+ * cadence set by hand, which is the existing escape hatch. `irregular` has no
+ * period, so it is judged against its own history: twice its longest gap,
+ * never less than the monthly allowance.
+ */
+export function isStopped(cadence: Cadence, dates: string[], asOf: string): boolean {
+  const sorted = [...dates].sort();
+  const since = daysBetween(sorted[sorted.length - 1], asOf);
+  if (cadence === "unknown") return since > STOPPED_AFTER_DAYS.monthly;
+  if (cadence !== "irregular") return since > STOPPED_AFTER_DAYS[cadence];
+  let longest = 0;
+  for (let i = 1; i < sorted.length; i++) {
+    longest = Math.max(longest, daysBetween(sorted[i - 1], sorted[i]));
+  }
+  return since > Math.max(STOPPED_AFTER_DAYS.monthly, 2 * longest);
+}
+
+/** Days since the last of `dates`, as of `asOf`. */
+export function daysSinceLast(dates: string[], asOf: string): number {
+  return daysBetween([...dates].sort()[dates.length - 1], asOf);
+}
+
+/**
+ * The cadence of several payees read as one bill, or null when they aren't one.
+ *
+ * Substitution — the same need paid from different places (medication bought
+ * at the pharmacy one month and reimbursed over Bit the next, or a service
+ * moved from one provider to another) — leaves a signature: the merged dates
+ * keep a cadence, and no two payments land inside one period. Two concurrent
+ * subscriptions fail the second test, since their charges interleave.
+ */
+export function pooledCadence(dates: string[]): SettableCadence | null {
+  const cadence = deriveCadence(dates);
+  if (cadence === "irregular" || cadence === "unknown") return null;
+  const min = BANDS.find((b) => b.cadence === cadence)!.min;
+  const sorted = [...dates].sort();
+  for (let i = 1; i < sorted.length; i++) {
+    if (daysBetween(sorted[i - 1], sorted[i]) < min) return null;
+  }
+  return cadence;
+}
+
+/**
+ * Groups payees that read as one bill (`pooledCadence`), greedily, oldest
+ * first. Returns groups of ids; a payee that pools with nothing is a group of
+ * one. Input order is irrelevant.
+ *
+ * Only payees with no cadence of their own (`irregular`/`unknown`) are
+ * candidates. An established series never pools: otherwise a new
+ * subscription whose first charge lands after a monthly payee's last charge,
+ * but before its next one, reads as a switch and the category undercounts
+ * until that next charge arrives. A switch away from an established payee is
+ * left to `isStopped` instead — an overcount for at most its allowance.
+ */
+export function poolPayees(series: { id: string; dates: string[] }[]): string[][] {
+  const candidates: typeof series = [];
+  const established: string[][] = [];
+  for (const s of series) {
+    const own = deriveCadence(s.dates);
+    if (own === "irregular" || own === "unknown") candidates.push(s);
+    else established.push([s.id]);
+  }
+  const byFirst = candidates.sort((a, b) =>
+    [...a.dates].sort()[0].localeCompare([...b.dates].sort()[0]),
+  );
+  const pools: { ids: string[]; dates: string[] }[] = [];
+  for (const s of byFirst) {
+    const home = pools.find((p) => pooledCadence([...p.dates, ...s.dates]) !== null);
+    if (home) {
+      home.ids.push(s.id);
+      home.dates.push(...s.dates);
+    } else {
+      pools.push({ ids: [s.id], dates: [...s.dates] });
+    }
+  }
+  return [...pools.map((p) => p.ids), ...established];
+}
