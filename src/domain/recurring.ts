@@ -8,7 +8,7 @@
 //   * An entry with no locked FX rate is skipped, never valued at 1:1
 //     (dashboard.ts, money-and-currency.md §4).
 import Decimal from "decimal.js";
-import { inArray } from "drizzle-orm";
+import { inArray, max } from "drizzle-orm";
 import { withUser } from "@/db/client";
 import { categories, entries, merchants } from "@/db/schema";
 import { abs, add, divide, multiply, type Money } from "@/lib/money";
@@ -16,8 +16,13 @@ import { normalizeDescription } from "@/lib/categorization/normalize";
 import { matchCatalog, merchantIdentity } from "@/lib/merchants/catalog";
 import {
   CADENCE_MONTHS,
+  HIDE_STOPPED_AFTER_DAYS,
   asSettableCadence,
+  daysSinceLast,
   deriveCadence,
+  isStopped,
+  poolPayees,
+  pooledCadence,
   type Cadence,
 } from "@/lib/recurring/cadence";
 import type { Session } from "@/lib/auth/session-store";
@@ -71,11 +76,39 @@ export interface RecurringRow {
    * Display it hedged. */
   monthlyAverageIsEstimate: boolean;
   paymentCount: number;
+  /** No payment for longer than the cadence allows (`isStopped`). Shown
+   * dimmed and left out of every per-month figure; hidden altogether once the
+   * last payment is `HIDE_STOPPED_AFTER_DAYS` old. */
+  stopped: boolean;
+  /** "1 Aug 2026" — the last payment, pre-formatted. */
+  lastPaidLabel: string;
+  /** The pool this payee belongs to, when it is one of several payees read as
+   * one bill (`RecurringPool`); null otherwise. */
+  poolId: string | null;
   firstSeen: string;
   /** "since Aug 2025", pre-formatted. */
   firstSeenLabel: string;
   /** Every payment, oldest first. The graph's own control counts payments, not months. */
   payments: RecurringPayment[];
+}
+
+/**
+ * Several payees of one category read as one bill: the same need paid from
+ * different places (`pooledCadence`). Its figures come from the merged
+ * payments, so two sources of one monthly purchase cost one purchase a month,
+ * not two.
+ */
+export interface RecurringPool {
+  id: string;
+  cadence: Cadence;
+  /** Mean of the last three merged payments. */
+  averageOfLast3: Money;
+  monthlyAverage: Money;
+  paymentCount: number;
+  /** The merged series has gone quiet — excluded from per-month figures. */
+  stopped: boolean;
+  /** Member rows, newest payment first. */
+  rowIds: string[];
 }
 
 export interface RecurringGroup {
@@ -90,7 +123,10 @@ export interface RecurringGroup {
   monthlyAverage: Money;
   /** True when any row's monthly figure is an estimate. */
   monthlyAverageIsEstimate: boolean;
+  /** Pool members sit next to each other, in `pools[].rowIds` order. */
   rows: RecurringRow[];
+  /** Only pools of two or more payees; every other row stands alone. */
+  pools: RecurringPool[];
 }
 
 /** A section's numbers rolled up across every category in it (#98). */
@@ -177,6 +213,11 @@ export async function getRecurringView(
     }
 
     const recurringIds = recurring.map((c) => c.id);
+    // "Stopped" is judged against how far the data runs, not the wall clock:
+    // a user who hasn't synced for months has not cancelled everything. Capped
+    // at today so a future-dated entry can't make every payee look current.
+    const [{ latest }] = await tx.select({ latest: max(entries.date) }).from(entries);
+    const asOf = latest !== null && latest < today ? latest : today;
     const transferCategoryIds = await loadTransferCategoryIds(tx);
 
     // All history, not just the range: a row's headline, cadence and payment
@@ -241,7 +282,13 @@ export async function getRecurringView(
 
     const rowsByCategory = new Map<string, RecurringRow[]>();
     for (const bucket of buckets.values()) {
-      const row = toRow(bucket, dataKey, merchantByIdentity.get(bucket.identity));
+      const row = toRow(bucket, dataKey, merchantByIdentity.get(bucket.identity), asOf);
+      if (
+        row.stopped &&
+        daysSinceLast([row.payments.at(-1)!.date], asOf) > HIDE_STOPPED_AFTER_DAYS
+      ) {
+        continue;
+      }
       const list = rowsByCategory.get(bucket.categoryId) ?? [];
       list.push(row);
       rowsByCategory.set(bucket.categoryId, list);
@@ -251,23 +298,21 @@ export async function getRecurringView(
       recurring
         .filter((c) => c.classification === classification)
         .map((c) => {
-          // Biggest first, name as the tie-break. Compared through decimal.js
-          // — a JS number is never allowed to touch a money value, not even
-          // to sort it (AGENTS.md).
-          const rows = (rowsByCategory.get(c.id) ?? []).sort((a, b) => {
-            const bySize = new Decimal(b.latest.amount).comparedTo(new Decimal(a.latest.amount));
-            return bySize !== 0 ? bySize : a.merchantName.localeCompare(b.merchantName);
-          });
+          const { rows, pools } = poolRows(rowsByCategory.get(c.id) ?? [], asOf);
+          // A pool stands in for its members; a stopped payee costs nothing a month.
+          const pooled = new Set(pools.flatMap((p) => p.rowIds));
+          const units = [
+            ...pools.map((p) => ({ ...p, monthlyAverageIsEstimate: false })),
+            ...rows.filter((r) => !pooled.has(r.id)),
+          ].filter((u) => !u.stopped);
           return {
             categoryId: c.id,
             categoryName: c.name,
             total: totals.get(c.id) ?? { amount: "0", currency: baseCurrency },
-            monthlyAverage: rows.reduce((acc, row) => add(acc, row.monthlyAverage), {
-              amount: "0",
-              currency: baseCurrency,
-            } as Money),
-            monthlyAverageIsEstimate: rows.some((row) => row.monthlyAverageIsEstimate),
+            monthlyAverage: units.reduce((acc, u) => add(acc, u.monthlyAverage), zero()),
+            monthlyAverageIsEstimate: units.some((u) => u.monthlyAverageIsEstimate),
             rows,
+            pools,
           };
         })
         .filter((g) => g.rows.length > 0);
@@ -319,10 +364,79 @@ function spreadOverObservedMonths(payments: RecurringPayment[]): Money {
   return divide(total, String(months));
 }
 
+/** Biggest first, name as the tie-break. Compared through decimal.js — a JS
+ * number is never allowed to touch a money value, not even to sort it. */
+function bySize(a: RecurringRow, b: RecurringRow): number {
+  const size = new Decimal(b.latest.amount).comparedTo(new Decimal(a.latest.amount));
+  return size !== 0 ? size : a.merchantName.localeCompare(b.merchantName);
+}
+
+/**
+ * Reads which of a category's payees are one bill paid from several places
+ * (`poolPayees`), and orders the rows: live before stopped, biggest first,
+ * each pool's members kept together, newest payment first. A payee whose
+ * cadence the user set by hand is left out — the override is a statement about
+ * that payee alone.
+ */
+function poolRows(
+  rows: RecurringRow[],
+  asOf: string,
+): { rows: RecurringRow[]; pools: RecurringPool[] } {
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const groups = poolPayees(
+    rows
+      .filter((r) => !r.cadenceIsOverride)
+      .map((r) => ({ id: r.id, dates: r.payments.map((p) => p.date) })),
+  ).filter((ids) => ids.length > 1);
+
+  const pools: RecurringPool[] = groups.map((ids) => {
+    const members = ids
+      .map((id) => byId.get(id)!)
+      .sort((a, b) => b.payments.at(-1)!.date.localeCompare(a.payments.at(-1)!.date));
+    const payments = members
+      .flatMap((r) => r.payments)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    const dates = payments.map((p) => p.date);
+    const cadence = pooledCadence(dates)!; // poolPayees only groups on a cadence
+    const lastThree = payments.slice(-3);
+    const averageOfLast3 = divide(
+      lastThree.reduce((acc, p) => add(acc, p.amount), {
+        amount: "0",
+        currency: lastThree[0].amount.currency,
+      } as Money),
+      String(lastThree.length),
+    );
+    const id = `pool:${members[0].id}`;
+    for (const m of members) m.poolId = id;
+    return {
+      id,
+      cadence,
+      averageOfLast3,
+      monthlyAverage: divide(averageOfLast3, String(CADENCE_MONTHS[cadence])),
+      paymentCount: payments.length,
+      stopped: isStopped(cadence, dates, asOf),
+      rowIds: members.map((m) => m.id),
+    };
+  });
+
+  // Order the units (pools and lone rows), then spell the pools out.
+  type Unit = { stopped: boolean; lead: RecurringRow; members: RecurringRow[] };
+  const units: Unit[] = [
+    ...pools.map((p) => {
+      const members = p.rowIds.map((id) => byId.get(id)!);
+      return { stopped: p.stopped, lead: [...members].sort(bySize)[0], members };
+    }),
+    ...rows.filter((r) => r.poolId === null).map((r) => ({ stopped: r.stopped, lead: r, members: [r] })), // prettier-ignore
+  ];
+  units.sort((a, b) => Number(a.stopped) - Number(b.stopped) || bySize(a.lead, b.lead));
+  return { rows: units.flatMap((u) => u.members), pools };
+}
+
 function toRow(
   bucket: Bucket,
   dataKey: Uint8Array,
   merchant: { id: string; nameCt: Buffer; logoUrl: string | null; source: string | null; cadenceOverride: string | null; version: number } | undefined, // prettier-ignore
+  asOf: string,
 ): RecurringRow {
   const payments = [...bucket.payments].sort((a, b) => a.date.localeCompare(b.date));
   const magnitudes: RecurringPayment[] = payments.map((p) => ({
@@ -374,6 +488,13 @@ function toRow(
         : divide(averageOfLast3, String(period)),
     monthlyAverageIsEstimate: period === null,
     paymentCount: magnitudes.length,
+    stopped: isStopped(
+      cadence,
+      magnitudes.map((p) => p.date),
+      asOf,
+    ),
+    lastPaidLabel: magnitudes[magnitudes.length - 1].dateLabel,
+    poolId: null,
     firstSeen,
     firstSeenLabel: `since ${MONTH_LABEL.format(new Date(firstSeen))}`,
     payments: magnitudes,

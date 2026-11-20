@@ -17,7 +17,12 @@ import {
 } from "@/lib/recurring/range";
 import { CADENCE_LABELS, SETTABLE_CADENCES } from "@/lib/recurring/cadence";
 import { cn } from "@/lib/utils";
-import type { RecurringGroup, RecurringRow, RecurringSummary } from "@/domain/recurring";
+import type {
+  RecurringGroup,
+  RecurringPool,
+  RecurringRow,
+  RecurringSummary,
+} from "@/domain/recurring";
 
 interface Props {
   income: RecurringGroup[];
@@ -158,9 +163,22 @@ function Section({
             </div>
           </div>
           <div className="flex flex-col divide-y divide-border">
-            {group.rows.map((row) => (
-              <Row key={row.id} row={row} tone={tone} />
-            ))}
+            {group.rows.map((row) => {
+              if (row.poolId === null) return <Row key={row.id} row={row} tone={tone} />;
+              const pool = group.pools.find((p) => p.id === row.poolId) as RecurringPool;
+              // Members sit together; the pool renders once, at its first.
+              if (pool.rowIds[0] !== row.id) return null;
+              return (
+                <Pool
+                  key={pool.id}
+                  pool={pool}
+                  rows={pool.rowIds.map(
+                    (id) => group.rows.find((r) => r.id === id) as RecurringRow,
+                  )}
+                  tone={tone}
+                />
+              );
+            })}
           </div>
         </Card>
       ))}
@@ -168,7 +186,52 @@ function Section({
   );
 }
 
-function Row({ row, tone }: { row: RecurringRow; tone: "positive" | "negative" }) {
+/** Several payees read as one bill — its figures come from their merged
+ * payments, so the members' own per-month lines are not shown. */
+function Pool({
+  pool,
+  rows,
+  tone,
+}: {
+  pool: RecurringPool;
+  rows: RecurringRow[];
+  tone: "positive" | "negative";
+}) {
+  return (
+    <div className={cn("py-2", pool.stopped && "opacity-60")}>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-1 text-xs text-muted-foreground">
+        <span>
+          {`One bill, ${rows.length} payees · ${pool.stopped ? "Stopped" : CADENCE_LABELS[pool.cadence]} · ${pool.paymentCount} payments`}
+        </span>
+        <span>
+          {"avg "}
+          <Money value={pool.averageOfLast3} />
+          {" · "}
+          <Money
+            value={pool.monthlyAverage}
+            className={tone === "positive" ? "text-positive" : "text-negative"}
+          />
+          {" / mo"}
+        </span>
+      </div>
+      <div className="ml-3 flex flex-col border-l border-border pl-2">
+        {rows.map((row) => (
+          <Row key={row.id} row={row} tone={tone} pooled />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Row({
+  row,
+  tone,
+  pooled = false,
+}: {
+  row: RecurringRow;
+  tone: "positive" | "negative";
+  pooled?: boolean;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   // Not named `window` — that shadows the global one line away from a
@@ -191,7 +254,8 @@ function Row({ row, tone }: { row: RecurringRow; tone: "positive" | "negative" }
   }
 
   return (
-    <div className="py-2">
+    // A stopped payee stays in sight, dimmed, and counts in no per-month figure.
+    <div className={cn("py-2", row.stopped && "opacity-60")}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -215,9 +279,10 @@ function Row({ row, tone }: { row: RecurringRow; tone: "positive" | "negative" }
           )}
           <span className="text-xs text-muted-foreground">
             {`${row.paymentCount} payment${row.paymentCount === 1 ? "" : "s"} ${row.firstSeenLabel}`}
+            {row.stopped && ` · last paid ${row.lastPaidLabel}`}
           </span>
         </div>
-        <Badge className="shrink-0">{CADENCE_LABELS[row.cadence]}</Badge>
+        <Badge className="shrink-0">{row.stopped ? "Stopped" : CADENCE_LABELS[row.cadence]}</Badge>
         {/* Fixed slot: without it a longer cadence badge shifts this row's
             figures and the amounts stop lining up between rows. `ml-auto`
             pins it to the edge when it wraps to its own line on mobile. */}
@@ -234,7 +299,7 @@ function Row({ row, tone }: { row: RecurringRow; tone: "positive" | "negative" }
               than on the cadence: a monthly payee is the obvious case, but a
               lone payment with an unknown cadence lands on the same figure
               too, and that row was printing one number three times. */}
-          {row.monthlyAverage.amount !== row.averageOfLast3.amount && (
+          {!pooled && row.monthlyAverage.amount !== row.averageOfLast3.amount && (
             <span className="text-xs text-muted-foreground">
               {row.monthlyAverageIsEstimate && "≈ "}
               <Money value={row.monthlyAverage} />
