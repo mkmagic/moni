@@ -195,9 +195,23 @@ export function pooledCadence(dates: string[]): SettableCadence | null {
  * Groups payees that read as one bill (`pooledCadence`), greedily, oldest
  * first. Returns groups of ids; a payee that pools with nothing is a group of
  * one. Input order is irrelevant.
+ *
+ * Only payees with no cadence of their own (`irregular`/`unknown`) are
+ * candidates. An established series never pools: otherwise a new
+ * subscription whose first charge lands after a monthly payee's last charge,
+ * but before its next one, reads as a switch and the category undercounts
+ * until that next charge arrives. A switch away from an established payee is
+ * left to `isStopped` instead — an overcount for at most its allowance.
  */
 export function poolPayees(series: { id: string; dates: string[] }[]): string[][] {
-  const byFirst = [...series].sort((a, b) =>
+  const candidates: typeof series = [];
+  const established: string[][] = [];
+  for (const s of series) {
+    const own = deriveCadence(s.dates);
+    if (own === "irregular" || own === "unknown") candidates.push(s);
+    else established.push([s.id]);
+  }
+  const byFirst = candidates.sort((a, b) =>
     [...a.dates].sort()[0].localeCompare([...b.dates].sort()[0]),
   );
   const pools: { ids: string[]; dates: string[] }[] = [];
@@ -210,5 +224,5 @@ export function poolPayees(series: { id: string; dates: string[] }[]): string[][
       pools.push({ ids: [s.id], dates: [...s.dates] });
     }
   }
-  return pools.map((p) => p.ids);
+  return [...pools.map((p) => p.ids), ...established];
 }

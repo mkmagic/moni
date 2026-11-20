@@ -111,10 +111,31 @@ describe("poolPayees", () => {
     const groups = poolPayees([
       { id: "anthropic", dates: ["2026-07-10", "2026-08-10", "2026-09-10", "2026-10-10"] },
       { id: "pharmacy", dates: ["2026-07-01", "2026-08-01", "2026-10-01"] },
-      { id: "bit", dates: ["2026-09-01", "2026-11-01"] },
+      { id: "bit", dates: ["2026-09-01"] },
     ]);
     expect(groups).toContainEqual(["pharmacy", "bit"]);
     expect(groups).toContainEqual(["anthropic"]);
+  });
+
+  it("leaves strict alternation alone — each source reads every-2-months, and those already sum right", () => {
+    const groups = poolPayees([
+      { id: "pharmacy", dates: ["2026-07-01", "2026-09-01", "2026-11-01"] },
+      { id: "bit", dates: ["2026-08-01", "2026-10-01"] },
+    ]);
+    expect(groups).toContainEqual(["pharmacy"]);
+    expect(groups).toContainEqual(["bit"]);
+  });
+
+  it("never lets an established monthly payee absorb a newcomer", () => {
+    // The newcomer's first charge (Dec 6) lands before Anthropic's Dec 10
+    // charge has arrived — the merged dates read as one clean monthly bill.
+    const anthropic = {
+      id: "anthropic",
+      dates: ["2026-07-10", "2026-08-10", "2026-09-10", "2026-10-10", "2026-11-10"],
+    };
+    const groups = poolPayees([anthropic, { id: "newcomer", dates: ["2026-12-06"] }]);
+    expect(groups).toContainEqual(["anthropic"]);
+    expect(groups).toContainEqual(["newcomer"]);
   });
 
   it("pools a provider switch — one payee ends as the next begins", () => {

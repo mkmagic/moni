@@ -87,11 +87,12 @@ describe("getRecurringView — stopped and pooled payees", () => {
     await insertEntry("MIGDAL PENSION", "2026-10-20", "-500.00", savings);
     await insertEntry("MIGDAL PENSION", "2026-11-20", "-500.00", savings);
 
-    // Medication: one need, two sources, never in the same month.
+    // Medication: one need, two sources, never in the same month. Neither
+    // source has a cadence of its own — the pharmacy skipped October.
     await insertEntry("PHARMACY", "2026-08-03", "-375.00", meds);
     await insertEntry("PHARMACY", "2026-09-02", "-375.00", meds);
-    await insertEntry("PHARMACY", "2026-10-04", "-375.00", meds);
-    await insertEntry("BIT TRANSFER", "2026-11-03", "-339.00", meds);
+    await insertEntry("BIT TRANSFER", "2026-10-04", "-339.00", meds);
+    await insertEntry("PHARMACY", "2026-11-03", "-375.00", meds);
 
     // Subscriptions: two concurrent monthlies — never pooled.
     for (const m of ["08", "09", "10", "11"]) {
@@ -140,14 +141,14 @@ describe("getRecurringView — stopped and pooled payees", () => {
     const pool = g.pools[0];
     expect(pool.cadence).toBe("monthly");
     expect(pool.paymentCount).toBe(4);
-    // (375 + 375 + 339) / 3 — one purchase a month, not two.
+    // (375 + 339 + 375) / 3 — one purchase a month, not two.
     expect(pool.averageOfLast3.amount).toBe("363");
     expect(g.monthlyAverage.amount).toBe("363");
     expect(g.monthlyAverageIsEstimate).toBe(false);
     // Newest source first.
     expect(pool.rowIds.map((id) => g.rows.find((r) => r.id === id)?.matchText)).toEqual([
-      "bit transfer",
       "pharmacy",
+      "bit transfer",
     ]);
   });
 
